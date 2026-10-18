@@ -163,7 +163,7 @@ func measure(pkg string) (int, []string, error) {
 		if readErr != nil {
 			return 0, nil, readErr
 		}
-		loc += strings.Count(string(b), "\n")
+		loc += countLines(string(b))
 		for _, m := range importRe.FindAllStringSubmatch(string(b), -1) {
 			path := m[1]
 			if isSelfPath(path) {
@@ -190,6 +190,24 @@ func measure(pkg string) (int, []string, error) {
 // 那是漏判方向，与门禁职责正好相反，且无声无息。
 func isSelfPath(p string) bool {
 	return p == selfModule || strings.HasPrefix(p, selfModule+"/")
+}
+
+// countLines 数真实行数。
+//
+// 单纯 strings.Count(s, "\n") 只在**每个文件都以换行结尾**时等于行数；某个文件
+// 丢了结尾换行会被少算一行，于是「改了文件并把 README 同步成少算的值」就能
+// 蒙混过关——指标自指，让门禁在自己改动的量纲上失准。
+//
+// 末尾无换行时补计残行。对以换行结尾的文件（当前全部生产文件都是）与旧口径
+// 完全一致，故本修正不改今天的任何数字，只堵住将来的那个洞。
+func countLines(s string) int {
+	n := strings.Count(s, "\n")
+	if n > 0 && !strings.HasSuffix(s, "\n") {
+		n++
+	} else if n == 0 && s != "" {
+		n = 1 // 整个文件就是一行且没有换行
+	}
+	return n
 }
 
 // looksLikeModulePath 判断一个带引号 token 是否长得像 Go module 路径。

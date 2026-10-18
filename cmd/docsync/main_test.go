@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestLooksLikeModulePathExcludesNonModules 钉住「什么不算 module 路径」。
 //
@@ -112,5 +115,39 @@ func TestSuffixMatchTolerance(t *testing.T) {
 	}
 	if suffixMatch("santhosh-tekuri/jsonschema", "jsonschema") {
 		t.Error("方向不能反：README 不得比实际更详细却仍算匹配")
+	}
+}
+
+// TestCountLinesHandlesMissingTrailingNewline 钉住行数口径不被指标自指拖偏。
+//
+// 单纯数换行符时，丢了结尾换行的文件会被少算一行，于是「改了文件并把 README
+// 同步成少算的值」就能蒙混过关——指标自指，让门禁在自己改动的量纲上失准。
+func TestCountLinesHandlesMissingTrailingNewline(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"a\nb\nc\n", 3},
+		{"a\nb\nc", 3},
+		{"a\n", 1},
+		{"a", 1},
+		{"", 0},
+		{"\n", 1},
+		{"a\n\nb", 3},
+	}
+	for _, c := range cases {
+		if got := countLines(c.in); got != c.want {
+			t.Errorf("countLines(%q) = %d，期望 %d", c.in, got, c.want)
+		}
+	}
+}
+
+// TestCountLinesMatchesWcOnNewlineTerminatedFiles 保证口径变更对现存文件零影响：
+// 当前全部生产文件都以换行结尾，新旧口径必须完全一致，否则 README 要整表重算。
+func TestCountLinesMatchesWcOnNewlineTerminatedFiles(t *testing.T) {
+	for _, s := range []string{"a\nb\nc\n", "x\n", "one\ntwo\nthree\nfour\n"} {
+		if got, want := countLines(s), strings.Count(s, "\n"); got != want {
+			t.Errorf("以换行结尾时 countLines(%q)=%d 应等于 wc -l 的 %d", s, got, want)
+		}
 	}
 }
