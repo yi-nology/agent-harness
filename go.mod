@@ -14,13 +14,13 @@ go 1.27
 require (
 	github.com/cloudwego/eino v0.9.21
 	github.com/dop251/goja v0.0.0-20261010130053-73dc7edc278f
-	github.com/oagentkit/agent v0.2.0
+	github.com/oagentkit/agent v0.2.1
 	github.com/oagentkit/guardx v0.1.1
-	github.com/oagentkit/runtime v0.3.0
-	github.com/oagentkit/toolgate v0.2.0
-	github.com/oekit/concurrency v0.13.1
+	github.com/oagentkit/runtime v0.3.1
+	github.com/oagentkit/toolgate v0.2.1
+	github.com/oekit/concurrency v0.15.0
 	github.com/oekit/logx v0.7.0
-	github.com/oekit/pkg v0.13.0
+	github.com/oekit/pkg v0.14.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	gopkg.in/yaml.v3 v3.0.1
 )
