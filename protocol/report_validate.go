@@ -42,6 +42,14 @@ func (r *Report) Validate() ([]string, error) {
 		case isExec && !rec.RequiresApproval:
 			critical = append(critical, "执行类动作 requires_approval 必须为 true")
 		}
+		// curated_risk 声明的是「1-4 风险档（引擎基线下限）」，此前只写在字段注释里
+		// 却从不校验：99 或 -1 原样放行，宿主拿它当风险下限时得不到任何信号。
+		// 0 因 omitempty 与「未声明」不可区分，故 0 不参与判定。
+		if rec.CuratedRisk != 0 && (rec.CuratedRisk < RiskTierMin || rec.CuratedRisk > RiskTierMax) {
+			critical = append(critical, fmt.Sprintf(
+				"curated_risk 越界: %d（合法区间 %d-%d）",
+				rec.CuratedRisk, RiskTierMin, RiskTierMax))
+		}
 		// —— steps 执行契约（实弹 2026-09-08）：RealRun 逐步骤当 shell 命令执行，
 		// 行动指南 JSON / 中文条目形态会"假成功"（exit=0 但什么都没执行）。一律 critical 拦截重试。
 		for i, st := range rec.Steps.Std() {

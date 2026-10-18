@@ -9,6 +9,7 @@ package protocol
 import (
 	"encoding/json"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/oekit/pkg/jsonrepair"
@@ -131,6 +132,8 @@ func normalizeReportMap(m map[string]any) {
 			normalizeCharts(m, k, v)
 		case "requires_execution", "requires_approval":
 			normalizeBoolField(m, k, v)
+		case "curated_risk":
+			normalizeRiskTier(m, k, v)
 		case "evidence":
 			normalizeEvidenceTools(m, k, v)
 		}
@@ -210,9 +213,16 @@ func normalizeCharts(m map[string]any, k string, v any) {
 }
 
 // normalizeBoolField 布尔字段：字符串 "true"/"false"、1/0 → bool（模型常见形态漂移）。
+// normalizeBoolField 把字符串位收敛成真布尔，与 rawRequiresApproval 同一口径
+// （EqualFold + TrimSpace）。
+//
+// 之前这里是精确匹配 "true"/"false"，于是 "TRUE" / "True" / " true " 三个常见
+// 形态既没被归一化、又过不了严格 unmarshal 到 bool——**单个字符串的大小写就能
+// 炸掉整份报告解析**，降级读 markdown 主体。同包的 rawRequiresApproval
+// 早就用 EqualFold，两套口径不一致才是 bug 的根。
 func normalizeBoolField(m map[string]any, k string, v any) {
 	if s, ok := v.(string); ok {
-		switch s {
+		switch strings.ToLower(strings.TrimSpace(s)) {
 		case "true":
 			m[k] = true
 		case "false":
@@ -220,6 +230,22 @@ func normalizeBoolField(m map[string]any, k string, v any) {
 		}
 	} else if f, ok := v.(float64); ok {
 		m[k] = f != 0
+	}
+}
+
+// normalizeRiskTier 把 curated_risk 的字符串形态收敛成整数。
+//
+// CuratedRisk 是 Rec 里唯一没有容错解码的标量位：Rec 整体走严格 unmarshal，
+// 而字符串位产出数字（"3"）时无任何归一化，直接把整份报告判成非报告——
+// StringMap 的注释把这个失败模式列为最疼的一种，同包却漏了兄弟字段。
+// 引擎基线语义（只升不降）不受影响：解析期只做类型收敛，不改数值。
+func normalizeRiskTier(m map[string]any, k string, v any) {
+	s, ok := v.(string)
+	if !ok {
+		return
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+		m[k] = n
 	}
 }
 

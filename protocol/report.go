@@ -23,6 +23,14 @@ const (
 	ActionNone           = "none"
 )
 
+// 编目声明风险档的合法区间（curated_risk）。此前只写在字段注释里而不校验，
+// 99 或 -1 会原样放行，宿主拿它当「引擎基线下限」时得不到任何信号。
+// 0 不参与判定：字段带 omitempty，0 与「未声明」不可区分。
+const (
+	RiskTierMin = 1
+	RiskTierMax = 4
+)
+
 // 决策与置信枚举。
 const (
 	DecisionPending  = "pending_approval"

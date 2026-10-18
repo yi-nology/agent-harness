@@ -43,11 +43,20 @@ func Parse(v string) State {
 	return State{}
 }
 
-// ColumnValue 落列前的归一：已经是 Encode 产物的原样透传；裸关键词（决策层的
-// clarify 字段可能携带裸词）统一包成指定 Kind 的 JSON，**列内容恒 JSON**。
+// ColumnValue 落列前的归一：**只透传真正解得回的 Encode 产物**，其余（裸关键词、
+// 形似 JSON 但损坏的串、合法 JSON 但不是 State 的对象）一律包成指定 Kind 的 JSON，
+// 保证**列内容恒 JSON**。
+//
+// 守卫原先只有 strings.HasPrefix(clarify, "{")，于是 "{节点A}和{节点B}"、"{"
+// 这类串原样落列；Parse 解不出便返回零值，**挂起态被静默丢掉**——不是降级，
+// 是消失。透传条件改成「真能 Parse 出带 Kind 的 State」，坏串则被当作 Word 保留，
+// 至少内容不丢。
 func ColumnValue(clarify, kind string) string {
-	if clarify == "" || strings.HasPrefix(clarify, "{") {
+	if clarify == "" {
 		return clarify
+	}
+	if s := Parse(clarify); s.Kind != "" {
+		return clarify // 已是 Encode 产物，原样透传
 	}
 	return Encode(State{Kind: kind, Word: clarify})
 }

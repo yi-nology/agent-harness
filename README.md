@@ -39,7 +39,7 @@ delta      增量节流 + 标签分流   模型供应商路由
 
 | 包 | 生产行数 | 外部依赖 | 职责 |
 |---|---|---|---|
-| `protocol` | 1735 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
+| `protocol` | 1777 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
 | `dispatch` | 36 | oagentkit/agent | allow 矩阵物化 + 深度上限 + 自派发拒绝 + 环检测（拓扑经 `EdgeSource` 由宿主提供）|
 | `eventbus` | 341 | oagentkit/runtime | 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责 |
 | `policy` | 64 | cloudwego/eino、oagentkit/toolgate | 操作审计门：阈值只降不升、解析失败即拒 |
@@ -54,7 +54,7 @@ delta      增量节流 + 标签分流   模型供应商路由
 | `tooldisclose` | 615 | oekit/pkg | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分）|
 | `toolfail` | 408 | oekit/pkg | 工具失败的错误分类契约：类别 → 可重试性/退避/需人工为**数据表**而非散落 if；不可归类一律不可重试 |
 | `delta` | 253 | oagentkit/runtime | 增量节流：分片合并 + 权威整段优先 + 确定性收口扫序 |
-| `pending` | 53 | 无 | 多轮挂起态载体：单一编码入口 + 宽容解码（非法值降级为无挂起）|
+| `pending` | 62 | 无 | 多轮挂起态载体：单一编码入口 + 宽容解码（非法值降级为无挂起）|
 | `reminder` | 30 | oagentkit/guardx | 系统注入提示的防伪包裹（门面）：核心已下沉 `guardx/injectband`，本包只保调用路径稳定，宿主调用点一行不动 |
 | `drain` | 188 | oekit/logx、oekit/pkg | 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀（经 `Turns` 接口）|
 | `ptc` | 326 | goja、oekit/concurrency、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面** |
