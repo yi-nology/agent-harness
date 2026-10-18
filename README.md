@@ -37,28 +37,32 @@ delta      增量节流 + 标签分流   模型供应商路由
 
 ## 包清单
 
-| 包 | 行数 | 依赖 | 职责 |
+| 包 | 生产行数 | 外部依赖 | 职责 |
 |---|---|---|---|
-| `protocol` | ~3.3k | oagentkit 无 / jsonrepair / jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
-| `dispatch` | ~160 | oagentkit/agent/dispatch | allow 矩阵物化 + 深度上限 + 自派发拒绝 + 环检测（拓扑经 `EdgeSource` 由宿主提供）|
-| `eventbus` | ~825 | oagentkit/runtime/progress | 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责 |
-| `policy` | ~64 | oagentkit/toolgate/policy | 操作审计门：阈值只降不升、解析失败即拒 |
-| `spill` | ~436 | 无 | 输出预算溢出：提示契约 / 取回 / 按龄清理 |
-| `pii` | ~386 | 无 | 个人信息价值面脱敏（手机号 / 身份证四重校验）|
-| `netguard` | ~86 | 无 | 出站 URL 守卫（SSRF），纯 stdlib 叶子层 |
-| `statemachine` | ~153 | 无 | 环节状态机：条件迁移的纯函数件 |
-| `contract` | ~124 | 无 | 编排运行契约：编排引擎 ↔ 宿主状态的**唯一边界**（纯接口面，零实现）|
-| `checkpoint` | ~250 | contract | 编排续跑契约：进度快照存取边界 + **「续跑而非重放」**的恢复判定（空洞不采信 / 终态不自动重开 / 序号单调闸）|
-| `budget` | ~600 | 无 | 上下文预算：分段计量 + 窗口钳位 + 压实计划骨架（三重空转守卫；摘要生成与原文落盘各留宿主接口）|
-| `offload` | ~460 | 无 | 内联大对象外置：sha 去重 + **两阶段**（首次标记、后续轮才替换占位）+ fail-soft（与 `spill` 是姊妹机制）|
-| `tooldisclose` | ~1245 | 无 | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分）|
-| `toolfail` | ~330 | 无 | 工具失败的错误分类契约：类别 → 可重试性/退避/需人工为**数据表**而非散落 if；不可归类一律不可重试 |
-| `delta` | ~110 | oagentkit/runtime/pacer | 增量节流：分片合并 + 权威整段优先 + 确定性收口扫序 |
-| `pending` | ~70 | 无 | 多轮挂起态载体：单一编码入口 + 宽容解码（非法值降级为无挂起）|
-| `reminder` | ~40 | 无 | 系统注入提示的防伪包裹：source 声明 + body 内伪造标签转义 |
-| `drain` | ~100 | oekit/logx | 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀（经 `Turns` 接口）|
-| `ptc` | ~315 | goja | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面** |
-| `watchdog` | ~127 | 无（用本仓 `eventbus`）| 被动配对不变量监视：环节收口仍有未执行声明 / 结果无对应声明；**只告警不裁决**（热路径裁决在守卫侧）|
+| `protocol` | 1735 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
+| `dispatch` | 36 | oagentkit/agent | allow 矩阵物化 + 深度上限 + 自派发拒绝 + 环检测（拓扑经 `EdgeSource` 由宿主提供）|
+| `eventbus` | 341 | oagentkit/runtime | 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责 |
+| `policy` | 64 | cloudwego/eino、oagentkit/toolgate | 操作审计门：阈值只降不升、解析失败即拒 |
+| `spill` | 251 | oekit/pkg | 输出预算溢出：提示契约 / 取回 / 按龄清理 |
+| `pii` | 541 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）|
+| `netguard` | 412 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress。**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」|
+| `statemachine` | 79 | 无 | 环节状态机：条件迁移的纯函数件 |
+| `contract` | 124 | 无 | 编排运行契约：编排引擎 ↔ 宿主状态的**唯一边界**（纯接口面，零实现）|
+| `checkpoint` | 374 | oekit/pkg | 编排续跑契约：进度快照存取边界 + **「续跑而非重放」**的恢复判定（空洞不采信 / 终态不自动重开 / 序号单调闸）|
+| `budget` | 756 | oekit/pkg | 上下文预算：分段计量 + 窗口钳位 + 压实计划骨架（三重空转守卫；摘要生成与原文落盘各留宿主接口）|
+| `offload` | 589 | oekit/pkg | 内联大对象外置：sha 去重 + **两阶段**（首次标记、后续轮才替换占位）+ fail-soft（与 `spill` 是姊妹机制）|
+| `tooldisclose` | 615 | oekit/pkg | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分）|
+| `toolfail` | 408 | 无 | 工具失败的错误分类契约：类别 → 可重试性/退避/需人工为**数据表**而非散落 if；不可归类一律不可重试 |
+| `delta` | 241 | oagentkit/runtime | 增量节流：分片合并 + 权威整段优先 + 确定性收口扫序 |
+| `pending` | 53 | 无 | 多轮挂起态载体：单一编码入口 + 宽容解码（非法值降级为无挂起）|
+| `reminder` | 30 | 无 | 系统注入提示的防伪包裹：source 声明 + body 内伪造标签转义 |
+| `drain` | 188 | oekit/logx、oekit/pkg | 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀（经 `Turns` 接口）|
+| `ptc` | 321 | goja、oekit/concurrency、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面** |
+| `watchdog` | 127 | 无| 被动配对不变量监视：环节收口仍有未执行声明 / 结果无对应声明；**只告警不裁决**（热路径裁决在守卫侧）|
+
+> 「生产行数」口径：`wc -l` 统计 `*.go` 且**不含** `_test.go`——包体量看的是要交付的实现，
+> 不是它的测试。依赖列只列**仓外** import；「无」表示该包生产代码只用 stdlib。
+> 本表每次改动实现后需同步，`make check` 不覆盖它。
 
 > 「行数」列口径 = **生产代码 + 测试代码**总和，不是纯生产行数。
 > 纯生产口径见 `go test -cover` 的 per-package 输出。

@@ -14,7 +14,7 @@ GOENV    := CGO_ENABLED=0
 # cover-gate 覆盖率阈值（内核仓门禁应随成熟度上调；参照宿主仓做法设真阈值而非永不红）。
 COV_MIN  := 60
 
-.PHONY: build fmt-check vet lint test cover cover-gate architecture-check check tidy clean
+.PHONY: build fmt-check vet lint test race cover cover-gate architecture-check docsync check tidy clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -50,7 +50,10 @@ cover-gate: ## 覆盖率阈值门禁（阈值应随内核成熟度上调，不�
 architecture-check: ## 架构治理门禁（域词污染红线 + 依赖方向）
 	$(EXPORT) $(GOENV) go run ./cmd/archcheck $(if $(findstring --report,$(MAKECMDGOALS)),--report,)
 
-check: fmt-check vet test cover-gate architecture-check ## 提交前门禁聚合
+docsync: ## README 包表 ↔ 仓库实际（生产行数 / 外部依赖）一致性门禁
+	$(EXPORT) $(GOENV) go run ./cmd/docsync
+
+check: fmt-check vet test cover-gate architecture-check docsync ## 提交前门禁聚合
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy
