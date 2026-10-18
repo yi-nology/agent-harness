@@ -28,12 +28,15 @@ import (
 )
 
 // row 解析出来的一行包表记录。
+//
+// 只有 pkg / loc / deps 参与机械校验。职责列是散文（「协议 + 五级容错解析 +
+// 白名单校验」这类描述），**刻意不比对**——把代码事实写成散文再拿去和散文
+// 比，测的是措辞不是实现。能机械判定的只有一件事：不能是空的（见 run）。
 type row struct {
-	pkg   string
-	loc   int
-	deps  []string
-	desc  string
-	table string // 原始整行，供错误信息定位
+	pkg  string
+	loc  int
+	deps []string
+	desc string
 }
 
 var (
@@ -77,11 +80,10 @@ func run() error {
 			return fmt.Errorf("包 %s 的生产行数不是整数: %q", m[1], m[2])
 		}
 		rows = append(rows, row{
-			pkg:   m[1],
-			loc:   loc,
-			deps:  splitDeps(m[3]),
-			desc:  m[4],
-			table: sc.Text(),
+			pkg:  m[1],
+			loc:  loc,
+			deps: splitDeps(m[3]),
+			desc: m[4],
 		})
 	}
 	if err := sc.Err(); err != nil {
@@ -99,6 +101,11 @@ func run() error {
 			continue
 		}
 		seen[r.pkg] = true
+
+		// 职责列散文不比对内容，但空列是机械可判的：整列被误删或截断时拦下。
+		if strings.TrimSpace(r.desc) == "" {
+			problems = append(problems, fmt.Sprintf("%s: 职责列为空", r.pkg))
+		}
 
 		wantLoc, wantDeps, err := measure(r.pkg)
 		if err != nil {
