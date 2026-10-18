@@ -22,7 +22,16 @@ jobs:
       - name: cover-gate
         run: make cover-gate
 
+      # cover-gate 内部跑 go test，pii 的 panic 会让它提前退出、算不出覆盖率。
+      # 这里容错跑一遍，只为拿到总覆盖率数字，与 COV_MIN=60 对照。
+      - name: coverage number (tolerant)
+        if: always()
+        run: |
+          CGO_ENABLED=0 go test ./... -coverprofile=coverage.out -count=1 >/dev/null 2>&1 || true
+          echo "total: $(go tool cover -func=coverage.out | tail -1)"
+
       - name: architecture-check
+        if: always()
         run: make architecture-check
 
       - name: architecture-check full report

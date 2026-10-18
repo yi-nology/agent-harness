@@ -15,7 +15,8 @@ AI 代理在本仓干活时最容易犯的错是「顺手把宿主的需求写�
   **不做静默豁免**。
 - **测试夹具用合成数据**：不要把「内存分析Agent」「本机」「故障诊断」写进测试。
   夹具是契约的示例，示例带领域味就等于把契约钉死在运维域上。
-  （当前 `protocol` 下 12 处为 warn 级债，见 policy `harness-test-fixture-*`。）
+  （当前 15 处为 warn 级债：`protocol` 11 处 + `watchdog` 4 处，
+  见 policy `harness-test-fixture-*`。）
 
 ## 与 oekit 家族的一致性（2026-10-17 确立）
 
