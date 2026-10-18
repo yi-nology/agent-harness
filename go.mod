@@ -15,7 +15,7 @@ require (
 	github.com/cloudwego/eino v0.9.21
 	github.com/dop251/goja v0.0.0-20261010130053-73dc7edc278f
 	github.com/oagentkit/agent v0.2.0
-	github.com/oagentkit/guardx v0.1.0
+	github.com/oagentkit/guardx v0.1.1
 	github.com/oagentkit/runtime v0.3.0
 	github.com/oagentkit/toolgate v0.2.0
 	github.com/oekit/concurrency v0.13.1
