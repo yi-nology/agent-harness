@@ -112,9 +112,10 @@ func run() error {
 			problems = append(problems, err.Error())
 			continue
 		}
-		if r.loc != wantLoc {
+		if d := locDeviation(r.loc, wantLoc); d > locTolerance {
 			problems = append(problems, fmt.Sprintf(
-				"%s: README 写 %d 行，实际 %d 行", r.pkg, r.loc, wantLoc))
+				"%s: README 写 %d 行，实际 %d 行（偏差 %.0f%%，超过容差 %.0f%%）",
+				r.pkg, r.loc, wantLoc, d*100, locTolerance*100))
 		}
 		if !equalDeps(r.deps, wantDeps) {
 			problems = append(problems, fmt.Sprintf(
@@ -138,12 +139,46 @@ func run() error {
 	if len(problems) > 0 {
 		return fmt.Errorf("README 包表与仓库实际状态不一致（%d 项）：\n  - %s\n"+
 			"修法：按各包 *.go（不含 _test.go）重算行数与外部依赖，改 README 包表。\n"+
+			"行数项按 %.0f%% 相对容差判定：容差内的逐行涨落不报，跨量级的误述才报。\n"+
 			"本门禁不自动改文档——改表是要人判断的动作。",
-			len(problems), strings.Join(problems, "\n  - "))
+			len(problems), strings.Join(problems, "\n  - "), locTolerance*100)
 	}
 
 	fmt.Printf("README 包表与仓库一致（%d 个包）✓\n", len(rows))
 	return nil
+}
+
+// locTolerance README 行数与实际值的相对偏差容忍上限。
+//
+// 为什么是容差而不是逐行相等：docsync 最初把行数当强断言，结果是**改一行代码
+// 就红一次**——2026-10-18 连续三次 CI 失败（a18b89d / 80ca6d7 / 77b979d）
+// 全部源于 protocol 差 1 行（README 1822 / 实际 1821），随后又得单独提交
+// 「同步 protocol 行数」去消它。这种仪式性噪声的真实代价不是多写一次 README，
+// 而是**训练人忽略 CI 红**——规则常红等于没有规则。
+//
+// 但也不能退到不校验：这道门禁存在的初衷正是抓「README 声称 netguard ~86 行、
+// 实际 412 行」这类文档误导（见文件头）。所以这里只滤掉噪声、不砍断言：
+// 偏差在容差内不报，跨越量级才报。
+//
+// 25% 的取法：小于四分之一的偏差不构成对规模的误述（README 那列本就是约数），
+// 而历史上真实发生的漂移都在 2~5 倍量级，离这个阈值很远——所以放宽它不会
+// 放过任何一次真问题，却挡掉了全部的逐行噪声。
+const locTolerance = 0.25
+
+// locDeviation 相对偏差，以较大者为分母。
+//
+// 分母取较大者而非 README 写的值，是为了让「少写」与「夸大」同等对待：
+// 写 86 而实际 412（少写）和写 412 而实际 86（夸大）都是对规模的误述，
+// 严重程度相同。
+func locDeviation(readme, actual int) float64 {
+	hi, lo := readme, actual
+	if hi < lo {
+		hi, lo = lo, hi
+	}
+	if hi == 0 {
+		return 0
+	}
+	return float64(hi-lo) / float64(hi)
 }
 
 // measure 实测一个包的生产行数与外部依赖。

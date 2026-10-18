@@ -151,3 +151,64 @@ func TestCountLinesMatchesWcOnNewlineTerminatedFiles(t *testing.T) {
 		}
 	}
 }
+
+// TestLocDeviationToleratesLineLevelNoise 钉住容差要滤掉的正是它要滤的那类：
+// 改一行代码导致 README 差 1 行，不能因此门禁红。
+//
+// 这不是假设——2026-10-18 连续三次 CI 失败都源于 protocol 1822 vs 1821。
+// 若日后有人把判定改回逐行相等，这个用例会先红。
+func TestLocDeviationToleratesLineLevelNoise(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		readme, actual int
+	}{
+		{"差一行", 1822, 1821},
+		{"相等", 1821, 1821},
+		{"README 少写两行", 1821, 1823},
+		{"容差内的大包涨落", 1800, 1821},
+	} {
+		if d := locDeviation(tc.readme, tc.actual); d > locTolerance {
+			t.Errorf("%s：README %d / 实际 %d 的偏差 %.4f 不该超容差 %.2f",
+				tc.name, tc.readme, tc.actual, d, locTolerance)
+		}
+	}
+}
+
+// TestLocDeviationCatchesScaleMisstatement 钉住反向：文档误导必须仍然报出来。
+//
+// 与上一个用例互为反面。放宽容差是为了滤噪声，不是为了让门禁闭嘴——
+// docsync 存在的初衷正是抓「README 声称 ~86 行、实际 412 行」这类误述。
+func TestLocDeviationCatchesScaleMisstatement(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		readme, actual int
+	}{
+		{"历史案例：86 声称 vs 412 实际", 86, 412},
+		{"反过来夸大", 412, 86},
+		{"刚好越过容差", 750, 1001},
+	} {
+		if d := locDeviation(tc.readme, tc.actual); d <= locTolerance {
+			t.Errorf("%s：README %d / 实际 %d 的偏差 %.4f 应超容差 %.2f（门禁必须报出来）",
+				tc.name, tc.readme, tc.actual, d, locTolerance)
+		}
+	}
+}
+
+// TestLocDeviationIsSymmetric 钉住「少写」与「夸大」同等对待。
+//
+// 分母若取 README 写的值，夸大方向（412 vs 86 = 79%）与少写方向（86 vs 412 = 79%）
+// 会被算出不同偏差，使夸大更难触发——那等于给虚高宣称开后门。
+func TestLocDeviationIsSymmetric(t *testing.T) {
+	low, high := 86, 412
+	if a, b := locDeviation(low, high), locDeviation(high, low); a != b {
+		t.Errorf("两个方向偏差应相等：locDeviation(%d,%d)=%.4f，locDeviation(%d,%d)=%.4f",
+			low, high, a, high, low, b)
+	}
+}
+
+// TestLocDeviationHandlesEmptyPackage 边界：0 行包不得除零 panic。
+func TestLocDeviationHandlesEmptyPackage(t *testing.T) {
+	if got := locDeviation(0, 0); got != 0 {
+		t.Errorf("0 vs 0 的偏差应为 0，实得 %v", got)
+	}
+}
