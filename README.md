@@ -205,5 +205,9 @@ if err := g.Assert(caller, callee, depth); err != nil { /* 结构化 *DenyError 
 
 - 新增能力前先问：**这是机制还是资产？** 资产进宿主/领域包，机制才进本仓。
 - 新依赖方向先改 policy 再写代码；例外带注释写明拆除条件。
-- 内核包规模远小于宿主，`max_file_lines: 400` 可直接阻断（宿主仓是报告口径）。
+- 内核包规模远小于宿主，`max_file_lines: 400` 直接阻断（宿主仓是报告口径）。
+  2026-10-18 起 `thresholds.enforce` 由 false 切 true：此前 3 处超长文件
+  （`protocol/report_types.go` 660、`protocol/report_test.go` 782、
+  `cmd/archcheck/main.go` 490）已拆分归零，切换条件才成立。**拆分只为满足
+  机械阈值，单文件读不动时该模块应重新分组，而不是继续往上加。**
 - 拆自宿主仓的代码历史见 `docs/SPLIT_PLAN.md`（L2/L3 待拆部分）。

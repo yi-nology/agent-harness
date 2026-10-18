@@ -332,12 +332,17 @@ thresholds:
   # 的实例，故此判据比行数更能提前报警。
   max_methods_per_type: 25
   scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, watchdog, delta, pending, reminder, drain, contract, checkpoint, budget, offload, tooldisclose, toolfail, cmd]
-  enforce: false
-  # enforce=true 时超阈值即非零退出。切换条件：
+  enforce: true
+  # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
-  #   2) 接入 CI（本地 gate 会被习惯性绕过，CI 不会）。
-  # 当前为 false：内核仓规模小、超限面为零，但门禁先跑报告口径积累基线，
-  # 待 CI 接入即切 true。
+  #      ——3 处超长文件已拆分归零：
+  #        protocol/report_types.go    660 → report_types(329) + report_charts(341)
+  #        protocol/report_test.go     782 → report_test(373) + report_charts_test(227)
+  #                                       + report_tolerance_test(196)
+  #        cmd/archcheck/main.go       490 → main(175) + policy(84) + scan(253)
+  #   2) 接入 CI（本地 gate 会被习惯性绕过，CI 不会）——本门禁在 make check 里，
+  #      而 make check 就是 CI 唯一执行物。
+  # god object 判据（max_methods_per_type）当前零违规，随本条一并转为阻断。
 
 exceptions: []
 # 当前无例外。
