@@ -140,6 +140,37 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 > macOS：本机 go build/test 一律带 `CGO_ENABLED=0`（新 SDK 27.0 与 CLT linker
 > 不兼容 + 许可未接受），Makefile 已内置。
 
+## 本地多仓并行开发
+
+本仓处在 `oagentkit` / `oekit` 矩阵里，改本仓时经常要同时改上游仓（如 guardx）。
+这里有个必须知道的陷阱：
+
+> **Go 的 `replace` 只在主模块生效，依赖模块的 replace 不级联。**
+
+在本仓 `go.mod` 里写 `replace github.com/oagentkit/guardx => ./.guardx-work/guardx`，
+本仓构建全绿（自己就是主模块）；但下游宿主把本仓当依赖时，这条 replace 被**静默忽略**，
+guardx 按 MVS 回落到已发布的旧版本，于是报
+`no required module provides package github.com/oagentkit/guardx/injectband`——
+错指 guardx，真正原因（本仓依赖了未发布的新包）不出现，一行本地验证代码断掉所有下游。
+
+正确姿势是 workspace（`use` 跨仓生效，且不碰任何 go.mod）：
+
+```bash
+git clone https://github.com/oagentkit/guardx.git .guardx-work/guardx   # 未跟踪
+make devlink     # 生成本地 go.work，把 guardx 工作副本接入
+# ...改 guardx，本仓构建即时生效...
+make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
+```
+
+配套纪律：
+
+1. **go.mod 零 replace。** CI `go.mod 不得含 replace` / `go.work 不得入库` 两条门禁强制，
+   本地 `go.work` 由 `.gitignore` 兜底。
+2. **go.mod 里 require 的版本必须是已发布的 tag。** 若确需依赖未发布的新包，
+   用 `make devlink`，不要动 go.mod。CI 在干净环境构建，未发布版本解析不到直接红——
+   这是发版顺序纪律的第二道防线。
+3. **验下游而不是只验本仓。** 本仓作为主模块绿，不代表作为依赖也绿（replace 的失效就发生在这个差别里）。
+
 ## 宿主接入
 
 ```go

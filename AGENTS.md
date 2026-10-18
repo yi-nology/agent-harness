@@ -84,6 +84,12 @@ make architecture-check   # 单跑架构门禁；--report 看全量
 - 若遇 `checksum mismatch`：先确认是否**同名 tag 被重推**
   （`agentkit` / `oekit` 历史上发生过）。修法：
   摘掉 `go.sum` 旧 hash 行 → 直取重建 → **不要** `git add -A` 式覆盖别人的 go.sum。
+- **要同时改上游矩阵仓（guardx 等）时，用 `make devlink` / `make devunlink`**，
+  **不要**在 go.mod 写 `replace => ./.guardx-work/...`。
+  根因：replace 只在主模块生效，本仓自己构建全绿，下游把它当依赖时该 replace 被静默忽略，
+  guardx 按 MVS 回落到已发布旧版本 → 报 `no required module provides package ...injectband`，
+  错指 guardx 而非真正原因（见 issue #1）。CI 的 `go.mod 不得含 replace` /
+  `go.work 不得入库` 两条门禁已做反向验证，别绕过。
 
 ## 会话协作
 

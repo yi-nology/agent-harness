@@ -31,11 +31,35 @@ jobs:
       # 公开 Go module 的最后一道防线。go.mod 里的 replace（无论注释写得多
       # 严肃）指向本机路径时，外部 go get 会在解析依赖图时直接失败——而且
       # 发布那一刻没有任何本地信号，只有下游用户报「拉不下来」才暴露。
-      # 宿主本地并行开发用 replace 没问题，但那条 replace 属于宿主的 go.mod。
+      #
+      # 关键在于 replace 只在**主模块**生效：本仓自己是主模块 → 本地全绿；
+      # 下游把它当依赖 → 该 replace 被静默忽略 → 按 MVS 回落旧版本 →
+      # 报 `no required module provides package ...`，错指依赖而非真正原因。
+      # 本地并行开发请用 `make devlink`（go.work 跨仓生效，且不碰 go.mod）。
       - name: go.mod 不得含 replace
         run: |
           if grep -nE '^[[:space:]]*replace' go.mod; then
-            echo '::error::go.mod 含 replace 指令。本仓是公开 module，本地路径的 replace 一旦入库，所有外部 go get 都会失败。请删除该行（本地验证请用未跟踪的副本或 GOFLAGS）。'
+            echo '::error::go.mod 含 replace 指令。本仓是公开 module，本地路径的 replace 一旦入库，所有外部 go get 都会失败。请删除该行（本地验证请用 make devlink 走 go.work）。'
             exit 1
           fi
           echo "go.mod 无 replace ✓"
+
+      # workspace 文件同理不得入库：go.work 会让 clone 下本仓的人进入
+      # workspace 模式（go.mod 的版本解析被整体旁路），而 CI 检出环境里
+      # 根本没有那些本机路径，构建会以「目录不存在」失败，且报错与真实
+      # 原因（有人把本机路径提交了）毫无关联。检查「是否被跟踪」而非
+      # 「文件是否存在」：本地生成未提交才是正确状态。
+      #
+      # 注意别写成 `git ls-files --error-unmatch go.work go.work.sum`：
+      # --error-unmatch 是「任一 pathspec 没命中就整体非零退出」，于是
+      # 「go.work 已入库、go.work.sum 没入库」这个最常见的组合会被**放行**。
+      # 该写法已实测漏报（反向验证时才发现），改用无 --error-match 的
+      # `git ls-files -- <paths>`，输出为空即未跟踪。
+      - name: go.work 不得入库
+        run: |
+          tracked=$(git ls-files -- go.work go.work.sum)
+          if [ -n "$tracked" ]; then
+            echo "::error::go.work / go.work.sum 被 git 跟踪：$tracked。本地并行开发用 make devlink 生成的文件只应存在于本机。请 git rm --cached go.work go.work.sum，并确认 .gitignore 已覆盖。"
+            exit 1
+          fi
+          echo "go.work 未入库 ✓"

@@ -42,6 +42,14 @@
 #
 # 宿主（如 bianque）本地并行开发用 replace 指向 ../agent-harness 没问题，
 # 但那条 replace 属于**宿主**的 go.mod，不属于本仓。
+#
+# 本地多仓并行开发改用 workspace（make devlink）：`use` 跨仓生效、不碰 go.mod。
+# 但 go.work 同样**不得入库**——它在 clone 下来的人机器上会激活 workspace 模式
+# （go.mod 的版本解析被整体旁路），且其中 `use` 的本机路径在别处不存在。
+# 门禁同样在 .github/workflows/ci.yml。
+
+/go.work
+/go.work.sum
 
 # 本地拉取/改依赖用的外部源码工作区（当前：guardx 本地验证 injectband 转发）
 /.guardx-work/
