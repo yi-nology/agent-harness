@@ -164,17 +164,22 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 配套纪律：
 
-1. **go.mod 零 replace。** CI `go.mod 不得含 replace` / `go.work 不得入库` 两条门禁强制，
-   本地 `go.work` 由 `.gitignore` 兜底。
+1. **go.mod 零 replace。** `go.mod 不得含 replace` / `go.work 不得入库` 两条门禁在
+   `make check` 里（本地与 CI 同一条路径），本地 `go.work` 由 `.gitignore` 兜底。
 2. **go.mod 里 require 的版本必须是已发布的 tag。** 若确需依赖未发布的新包，
    用 `make devlink`，不要动 go.mod。CI 在干净环境构建，未发布版本解析不到直接红——
    这是发版顺序纪律的第二道防线。
-3. **验下游而不是只验本仓。** 本仓作为主模块绿，不代表作为依赖也绿（replace 的失效就发生在这个差别里）。
+3. **workspace 期间别跑 `go work sync`。** 它按 workspace 的构建列表**回写**各模块的
+   `go.mod` / `go.sum`：仓不全时用不到的依赖会被直接删掉（实测把 oagentkit 的四个依赖
+   整片剥掉）。要整合同步，先 `make devunlink`，再在单模块下 `go mod tidy`。
+4. **`make devlink` 可重复执行。** 已有 `go.work` 时走 `go work use -add` 追加而不是
+   重建，所以往 workspace 里加第二个仓不会抹掉别人已加的条目。
+5. **验下游而不是只验本仓。** 本仓作为主模块绿，不代表作为依赖也绿（replace 的失效就发生在这个差别里）。
 
 ## 宿主接入
 
 ```go
-// go.mod：发布后删除 replace，回到与 oagentkit 一致的版本化引入
+// go.mod：本仓自 v0.1.0 起已发布，零 replace，直接版本化引入
 require github.com/yi-nology/agent-harness v0.1.0
 ```
 
