@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dop251/goja"
+	"github.com/oagentkit/toolgate/invoke"
 	"github.com/oekit/pkg/errors"
 )
 
@@ -132,6 +133,16 @@ func TestSuggestionsPresentForEveryFailureKind(t *testing.T) {
 		"syntax":            Run(context.Background(), "let c = (;", nil, Options{}),
 		"binding_collision": Run(context.Background(), "return 1", []Binding{okBind("a-b", "1"), okBind("a_b", "2")}, Options{}),
 		"runtime":           Run(context.Background(), "const y = null; return y.x.y;", nil, Options{}),
+		"stage_denied": Run(context.Background(), `host.t("x")`,
+			[]Binding{{Name: "t", Call: func(context.Context, string) (string, error) { return "x", nil }}},
+			Options{Stages: []invoke.Stage{invoke.StageFunc{StageName: "审计门", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+				return invoke.Verdict{Allow: false, Reason: "变更须走方案审批"}, nil
+			}}}}),
+		"stage_failed": Run(context.Background(), `host.t("x")`,
+			[]Binding{{Name: "t", Call: func(context.Context, string) (string, error) { return "x", nil }}},
+			Options{Stages: []invoke.Stage{invoke.StageFunc{StageName: "crasher", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+				panic("环里炸了")
+			}}}}),
 	}
 
 	for kind, r := range cases {

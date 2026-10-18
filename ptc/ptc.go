@@ -132,7 +132,12 @@ type CallRecord struct {
 // ""=成功 / deadline / budget_calls / budget_bytes / runtime（JS 异常或拒绝）/
 // pending（await 永不落定——VM 无定时器，此类程序永不完成）/ bad_result（return 值
 // 不可 JSON 序列化）/ syntax（程序体语法错误，预检期即拒，带 goja 行号）/
-// binding_collision（绑定撞名，见 findBindingCollision）。
+// binding_collision（绑定撞名，见 findBindingCollision）/
+// stage_denied（判定环判定拒绝）/ stage_failed（判定环自身故障，见 stageOutcome）。
+//
+// stage_denied 与 stage_failed 分开不是分类洁癖：前者是**正常裁决**，程序改不掉它，
+// 只能换工具或走审批；后者是**宿主门禁自己坏了**，程序更不该改它。合成一个
+// runtime 的话，调用方会去改那段本来没问题的程序，而真正该修的是守卫代码。
 //
 // Location 与 Suggestions 是给**模型**读的诊断面：调用方是模型，只回一个类别串
 // 对它几乎不可用——它不知道该改哪一行，也不知道该改成什么。详见 diagnostic.go。
@@ -149,6 +154,12 @@ type Result struct {
 	Calls       int
 	Bytes       int
 	CallLog     []CallRecord
+	// stageErr 本次执行里判定环给出的类型化错误（nil 表示没有）。
+	//
+	// 刻意不导出、也不进 JSON：它给的是**收口处做分类**用的，不是给调用方读的。
+	// JS 拒绝只保留字符串（goja 的 rejection reason 经格式化即失真），类型化判定
+	// 结论走不了序列化那条路，只能由绑定闭包在这里夹带出来。
+	stageErr error
 }
 
 // findBindingCollision 找绑定面的标识符冲突：工具名经 jsIdent 净化后可能撞名。
@@ -300,7 +311,11 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 		res.OK = true
 		res.Value = strings.TrimSpace(buf.String())
 	case goja.PromiseStateRejected:
-		res.Error, res.ErrorKind = fmt.Sprintf("程序拒绝: %v", p.Result()), "runtime"
+		if kind, prefix := stageOutcome(res.stageErr); kind != "" {
+			res.Error, res.ErrorKind = fmt.Sprintf("%s: %v", prefix, p.Result()), kind
+		} else {
+			res.Error, res.ErrorKind = fmt.Sprintf("程序拒绝: %v", p.Result()), "runtime"
+		}
 	default:
 		res.Error, res.ErrorKind = "await 永不落定的 Promise（VM 无定时器，绑定均为同步调用）", "pending"
 	}

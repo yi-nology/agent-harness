@@ -119,6 +119,75 @@ func TestStagesFailClosedOnStageError(t *testing.T) {
 	}
 }
 
+// TestStagesFaultAndDenyGetDistinctKinds 守卫崩了与守卫判定拒绝必须是两个类别。
+//
+// 这条区分决定调用方去修谁：合成一类，调用方就会去改那段本来没问题的程序，
+// 而真正该修的是守卫代码。判据取自 invoke 的归口哨兵（ErrStageFailed 只在
+// 「环自身出错」时归口），不读环节名——归口环节名是上游包内未导出常量。
+func TestStagesFaultAndDenyGetDistinctKinds(t *testing.T) {
+	bind := Binding{Name: "t", Call: func(context.Context, string) (string, error) { return "x", nil }}
+	deny := invoke.StageFunc{StageName: "审计门", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+		return invoke.Verdict{Allow: false, Reason: "变更须走方案审批"}, nil
+	}}
+	crasher := invoke.StageFunc{StageName: "crasher", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+		panic("环里炸了")
+	}}
+
+	cases := []struct {
+		name       string
+		ring       invoke.Stage
+		wantKind   string
+		wantPrefix string
+	}{
+		{"判定拒绝", deny, "stage_denied", "判定环拒绝"},
+		{"守卫崩溃", crasher, "stage_failed", "判定环故障"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := Run(context.Background(), `host.t("x")`, []Binding{bind},
+				Options{Stages: []invoke.Stage{tc.ring}})
+
+			if r.OK {
+				t.Fatalf("未被程序接住的门禁失败应判失败，实得 OK=true value=%s", r.Value)
+			}
+			if r.ErrorKind != tc.wantKind {
+				t.Fatalf("ErrorKind 应为 %s，实得 %q（Error=%q）", tc.wantKind, r.ErrorKind, r.Error)
+			}
+			if !strings.HasPrefix(r.Error, tc.wantPrefix) {
+				t.Fatalf("Error 前缀应为 %q（别让模型以为是程序自己抛的），实得 %q", tc.wantPrefix, r.Error)
+			}
+			if len(r.Suggestions) == 0 {
+				t.Fatalf("失败必须带面向模型的建议（kind=%s）", r.ErrorKind)
+			}
+			advice := strings.Join(r.Suggestions, "；")
+			if !strings.Contains(advice, "门禁") {
+				t.Fatalf("建议应点明是宿主门禁而非程序 bug，实得 %q", advice)
+			}
+		})
+	}
+
+	// 守卫故障的建议必须说清「改程序没用」——否则模型会去反复改那段没问题的程序。
+	fault := Run(context.Background(), `host.t("x")`, []Binding{bind},
+		Options{Stages: []invoke.Stage{crasher}})
+	if !strings.Contains(strings.Join(fault.Suggestions, "；"), "不是程序的问题") {
+		t.Fatalf("守卫故障的建议应明说不是程序的问题，实得 %v", fault.Suggestions)
+	}
+
+	// 反向：策略拒绝不该拿到与 JS 运行时错误同一套建议——那套让模型去查参数形状，
+	// 对一次策略拒绝是完全错的方向。比对的是「整份建议」，不比对某几个字：
+	// 措辞会变，「建议是否指错了方向」这件事不会。
+	denied := Run(context.Background(), `host.t("x")`, []Binding{bind},
+		Options{Stages: []invoke.Stage{deny}})
+	runtimeCase := Run(context.Background(), `const y = null; return y.x.y;`, nil, Options{})
+	if runtimeCase.ErrorKind != "runtime" {
+		t.Fatalf("对照样本应是 runtime，实得 %q", runtimeCase.ErrorKind)
+	}
+	if strings.Join(denied.Suggestions, "；") == strings.Join(runtimeCase.Suggestions, "；") {
+		t.Fatalf("策略拒绝不该复用 runtime 的建议（那会把模型引向参数形状），实得 %v", denied.Suggestions)
+	}
+}
+
 // TestStagePanicDoesNotKillProgram 判定环 panic 不得杀掉编排进程，
 // 且**不得被归口成「守卫自己判定拒绝」**。
 //

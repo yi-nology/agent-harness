@@ -14,6 +14,7 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/oagentkit/toolgate/invoke"
+	"github.com/oekit/pkg/errors"
 )
 
 // mountBindings 把全部绑定挂到 vm 的 host 对象上，并挂程序内发现入口。
@@ -57,6 +58,10 @@ func mountBindings(
 				res.CallLog = append(res.CallLog, CallRecord{
 					Name: b.Name, Status: StatusDenied, Error: serr.Error(),
 				})
+				// 类型化判定结论夹带出去：JS 拒绝只剩字符串，而收口处要靠它把
+				// 「守卫判定拒绝」与「守卫自己崩了」分成两类（见 stageOutcome）。
+				// 程序自己 try/catch 掉时用不到，只在未被捕获的路径上被读到。
+				res.stageErr = serr
 				panic(vm.NewGoError(serr))
 			}
 			start := time.Now()
@@ -166,3 +171,24 @@ const (
 	StatusError  = "error"  // 执行体报错
 	StatusDenied = "denied" // 被判定环拒绝，**未触达执行体**
 )
+
+// stageOutcome 把判定环的错误映射成 (ErrorKind, 错误前缀)。
+//
+// 第一返回值为空串表示「这次失败与判定环无关」，调用方保留自己的分类。
+//
+// 两个取值直接对应 invoke 的归口，不是本包另定的一套语义：
+//   - stage_denied：守卫判定拒绝（正常裁决），前缀「判定环拒绝」；
+//   - stage_failed：守卫自己报错/崩溃，或压根没有可判定的对象（空名），
+//     前缀「判定环故障」——那是宿主侧的故障，不是程序的问题。
+//
+// 判据用 errors.Is 而不是读 Stage 字段：归口环节名是 invoke 包内未导出常量，
+// 本包引用不到；哨兵错误是它留的公开契约。
+func stageOutcome(serr error) (kind, prefix string) {
+	if serr == nil {
+		return "", ""
+	}
+	if errors.Is(serr, invoke.ErrStageFailed) || errors.Is(serr, invoke.ErrEmptyName) {
+		return "stage_failed", "判定环故障"
+	}
+	return "stage_denied", "判定环拒绝"
+}
