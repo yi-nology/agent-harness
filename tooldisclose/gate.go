@@ -90,6 +90,54 @@ func Retryable(err error) bool {
 	return false
 }
 
+// Guidance 该次拒绝面向模型的指引：既说清发生了什么，也说清下一步该做什么。
+//
+// # 为什么门禁必须能对模型说话
+//
+// 本包的机器侧契约一直很完整：哨兵二分、Retryable 自报、Activated 副作用，
+// 都在为**程序**决策服务。但模型不是程序——它看到一句「工具 schema 尚未取回」
+// 之后无从判断该重试还是该换工具，只能自己猜。而两类结局要求的行为恰好相反：
+// 未加载时**必须重试**（且已经激活，重试必成），不在目录时**必须停手**。
+// 指引缺位时，模型在第二类上继续重试，就会把一次策略否定拖成一段空转。
+//
+// # 为什么不是可选能力
+//
+// 判据建了没人读等于没建。与其让每个宿主各写一份文案（拼法散落必然漂移，
+// 而模型对措辞的敏感度远高于人），不如由本包给出唯一措辞——这是
+// toolfail.Guidance 同一套纪律的第二次落地。
+func (e *GateError) Guidance() string {
+	if e == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(e.kind, ErrNotLoaded):
+		// 带出工具名：审计要能回答「哪一次调用被拒」，模型也要知道该重试哪一个。
+		return fmt.Sprintf(
+			"工具 %q 在可用目录内，但完整参数说明尚未取回。本次调用已把它激活，请以相同参数直接重新调用同一工具——下一次即可成功。",
+			e.Name)
+	case errors.Is(e.kind, ErrNotInCatalog):
+		return fmt.Sprintf(
+			"工具 %q 不在可用目录内，从未提供过。请不要重试，改用目录内的其他工具。",
+			e.Name)
+	default:
+		// 认不出的门禁结局（正常路径不会到这里）：给中性句而不是空串——
+		// 空串会让模型看到一条没有内容的拒绝，转而去猜。
+		return fmt.Sprintf("工具 %q 的调用已被拒绝。", e.Name)
+	}
+}
+
+// Guidance 取出任意错误的门禁指引。非门禁错误返回空串（调用方据此判断要不要回退到自己的文案）。
+//
+// 认不出就返回空而不是编一句：本包只对自己的两类结局有把握，
+// 替别人的错误编措辞会把无关的失败也套上门禁口径。
+func Guidance(err error) string {
+	var ge *GateError
+	if errors.As(err, &ge) && ge != nil {
+		return ge.Guidance()
+	}
+	return ""
+}
+
 // Gate 工具执行门禁。
 type Gate struct{ cat *Catalog }
 

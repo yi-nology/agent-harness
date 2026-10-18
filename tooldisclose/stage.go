@@ -35,6 +35,17 @@ const StageName = "tool_disclosure"
 //
 // cat 为 nil 时按「不在目录内」处理——即 fail-closed：不装配目录就是没有工具，
 // 门禁不因缺配置而乐观放行（与 Gate.Check 在空目录下的语义一致）。
+//
+// # 为什么 Reason 回的是指引而不是 err.Error()
+//
+// 链上的 Verdict.Reason 是宿主把这环结论交给上层的唯一出口，绝大多数宿主会
+// 把它原样送进模型可见的失败消息。而两类结局要求模型做的动作恰好相反：
+// 未加载要**重试**、不在目录要**换工具**。回一句「工具不在目录内」的话，
+// 模型只知道自己被拒了，接下来做什么全靠猜——而在第二类上继续重试，
+// 就是把一次策略否定拖成一段空转。
+//
+// 指引文本本身含工具名，审计要的「哪次调用被拒」不会因此丢失，
+// 故同一字段同时满足留痕与模型两头的需要，不需要再开一个字段。
 func Stage(cat *Catalog) invoke.Stage {
 	g := NewGate(cat)
 	return invoke.StageFunc{
@@ -44,9 +55,15 @@ func Stage(cat *Catalog) invoke.Stage {
 			if err == nil {
 				return invoke.Verdict{Allow: true}, nil
 			}
+			reason := Guidance(err)
+			if reason == "" {
+				// 兜底：Check 只产出本包两类结局，理论上到不了这里；
+				// 真到了也不能交白卷——空 Reason 会让审计与模型同时失去依据。
+				reason = err.Error()
+			}
 			return invoke.Verdict{
 				Allow:     false,
-				Reason:    err.Error(),
+				Reason:    reason,
 				Retryable: Retryable(err),
 			}, nil
 		},
