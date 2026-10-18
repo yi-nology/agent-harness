@@ -166,9 +166,7 @@ func measure(pkg string) (int, []string, error) {
 		loc += strings.Count(string(b), "\n")
 		for _, m := range importRe.FindAllStringSubmatch(string(b), -1) {
 			path := m[1]
-			// 必须带 / 边界：纯 HasPrefix 会把 agent-harness-fork 之类
-			// **真实的外部依赖**当成自身而静默排除，漏判方向与门禁职责相反。
-			if path == selfModule || strings.HasPrefix(path, selfModule+"/") {
+			if isSelfPath(path) {
 				continue // 本仓自身不算外部依赖
 			}
 			if !looksLikeModulePath(path) {
@@ -183,6 +181,15 @@ func measure(pkg string) (int, []string, error) {
 	}
 	sort.Strings(deps)
 	return loc, deps, nil
+}
+
+// isSelfPath 判断路径是否指向本仓自身（含其子包）。
+//
+// 必须带 / 边界：纯 strings.HasPrefix(path, selfModule) 会把
+// agent-harness-fork 这类**真实的外部依赖**当成自身而静默排除——
+// 那是漏判方向，与门禁职责正好相反，且无声无息。
+func isSelfPath(p string) bool {
+	return p == selfModule || strings.HasPrefix(p, selfModule+"/")
 }
 
 // looksLikeModulePath 判断一个带引号 token 是否长得像 Go module 路径。
