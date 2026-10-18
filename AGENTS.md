@@ -109,6 +109,9 @@ make architecture-check   # 单跑架构门禁；--report 看全量
 
 ## 会话协作
 
+- **提交身份固定为 `MurphyYi <zy84338719@hotmail.com>`**，本仓已 `--local` 配好。
+  该 identity 在本仓的 local config 里，**不要动 global**（global 是别的项目在用的工作身份）；
+  也不要用 `-c user.name=...` 临时覆盖绕过——那样绕过的是约定不是修正。
 - 提交用 `git add <具体路径>`，**禁止 `git add -A`**（历史教训：卷入 scratch 目录）。
 - 中文文档批量编辑后 `grep U+FFFD` 自检。
 - macOS bash 3.2 多字节炸弹：`$VAR` 后紧跟中文/全角字符时 bash 会把多字节首字节
