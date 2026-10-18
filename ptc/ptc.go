@@ -72,7 +72,8 @@ type CallRecord struct {
 // Result 执行结果：失败是结果字段不是异常。ErrorKind：
 // ""=成功 / deadline / budget_calls / budget_bytes / runtime（JS 异常或拒绝）/
 // pending（await 永不落定——VM 无定时器，此类程序永不完成）/ bad_result（return 值
-// 不可 JSON 序列化）/ syntax（程序体语法错误，预检期即拒，带 goja 行号）。
+// 不可 JSON 序列化）/ syntax（程序体语法错误，预检期即拒，带 goja 行号）/
+// binding_collision（绑定撞名，见 bindCollision）。
 type Result struct {
 	OK        bool
 	Value     string // return 值的 JSON 文本（成功时恒合法 JSON，undefined→"null"）
@@ -81,6 +82,37 @@ type Result struct {
 	Calls     int
 	Bytes     int
 	CallLog   []CallRecord
+}
+
+// findBindingCollision 找绑定面的标识符冲突：工具名经 jsIdent 净化后可能撞名。
+//
+// # 为什么必须撞名即拒，而不是「后绑覆盖前绑」
+//
+// jsIdent 把 `-` `.` 等非标识符字符一律映射成 `_`，于是 `get-logs` 与 `get_logs`
+// 净化后同为 `get_logs`。若放任覆盖，程序里 `host.get_logs()` 拿到的是**另一个工具**：
+// 不是「那个工具调不到」，是**顶替**——模型以为调了 A，实际执行的是 B 的副作用，
+// 无报错、无日志、CallLog 里还照常记着 B 的账。
+//
+// 对只读工具这只是结果不对；对有副作用的工具（重启、删除、写入），这是执行了
+// 调用方没打算执行的东西。
+//
+// 故照「撞名即定义错误」处置：装配期就拒，不进 VM。对应 OpenCode 的
+// `Extension "<name>" global "<g>" is already defined`。
+//
+// 空标识符（工具名全是非标识符字符）不算冲突——那类绑定本就挂不上，见挂载处的跳过。
+func findBindingCollision(bindings []Binding) (ident, first, dup string, ok bool) {
+	seen := make(map[string]string, len(bindings))
+	for _, b := range bindings {
+		id := jsIdent(b.Name)
+		if id == "" {
+			continue
+		}
+		if prev, hit := seen[id]; hit {
+			return id, prev, b.Name, true
+		}
+		seen[id] = b.Name
+	}
+	return "", "", "", false
 }
 
 // Run 执行一段 PTC 程序：program 作 async 函数体（顶层 await/return 可用）。
@@ -107,6 +139,15 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 	}
 
 	res := Result{}
+
+	// 绑定面冲突预检：装配期缺陷，先于语法预检暴露——程序还没编译就已经跑不到
+	// 「那个工具」了，先报语法错误只会把根因往后推一层。
+	if ident, first, dup, ok := findBindingCollision(bindings); ok {
+		res.Error = fmt.Sprintf("绑定标识符冲突：工具 %q 与 %q 净化后同为 host.%s，程序无法区分二者，故拒绝执行",
+			first, dup, ident)
+		res.ErrorKind = "binding_collision"
+		return res
+	}
 
 	// 语法预检（批三百零七）：先编译后建 VM——语法错误带 goja 行号在 syntax kind 里
 	// 如实回包，不烧预算不进 VM（运行期 RunString 的同类错误混在 runtime kind 里
@@ -183,11 +224,19 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 			return vm.ToValue(out)
 		}
 		// 工具名→JS 标识符（-/. 等归 _；数字开头加 _ 前缀；空名跳过）。
+		// 撞名已在装配期由 findBindingCollision 拒掉，这里不可能再撞——
+		// 但仍不丢弃 Set 的错误：goja 的 Set 在只读属性等情形下会返回 error，
+		// `_ =` 扔掉它就等于让「绑定没挂上」这件事没有任何信号。
 		name := jsIdent(b.Name)
 		if name == "" {
 			continue
 		}
-		_ = host.Set(name, fn)
+		if err := host.Set(name, fn); err != nil {
+			return Result{
+				Error:     fmt.Sprintf("绑定 %q 挂载失败: %v", b.Name, err),
+				ErrorKind: "runtime",
+			}
+		}
 	}
 	_ = vm.Set("host", host)
 
