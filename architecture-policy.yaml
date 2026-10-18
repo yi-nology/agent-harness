@@ -237,6 +237,10 @@ rules:
 
   # 规则二：harness 不得反向依赖宿主。这是拆分的定义性约束——
   # 一旦 harness import 宿主仓，harness 就永久绑死在运维域上。
+  #
+  # 两个前缀都要列：宿主仓 2026-10-18 起在 GitHub 上有正式仓
+  # yi-nology/bianque，只拦旧私有域名等于给新路径开后门——
+  # module path 迁到 github.com/yi-nology/ 之后，import 宿主完全绕得过去。
   - id: harness-no-host-dependency
     desc: 内核不得依赖宿主仓任何包
     severity: error
@@ -244,12 +248,13 @@ rules:
     include: ["*.go"]
     ignore_test: false
     scope_exclude: [cmd]
-    forbid_import_regex: 'git\.enjoye\.top/enjoydream/bianque/'
+    forbid_import_regex: 'git\.enjoye\.top/enjoydream/bianque/|github\.com/yi-nology/bianque/'
 
   # 规则三：harness 包不得依赖宿主的运行时原语库。
   # 2026-10-18 起**不再允许门面 agentkit**（上游私有旧门面仓）：
   # 该门面已发至 v1.0.0 并进入退役期，agent 原语统一走 github.com/oagentkit/<mod>。
   # 门禁不认「文档里说过要迁」——不写进机器约束的约定半年后必然回退。
+  # 同规则二：新旧两个宿主前缀都列，理由见上。
   - id: harness-no-domain-runtime-deps
     desc: 内核不得引入宿主仓与领域运行时（含已退役的 agentkit 门面）
     severity: error
@@ -257,7 +262,7 @@ rules:
     include: ["*.go"]
     ignore_test: true
     scope_exclude: [cmd]
-    forbid_import_regex: 'git\.enjoye\.top/enjoydream/(bianque|ekit|agentkit)/'
+    forbid_import_regex: 'git\.enjoye\.top/enjoydream/(bianque|ekit|agentkit)/|github\.com/yi-nology/(bianque|ekit|agentkit)/'
 
   # ── oekit 家规（矩阵一致性）──
   #
