@@ -30,7 +30,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -48,18 +47,6 @@ type Span struct {
 	Start int
 	End   int
 }
-
-// enabled 全局开关（缺省开=secure by default，logredact 同语义）。run.go 启动
-// 时经 SetEnabled 注入 conf 三态取值；测试可临时翻转（用完还原）。
-var enabled atomic.Bool
-
-func init() { enabled.Store(true) }
-
-// SetEnabled 注入开关（conf security.pii_value_mask / env BQ_PII_VALUE_MASK）。
-func SetEnabled(on bool) { enabled.Store(on) }
-
-// Enabled 当前是否启用（关闭时 Redact/RedactValue 原样透传，零改写）。
-func Enabled() bool { return enabled.Load() }
 
 // 手机号：可选 +86/0086 前缀 + 1[3-9] 开头 11 位。裸 86 前缀不认（与数字串
 // 无法区分，保守放弃）。
@@ -179,7 +166,7 @@ func dedupeSpans(in []Span) []Span {
 // 策略处置（不再是硬编码 mask），但拿不到 blocked 信号——宿主若需要 fail-closed
 // 处置（策略配成 block 时必须中断），请改用 Apply / ApplyValue。
 func Redact(s string) string {
-	out, _ := applyAny(s)
+	out, _ := applyAny(CurrentPolicy(), s)
 	return out
 }
 
@@ -206,6 +193,6 @@ func maskSpan(v string, kind Kind) string {
 //
 // Deprecated: 同 Redact，面无关且不回报阻断。新代码请用 ApplyValue 并显式指定面。
 func RedactValue(v any) any {
-	out, _ := applyAnyValue(v)
+	out, _ := applyAnyValue(CurrentPolicy(), v)
 	return out
 }

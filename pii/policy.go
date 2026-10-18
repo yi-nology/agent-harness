@@ -1,6 +1,6 @@
 package pii
 
-// 处置策略面（面开关 + 策略枚举）。
+// 处置策略面（面开关 + 策略枚举 + 全局开关）。
 //
 // ## 为什么原包不够
 //
@@ -114,20 +114,6 @@ func ParseSurfaces(names ...string) (SurfaceSet, error) {
 	return ss, nil
 }
 
-// surfaceBits 当前面集合（缺省三面全开，见不变量 1）。
-var surfaceBits atomic.Uint32
-
-func init() { surfaceBits.Store(uint32(SurfaceAll)) }
-
-// SetSurfaces 注入面集合。
-func SetSurfaces(ss SurfaceSet) { surfaceBits.Store(uint32(ss)) }
-
-// Surfaces 当前面集合。
-func Surfaces() SurfaceSet { return SurfaceSet(surfaceBits.Load()) }
-
-// SurfaceEnabled 指定面当前是否启用。
-func SurfaceEnabled(s Surface) bool { return Surfaces().Has(s) }
-
 // StrategyKind 处置强度（类型名不与同包的 Strategy() 访问器同名）。
 type StrategyKind string
 
@@ -147,47 +133,104 @@ const (
 // ErrUnknownStrategy 未登记的处置策略。
 var ErrUnknownStrategy = errors.New("未登记的处置策略")
 
-func strategyCode(s StrategyKind) (uint32, error) {
+// validStrategy 策略是否已登记。SetStrategy 的唯一职责就是这道校验：
+// 未知策略报错并**保持原值**，不静默降级——静默降级会让宿主以为自己
+// 配成了 block，实际按 mask 放行。
+func validStrategy(s StrategyKind) error {
 	switch s {
-	case StrategyMask:
-		return 1, nil
-	case StrategyRedact:
-		return 2, nil
-	case StrategyHash:
-		return 3, nil
-	case StrategyBlock:
-		return 4, nil
+	case StrategyMask, StrategyRedact, StrategyHash, StrategyBlock:
+		return nil
 	}
-	return 0, fmt.Errorf("%w: %q", ErrUnknownStrategy, s)
+	return fmt.Errorf("%w: %q", ErrUnknownStrategy, s)
 }
 
-func codeStrategy(c uint32) StrategyKind {
-	switch c {
-	case 2:
-		return StrategyRedact
-	case 3:
-		return StrategyHash
-	case 4:
-		return StrategyBlock
-	default:
-		return StrategyMask // 兜底回 mask，不回 block——见不变量 2
+// ── 运行时策略：整份一次原子交换 ──
+
+// Policy 一份完整的运行时策略快照。
+//
+// # 为什么不是三个独立的原子变量
+//
+// enabled / surfaces / strategy 三样东西**合起来才是一份策略**，不是三个独立开关。
+// 本包此前正是三个各自原子的包级变量（atomic.Bool + 两个 atomic.Uint32），
+// 逐项看每一次读写都线程安全，看起来没问题——但读侧一次处置要分三次取：
+//
+//	Apply:      Enabled() → SurfaceEnabled(s) → applySpans → Strategy()
+//	ApplyValue: 每个字符串叶子重走上面整条序列
+//
+// 热重载若发生在两次取之间，读到的是**从未被任何写侧设置过的组合**。
+// policy_atomic_test.go 的对照组量到了这个窗口：2483 万次读取里 252 万次
+// （约 10%）读到非法组合。真实后果不是「多打一次码」，而是语义错误：宿主已经
+// `SetSurfaces(0)` 关掉了某个面，本次调用却仍读到旧的面开着 + 新的 block 策略，
+// 于是回报 blocked=true——**面已关闭却要求阻断**，宿主可能据此中断整条编排链。
+//
+// 与 netguard 的改造同形（那边是把主机名与后缀两个指针并成一份 Policy）。
+type Policy struct {
+	gen      uint64       // 代次，每次替换 +1，供可观测性与调试
+	enabled  bool         // 全局开关（缺省开 = secure by default）
+	surfaces SurfaceSet   // 面集合（缺省三面全开，见不变量 1）
+	strategy StrategyKind // 处置策略（缺省 mask，见不变量 2）
+}
+
+// curPolicy 当前生效的策略。**整份策略只有一个原子指针**——这是「不可撕裂读」
+// 的全部机制，也是与旧版三个独立变量的根本差别。
+var curPolicy atomic.Pointer[Policy]
+
+func init() {
+	curPolicy.Store(&Policy{gen: 1, enabled: true, surfaces: SurfaceAll, strategy: StrategyMask})
+}
+
+// CurrentPolicy 取当前生效策略的快照。构造后不再被任何写侧触碰（写侧只整体
+// 替换新实例），故取出后可安全长期持有与并发遍历，无需再加锁。
+//
+// 处置路径必须经由本函数拿快照，不得分字段调访问器再拼——那正是撕裂读的来源。
+func CurrentPolicy() Policy { return *curPolicy.Load() }
+
+// Gen 当前策略代次（与快照同步递增，供可观测性使用）。
+func Gen() uint64 { return curPolicy.Load().gen }
+
+// updatePolicy 整体替换策略：读当前 → 改一个字段 → CAS 写回，失败则重试。
+//
+// # 为什么必须用 CAS 而不是读改写
+//
+// 三个写侧（SetEnabled / SetSurfaces / SetStrategy）可能并发。把「读—改—写」
+// 拆成独立的 Load 与 Store，中间被别的写侧插进来就会丢更新：宿主刚设的
+// enabled=false 被并发进来的 SetSurfaces 用旧副本覆盖回去。CAS 让「基于最新值
+// 修改」这条读改写链变成一次原子操作。
+func updatePolicy(mutate func(*Policy)) {
+	for {
+		old := curPolicy.Load()
+		next := *old
+		mutate(&next)
+		next.gen = old.gen + 1
+		if curPolicy.CompareAndSwap(old, &next) {
+			return
+		}
 	}
 }
 
-// strategyCodeNow 当前策略码（缺省 mask，见不变量 2）。
-var strategyNow atomic.Uint32
+// SetEnabled 注入全局开关（conf security.pii_value_mask / env BQ_PII_VALUE_MASK）。
+func SetEnabled(on bool) { updatePolicy(func(p *Policy) { p.enabled = on }) }
 
-func init() { strategyNow.Store(1) }
+// Enabled 当前是否启用（关闭时 Redact/RedactValue 原样透传，零改写）。
+func Enabled() bool { return curPolicy.Load().enabled }
+
+// SetSurfaces 注入面集合。
+func SetSurfaces(ss SurfaceSet) { updatePolicy(func(p *Policy) { p.surfaces = ss }) }
+
+// Surfaces 当前面集合。
+func Surfaces() SurfaceSet { return curPolicy.Load().surfaces }
+
+// SurfaceEnabled 指定面当前是否启用。
+func SurfaceEnabled(s Surface) bool { return curPolicy.Load().surfaces.Has(s) }
 
 // SetStrategy 注入处置策略（未知策略报错并保持原值，不静默降级）。
 func SetStrategy(s StrategyKind) error {
-	c, err := strategyCode(s)
-	if err != nil {
+	if err := validStrategy(s); err != nil {
 		return err
 	}
-	strategyNow.Store(c)
+	updatePolicy(func(p *Policy) { p.strategy = s })
 	return nil
 }
 
 // Strategy 当前处置策略。
-func Strategy() StrategyKind { return codeStrategy(strategyNow.Load()) }
+func Strategy() StrategyKind { return curPolicy.Load().strategy }

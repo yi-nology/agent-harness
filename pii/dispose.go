@@ -54,25 +54,10 @@ func applySpan(v string, kind Kind, s StrategyKind) string {
 	}
 }
 
-// applySpans 处置核心：检出 → 按**入口快照的**策略逐段处置 → 回报是否应阻断。
-//
-// # 为什么策略只读一次
-//
-// SetStrategy 是原子的，所以逐段读全局**没有数据竞争**，但它让一次调用变成非原子的：
-// 宿主并发换策略时，前几段可能已按 mask 打码、末段按 redact 替换，而函数末尾再读一次
-// 得到的 blocked 会跟实际处置形态对不上。丢的那个信号恰好是 fail-closed 的 block——
-// 「文本已按非阻断形态处置」与「回报不阻断」叠在一起，调用方会安静地放行。
-// 快照一次把这件事消掉：一次调用要么整体按 A 处置并按 A 回报，要么整体按 B。
-//
-// **唯一处置实现**：Apply / ApplyValue（按面）与 Redact / RedactValue（面无关的
-// 历史门面）都走这里。两套并行实现等于给策略留后门——历史上正是如此：Redact 只看
-// 全局开关、硬编码 mask，宿主把策略配成 block 之后调用它仍然静默打码。
-func applySpans(text string) (string, bool) {
-	return applySpansAs(text, Strategy())
-}
-
 // applySpansAs 以**指定**策略处置，是「一次调用一个策略」这一不变量的可测形式：
 // 测试可固定策略断言「处置形态与 blocked 互相自洽」，不必与全局开关赛跑出竞态窗口。
+//
+// 策略由 Policy 快照带进来，而不是就地读全局——见 applySpans 下方注释。
 func applySpansAs(text string, s StrategyKind) (string, bool) {
 	spans := Detect(text)
 	if len(spans) == 0 {
@@ -97,7 +82,19 @@ func applySpansAs(text string, s StrategyKind) (string, bool) {
 //   - 检出且策略为 block → (处置后文本, true)，**调用方必须履行阻断**
 //   - 其余 → (处置后文本, false)
 func Apply(s Surface, text string) (string, bool) {
-	if !Enabled() {
+	return applyWith(CurrentPolicy(), s, text)
+}
+
+// applyWith 以**指定策略快照**处置一段文本。
+//
+// # 为什么先取快照再逐项判
+//
+// enabled / 面开关 / 策略是同一份 Policy 的三个字段，分三次调用访问器去读，
+// 中间会被热重载插进来——读到「旧面开关 + 新策略」这种从未被设置过的组合，
+// 表现为「宿主已关掉某个面，本次调用却仍回报 blocked=true」。取一次快照，
+// 三项判断与处置形态必然同源。
+func applyWith(p Policy, s Surface, text string) (string, bool) {
+	if !p.enabled {
 		return text, false
 	}
 	// 未知面名**不静默放行**：面未登记与「宿主显式关闭」是两件事，塌缩成同一个
@@ -111,25 +108,39 @@ func Apply(s Surface, text string) (string, bool) {
 	if _, err := SurfaceBit(s); err != nil {
 		return redactedPlaceholder, true
 	}
-	if !SurfaceEnabled(s) {
+	if !p.surfaces.Has(s) {
 		return text, false // 确属显式关闭：既定语义，原文返回
 	}
-	return applySpans(text)
+	return applySpansAs(text, p.strategy)
 }
 
 // ApplyValue 递归下探常见载荷结构处置（与 RedactValue 同结构面，收口其
 // 行为并加上面/策略维度）。返回 (处置后载荷, 是否阻断)。
 func ApplyValue(s Surface, v any) (any, bool) {
-	if !Enabled() {
+	return applyValueWith(CurrentPolicy(), s, v)
+}
+
+// applyValueWith 以**指定策略快照**下探载荷。
+//
+// # 为什么递归闭包要捕获快照
+//
+// 本函数此前把闭包交给 applyValue，每个字符串叶子都回调 `Apply(s, t)`——
+// 于是**每个叶子重走一遍全部三份全局状态**。一次遍历跨越一次热重载，载荷内
+// 就会同时出现两种处置形态（前半占位、后半打码），而 blocked 由 OR 累加得出，
+// 与文本形态不同源。这正是 applySpansAs 当初要消除的现象，只不过那条保证止步
+// 于单文本路径，复合载荷从旁边绕了过去——而 ApplyValue 才是宿主处理工具返回
+// 的主入口。policy_atomic_test.go 的实测：旧实现第 5 次迭代即出现 61/64 混合。
+func applyValueWith(p Policy, s Surface, v any) (any, bool) {
+	if !p.enabled {
 		return v, false
 	}
 	// 未登记面名**不在这里短路**：短路会返回裸字符串，把本函数「保持载荷结构」
 	// 的契约砸掉（宿主按原结构解回，拿到的却是 string）。
-	// 交给下面的递归即可——applyValue 的每个字符串叶子都过 Apply，
+	// 交给下面的递归即可——每个字符串叶子都过 applyWith，
 	// 那里对未登记面已经 fail-closed，结构与阻断信号都自然保住。
-	if !SurfaceEnabled(s) {
+	if !p.surfaces.Has(s) {
 		if _, err := SurfaceBit(s); err == nil {
-			// 快路径，不是语义守卫：面关闭时逐叶走 Apply 本来也会透传，
+			// 快路径，不是语义守卫：面关闭时逐叶走 applyWith 本来也会透传，
 			// 且 applyValue 保留 nil 容器，两者行为完全等价。
 			// 这里提前返回只是为了省掉一次载荷遍历。
 			// （实测把本分支拆掉，`surface_disabled_test.go` 的用例仍全绿——
@@ -137,22 +148,22 @@ func ApplyValue(s Surface, v any) (any, bool) {
 			return v, false
 		}
 	}
-	return applyValue(v, func(t string) (string, bool) { return Apply(s, t) })
+	return applyValue(v, func(t string) (string, bool) { return applyWith(p, s, t) })
 }
 
 // applyAny 面无关处置：任一面启用即处置。供历史门面 Redact/RedactValue 使用。
-func applyAny(text string) (string, bool) {
-	if !Enabled() || Surfaces() == 0 {
+func applyAny(p Policy, text string) (string, bool) {
+	if !p.enabled || p.surfaces == 0 {
 		return text, false
 	}
-	return applySpans(text)
+	return applySpansAs(text, p.strategy)
 }
 
-func applyAnyValue(v any) (any, bool) {
-	if !Enabled() || Surfaces() == 0 {
+func applyAnyValue(p Policy, v any) (any, bool) {
+	if !p.enabled || p.surfaces == 0 {
 		return v, false
 	}
-	return applyValue(v, applyAny)
+	return applyValue(v, func(t string) (string, bool) { return applyAny(p, t) })
 }
 
 // applyValue 递归下探：字符串交给 fn 处置，标量原样返回。
