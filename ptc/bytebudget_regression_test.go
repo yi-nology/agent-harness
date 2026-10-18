@@ -33,9 +33,9 @@ func TestByteBudgetCoversErrorPath(t *testing.T) {
 		return "done";
 	`
 	r := Run(context.Background(), prog, []Binding{heavy}, Options{
-		MaxCalls:  50,
-		MaxBytes:  maxBytes,
-		Timeout:   0,
+		MaxCalls: 50,
+		MaxBytes: maxBytes,
+		Timeout:  0,
 	})
 
 	// 超限必须中断收口：要么报字节预算超限，要么整体失败，
