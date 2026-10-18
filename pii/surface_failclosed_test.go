@@ -74,9 +74,12 @@ func TestExplicitlyDisabledSurfaceStillPassesThrough(t *testing.T) {
 
 	const text = "联系 13800138000"
 	// 只开 input 面：tool_results 是**已登记但未启用**。
-	if _, err := ParseSurfaces("input"); err != nil {
+	// 注意 ParseSurfaces 只是解析器，必须再 SetSurfaces 才真正生效。
+	ss, err := ParseSurfaces("input")
+	if err != nil {
 		t.Fatalf("ParseSurfaces 应接受已登记面名: %v", err)
 	}
+	SetSurfaces(ss)
 	t.Cleanup(func() { SetSurfaces(SurfaceAll) })
 
 	out, blocked := Apply(SurfaceToolResults, text)

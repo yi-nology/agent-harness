@@ -283,12 +283,14 @@ func ApplyValue(s Surface, v any) (any, bool) {
 	if !Enabled() {
 		return v, false
 	}
-	// 与 Apply 同口径：未知面名不按「未启用」放行（见 Apply 的取舍说明）。
-	if _, err := SurfaceBit(s); err != nil {
-		return redactedPlaceholder, true
-	}
+	// 未登记面名**不在这里短路**：短路会返回裸字符串，把本函数「保持载荷结构」
+	// 的契约砸掉（宿主按原结构解回，拿到的却是 string）。
+	// 交给下面的递归即可——applyValue 的每个字符串叶子都过 Apply，
+	// 那里对未登记面已经 fail-closed，结构与阻断信号都自然保住。
 	if !SurfaceEnabled(s) {
-		return v, false
+		if _, err := SurfaceBit(s); err == nil {
+			return v, false // 确属已登记但显式关闭：既定语义，原样返回
+		}
 	}
 	return applyValue(v, func(t string) (string, bool) { return Apply(s, t) })
 }
