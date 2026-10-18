@@ -35,9 +35,17 @@
 /delta/delta_pacer_test.go
 
 # ── 本机覆盖配置 ──
-# 拆分期宿主用 replace 指向本地路径；发布前必须删掉该段落。
-# （本仓 go.mod 当前不含 replace，此处仅作防线）
-# replace =>
+# 本仓是**公开 Go module**：go.mod 里一旦留下指向本机路径的 replace，
+# 外部 `go get github.com/yi-nology/agent-harness` 全部失败——依赖图解析不了
+# 别人机器上不存在的目录。注释写着「禁止提交」不构成约束，`git add .` 照样带走。
+# 真正的约束在 .github/workflows/ci.yml：go.mod 出现 replace 即判失败。
+#
+# 宿主（如 bianque）本地并行开发用 replace 指向 ../agent-harness 没问题，
+# 但那条 replace 属于**宿主**的 go.mod，不属于本仓。
+
+# 本地拉取/改依赖用的外部源码工作区（当前：guardx 本地验证 injectband 转发）
+/.guardx-work/
+/.*-work/
 
 # ── 系统 ──
 .DS_Store

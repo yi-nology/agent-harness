@@ -27,3 +27,15 @@ jobs:
       # Makefile 已内置 CGO_ENABLED=0；Linux 上同样适用，不覆盖。
       - name: make check
         run: make check
+
+      # 公开 Go module 的最后一道防线。go.mod 里的 replace（无论注释写得多
+      # 严肃）指向本机路径时，外部 go get 会在解析依赖图时直接失败——而且
+      # 发布那一刻没有任何本地信号，只有下游用户报「拉不下来」才暴露。
+      # 宿主本地并行开发用 replace 没问题，但那条 replace 属于宿主的 go.mod。
+      - name: go.mod 不得含 replace
+        run: |
+          if grep -nE '^[[:space:]]*replace' go.mod; then
+            echo '::error::go.mod 含 replace 指令。本仓是公开 module，本地路径的 replace 一旦入库，所有外部 go get 都会失败。请删除该行（本地验证请用未跟踪的副本或 GOFLAGS）。'
+            exit 1
+          fi
+          echo "go.mod 无 replace ✓"
