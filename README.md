@@ -44,7 +44,7 @@ delta      增量节流 + 标签分流   模型供应商路由
 | `eventbus` | 341 | oagentkit/runtime | 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责 |
 | `policy` | 64 | cloudwego/eino、oagentkit/toolgate | 操作审计门：阈值只降不升、解析失败即拒 |
 | `spill` | 251 | oekit/pkg | 输出预算溢出：提示契约 / 取回 / 按龄清理 |
-| `pii` | 541 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）|
+| `pii` | 583 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）|
 | `netguard` | 412 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress。**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」|
 | `statemachine` | 79 | 无 | 环节状态机：条件迁移的纯函数件 |
 | `contract` | 124 | 无 | 编排运行契约：编排引擎 ↔ 宿主状态的**唯一边界**（纯接口面，零实现）|
