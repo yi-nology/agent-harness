@@ -39,8 +39,13 @@ type row struct {
 var (
 	// 表头：| `pkg` | loc | deps | 职责 |
 	rowRe = regexp.MustCompile("^\\|\\s*`([a-z]+)`\\s*\\|\\s*([0-9]+)\\s*\\|\\s*([^|]*?)\\s*\\|\\s*(.*?)\\s*\\|$")
-	// import 行：可带别名（alias "path"），故引号前允许标识符与空白。
-	importRe = regexp.MustCompile(`"([a-z0-9-]+\.[a-z]+/[^"]+)"`)
+	// 候选：任意不带空白的带引号 token。像不像 module 路径交给 looksLikeModulePath
+	// 判断——用正则硬表达「排除 scheme:// 与相对路径」既写不准又难维护。
+	//
+	// 这里不能图省事放宽成「含点含斜杠就算」：测试与注释里全是 URL 字面量
+	// （http://127.0.0.1:8900/api、//169.254.169.254/latest）与相对路径
+	// （../escape），放宽即把它们全当成依赖，门禁直接失效。
+	importRe = regexp.MustCompile(`"([^"\s]+)"`)
 	// 外部依赖判定：第二段起表示子路径；仓内自身的 module 不算外部。
 	selfModule = "github.com/yi-nology/agent-harness"
 )
@@ -161,8 +166,13 @@ func measure(pkg string) (int, []string, error) {
 		loc += strings.Count(string(b), "\n")
 		for _, m := range importRe.FindAllStringSubmatch(string(b), -1) {
 			path := m[1]
-			if strings.HasPrefix(path, selfModule) {
+			// 必须带 / 边界：纯 HasPrefix 会把 agent-harness-fork 之类
+			// **真实的外部依赖**当成自身而静默排除，漏判方向与门禁职责相反。
+			if path == selfModule || strings.HasPrefix(path, selfModule+"/") {
 				continue // 本仓自身不算外部依赖
+			}
+			if !looksLikeModulePath(path) {
+				continue // URL 字面量、相对路径、纯 stdlib 标识等
 			}
 			depSet[normalizeDep(path)] = true
 		}
@@ -173,6 +183,29 @@ func measure(pkg string) (int, []string, error) {
 	}
 	sort.Strings(deps)
 	return loc, deps, nil
+}
+
+// looksLikeModulePath 判断一个带引号 token 是否长得像 Go module 路径。
+//
+// 判据（逐条都对应仓里真实存在、且必须被排除的东西）：
+//   - 不能以 . 或 / 开头：排除相对路径 "../escape" 与协议相对 "//host/x"；
+//   - 第一段不能含 ':'：排除带 scheme 的 URL（http://、https://），
+//     否则第一段会切成 "http:" 而被误当宿主名；
+//   - 第一段必须含 '.'：module 路径带 module host（github.com / gopkg.in /
+//     mvdan.cc），纯 stdlib 标识（context、runtime）没有；
+//   - 必须还有子路径：module 路径至少两段。
+//
+// 不要求全小写——Go 允许大写（代理里编码为 !x），限定小写会让含大写的依赖
+// 整个漏掉，而漏判方向与门禁职责相反。
+func looksLikeModulePath(p string) bool {
+	if strings.HasPrefix(p, ".") || strings.HasPrefix(p, "/") {
+		return false
+	}
+	host, _, ok := strings.Cut(p, "/")
+	if !ok || !strings.Contains(host, ".") || strings.Contains(host, ":") {
+		return false
+	}
+	return true
 }
 
 // normalizeDep 把 module 路径归并到「owner/repo」两段——
