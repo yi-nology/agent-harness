@@ -25,7 +25,7 @@ func TestPolicyTableContract(t *testing.T) {
 		ClassNotFound:         {Class: ClassNotFound, Retryable: false},
 		ClassPermissionDenied: {Class: ClassPermissionDenied, Retryable: false, NeedsOperator: true},
 		ClassInvalidArgument:  {Class: ClassInvalidArgument, Retryable: false},
-		ClassRateLimited:      {Class: ClassRateLimited, Retryable: true, Backoff: true, SurfaceDelay: true},
+		ClassRateLimited:      {Class: ClassRateLimited, Retryable: true, Backoff: true, SurfaceDelay: true, SafeToResubmit: true},
 		ClassSelfReported:     {Class: ClassSelfReported, Retryable: true, Backoff: true},
 		ClassUnknown:          {Class: ClassUnknown, Retryable: false},
 	}
@@ -35,6 +35,9 @@ func TestPolicyTableContract(t *testing.T) {
 		if !ok {
 			t.Fatalf("类别 %q 出现在 AllClasses 但未登记策略表", c)
 		}
+		// Remediation 逐类比对会把整段中文文案钉进期望值，文案一改就红——
+		// 它由 TestEveryClassHasRemediation 单独判定非空即可，无需逐字比对。
+		got.Remediation, w.Remediation = "", ""
 		if got != w {
 			t.Fatalf("类别 %q 策略漂移:\n 实得 %+v\n 期望 %+v", c, got, w)
 		}

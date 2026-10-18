@@ -24,6 +24,7 @@ budget     输入侧上下文预算      摘要生成的具体实现（走 Summa
 offload    内联大对象外置        IM 通道 / 通知模板
 toolfail   工具失败分类契约      HTTP 路由 / 鉴权
 tooldisclose 渐进式工具披露 + 调用门禁    工具实现（MCP server）
+guardset   守卫装配与拒绝合成      具体守卫实现（披露门/出站门/审计门）
 pii        个人信息脱敏          工具目录内容（本包只管披露与门禁）
 netguard   出站 SSRF 守卫        诊断链/巡检图（编排图属宿主）
 dispatch   派发守卫（权限即拓扑） 摘要策略（何时压实属宿主）
@@ -45,22 +46,23 @@ delta      增量节流 + 标签分流   模型供应商路由
 | `eventbus` | 341 | oagentkit/runtime | 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责 |
 | `policy` | 64 | cloudwego/eino、oagentkit/toolgate | 操作审计门：阈值只降不升、解析失败即拒 |
 | `spill` | 251 | oekit/pkg | 输出预算溢出：提示契约 / 取回 / 按龄清理 |
-| `pii` | 583 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）|
-| `netguard` | 534 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。扩展名单**整份原子交换 + 代次可观测**（两次独立取会读到撕裂策略）。**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」|
+| `pii` | 827 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）；运行时策略（开关/面/强度）整份单指针原子交换 + 变更订阅 `Subscribe`，代次从此不只可查、还可响应 |
+| `netguard` | 708 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。扩展名单**整份原子交换 + 代次可观测**（两次独立取会读到撕裂策略）。**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」|
 | `statemachine` | 79 | 无 | 环节状态机：条件迁移的纯函数件 |
 | `contract` | 124 | 无 | 编排运行契约：编排引擎 ↔ 宿主状态的**唯一边界**（纯接口面，零实现）|
 | `checkpoint` | 545 | oekit/pkg | 编排续跑契约：进度快照存取边界 + **「续跑而非重放」**的恢复判定（空洞不采信 / 终态不自动重开 / 序号单调闸）+ **跨进程 CAS 存取契约**（`StoreCAS.SaveIfNewer`）与提交序列固化（`Committer`：抢序号→落库→**仅失败时**回滚，宿主无法漏掉）|
 | `commitgate` | 220 | oekit/pkg | 环节终态独占提交闸：同一 (run, 环节) 的终态只允许被提交一次（`statemachine` 是纯谓词，`SeqGate` 只排快照序号，两者都排不出「两条分支都赢了」）。终态词表由宿主注入；Commit/Release 必须成对 |
 | `budget` | 756 | oekit/pkg | 上下文预算：分段计量 + 窗口钳位 + 压实计划骨架（三重空转守卫；摘要生成与原文落盘各留宿主接口）|
 | `offload` | 589 | oekit/pkg | 内联大对象外置：sha 去重 + **两阶段**（首次标记、后续轮才替换占位）+ fail-soft（与 `spill` 是姊妹机制）|
-| `tooldisclose` | 669 | oagentkit/toolgate、oekit/pkg | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分）+ 接成 `invoke` 链的一环（`Stage`，保留原二分不做软化）|
-| `toolfail` | 408 | oekit/pkg | 工具失败的错误分类契约：类别 → 可重试性/退避/需人工为**数据表**而非散落 if；不可归类一律不可重试 |
+| `tooldisclose` | 862 | oagentkit/toolgate、oekit/pkg | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分，**拒绝即激活**，重试不绕路）+ 接成 `invoke` 链的一环（`Stage`，链上 Reason 直接回面向模型的指引）|
+| `toolfail` | 624 | oekit/pkg | 工具失败的错误分类契约：类别 → 可重试性/退避/需人工/重发安全/模型指引为**数据表**而非散落 if；不可归类一律不可重试。**重发安全与重试价值是两个正交维度**——超时值得重试但服务端可能已执行，原样重发即重复施加副作用；`Guidance()` 是模型侧的唯一消费方 |
 | `delta` | 253 | oagentkit/runtime | 增量节流：分片合并 + 权威整段优先 + 确定性收口扫序 |
 | `pending` | 62 | 无 | 多轮挂起态载体：单一编码入口 + 宽容解码（非法值降级为无挂起）|
 | `reminder` | 30 | oagentkit/guardx | 系统注入提示的防伪包裹（门面）：核心已下沉 `guardx/injectband`，本包只保调用路径稳定，宿主调用点一行不动 |
 | `drain` | 188 | oekit/logx、oekit/pkg | 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀（经 `Turns` 接口）|
-| `ptc` | 375 | goja、oekit/concurrency、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面**；绑定名净化后撞名即装配期拒（否则后绑者顶替前绑者，副作用错位无信号）|
+| `ptc` | 919 | goja、oekit/concurrency、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面**；绑定可带 Signature 让模型按位置传参（可选形参以 `?` 标记、未传则不出现在 JSON 里）；绑定名净化后撞名即装配期拒（否则后绑者顶替前绑者，副作用错位无信号）|
 | `watchdog` | 127 | 无| 被动配对不变量监视：环节收口仍有未执行声明 / 结果无对应声明；**只告警不裁决**（热路径裁决在守卫侧）|
+| `guardset` | 406 | oagentkit/toolgate、oekit/pkg | 守卫装配契约：一组**相互独立**的判定一并求值，多条拒绝合成一条（按 Rank 定序、**不可重试优先**的保守裁决、指引指向真正卡住的那一条）。接成 `invoke` 链上单独一环——链在第一个拒绝处就收口，后面的守卫永远没机会说话，模型一次只听得到一个理由，这正是本包补的那一面；链本身的顺序/留痕/panic 兜底沿用上游，不重复实现 |
 
 > 「生产行数」口径：`wc -l` 统计 `*.go` 且**不含** `_test.go`——包体量看的是要交付的实现，
 > 不是它的测试。依赖列只列**仓外** import；「无」表示该包生产代码只用 stdlib。
@@ -88,6 +90,21 @@ make architecture-check   # 域词污染 + 依赖方向，违反即非零退出
 | `harness-test-fixture-domain-vocabulary` | **error** | 测试夹具用了真实运维词面（须改合成数据）。原 15 处 warn 级债已于 2026-10-18 清偿并升级为阻断 |
 | `harness-no-host-dependency` | **error** | 任何对宿主仓的 import |
 | `harness-no-domain-runtime-deps` | **error** | 对宿主仓 / 旧门面仓 / **已退役的 `agentkit` 门面** 的 import |
+
+另有两条不走正则表、由 `go/ast` 判定的结构性规则（判据是语法结构，逐行看文本判不出）：
+
+| 规则 | 级别 | 拦什么 | 落点 |
+|---|---|---|---|
+| `harness-facade-stays-facade` | **error** | `dispatch`/`policy`/`reminder` 三个门面包长出实现（声明新类型、给类型挂方法、函数体超过一条转发语句、调用非上游包、import 非允许依赖）| `policy.yaml` 的 `facades` 段 + `cmd/archcheck/facade.go` |
+| `harness-module-dependency-direction` | **error** | 包间依赖超出 `modules[].requires` 声明的方向；以及**未登记的包目录**（它对本门禁隐形，任何模块都能 import 而不判违规）| `policy.yaml` 的 `modules` / `dependency_direction` 段 + `cmd/archcheck/deps.go` |
+
+> 依赖方向这条是 2026-10-18 补的执行体。`modules` 段此前把 22 个包的依赖拓扑
+> 写得清清楚楚，README 也宣称门禁查「域词污染 + 依赖方向」——但执行器把
+> `modules` 解析成 `[]struct{}`，`requires` 连内存都没进，于是那一半是空的，
+> 且声明已经开始漂移（`watchdog` 写 `requires: []`，实际 import 了 `eventbus`）。
+> 新规则上线第一次跑就抓出 `commitgate` **从未登记**过——它早已在 README 包表里，
+> 却在依赖拓扑上完全隐形。这类问题零报错、零告警、构建全绿，只有把全图摊开才看得见，
+> 正是它必须由机器而不是 review 来看的原因。
 
 ### 与 oekit 家族的一致性（2026-10-17 补齐）
 

@@ -23,10 +23,36 @@
 //
 // ## 关键取舍二：策略是数据不是 if 链
 //
-// 每个类的可重试性/退避/延迟提示/人工介入四项策略写进 PolicyOf 的表里，
+// 每个类的可重试性/退避/延迟提示/人工介入/重发安全/处置指引写进 PolicyOf 的表里，
 // 而不是散成一串 if。上层只需问「PolicyOf(c)」，不必知道「限流可重试但要退避、
 // 鉴权不可重试但要人工」这些并列事实——策略表与 contract 契约测试同源，
 // 任何人改表都会被契约测试挡住。
+//
+// ## 关键取舍三：重发安全与重试价值是两件事（2026-10-18 补）
+//
+// 本包原先只回答「重试有没有收益」（Retryable）。但自动重试真正要问的是两问：
+//
+//	① 重试有没有收益？            → Retryable / Backoff
+//	② 原样重发安不安全（会不会重复施加副作用）？ → SafeToResubmit
+//
+// 两问的答案可以相反，且相反的组合最危险：**「值得重试」不等于「可以重发」**。
+// 超时正是典型——它多半值得重试，可服务端那边请求**可能已经执行完毕**，
+// 原样重发就可能把一次调用变成两次副作用。原有的单一维度表达不出这件事，
+// 调用方只能要么盲目重试（制造重复副作用），要么因噎废食放弃退避（失去可恢复性）。
+//
+// 之所以归内核而不是宿主：判定「重发是否安全」的**默认口径**必须是全局一致的，
+// 各宿主各判一套就会漂移；而**具体工具是否幂等**是宿主的知识，由 Failure 逐次
+// 声明覆盖（Idempotency），内核只提供缺省与查询。
+//
+// ## 关键取舍四：失败必须能对模型说话（2026-10-18 补）
+//
+// Remediation 是**面向模型**的处置指引，与 Message 刻意分开：Message 是给人看的
+// （进日志、进工单），会被改写、会含具体数值，不适合进提示词；而模型需要知道的是
+// 「你下一步该干什么」，不是「发生了什么」。
+//
+// 它与 Guidance 必须成对存在：一张建好却没有消费方的表等于散文——判据建了没人读，
+// 等于没建。故本包同时提供 Guidance 作为**确定的消费方**，把 Remediation 与
+// 重试/重发/人工三维结论渲染成一行给模型。
 //
 // ## 边界
 //
@@ -114,40 +140,79 @@ type Policy struct {
 
 	// NeedsOperator 是否需要人工介入（改凭证/放权限，机器自己无能为力）。
 	NeedsOperator bool
+
+	// SafeToResubmit 该类失败**默认**能否原样重发（不产生重复副作用）。
+	//
+	// 与 Retryable 正交，组合起来才完整表达自动重试的决策：
+	//   - 两者皆真  → 直接重发；
+	//   - 可重试但不可重发 → 重发前必须确认上次是否已生效（典型的超时类）；
+	//   - 不可重试 → 换处置路径（改参数 / 找人工 / 收口）。
+	//
+	// 取值一律保守：只有**能证明服务端未受理本次调用**的类别才置真
+	// （限流即如此——请求根本没进业务逻辑）。超时类不给真：超时的定义就是
+	// 「不知道对方执行到哪」，把它当成安全重发是把一次调用放大成两次。
+	SafeToResubmit bool
+
+	// Remediation 面向**模型**的处置说明（回答「这是什么情况、我该改什么」）。
+	//
+	// 与 Failure.Message 刻意分开：Message 是给人看的（进日志与上报），
+	// 会被改写、含具体数值；提示词里要的是可执行的指引，不是现场描述。
+	// 取值不得包含具体标识、数值与业务词面——它会原样进入提示词。
+	//
+	// **不得自带重试结论**（不要写「重试」「等待 N 秒」「需要人工」）：
+	// 那是 Guidance 的机械判定，写在这里会与之重复，个别类别还会直接矛盾
+	//（自报类文案写「可以直接重试」，而其 SafeToResubmit 为假，Guidance 会说
+	//「先确认上一次是否已生效」——同一段提示词里两个相反的指令，模型无从取舍）。
+	// 该约束由 TestRemediationCarriesNoRetryVerdict 钉住。
+	Remediation string
 }
 
 // policyTable 类别 → 策略的单源表。改这里必然改到契约测试（TestPolicyTableContract）。
 var policyTable = map[Class]Policy{
 	ClassTransient: {
 		Class: ClassTransient, Retryable: true, Backoff: true,
+		SafeToResubmit: false,
+		Remediation:    "目标暂时不可用，稍后多半会恢复。",
 	},
 	ClassPermanent: {
 		Class: ClassPermanent, Retryable: false,
+		Remediation: "该能力不支持这类请求。",
 	},
 	ClassAuthentication: {
 		Class: ClassAuthentication, Retryable: false, NeedsOperator: true,
+		Remediation: "凭证无效或已过期，刷新后才会恢复。",
 	},
 	ClassNotFound: {
 		Class: ClassNotFound, Retryable: false,
+		Remediation: "目标不存在，且不会自行出现。请先确认标识是否正确。",
 	},
 	ClassPermissionDenied: {
 		Class: ClassPermissionDenied, Retryable: false, NeedsOperator: true,
+		Remediation: "当前权限不足以完成该调用。",
 	},
 	ClassInvalidArgument: {
 		Class: ClassInvalidArgument, Retryable: false,
+		Remediation: "参数不符合要求，请修正参数后重新构造调用。",
 	},
 	ClassRateLimited: {
 		Class: ClassRateLimited, Retryable: true, Backoff: true, SurfaceDelay: true,
+		// 唯一可以断言「重发安全」的类别：限流发生在受理之前，请求没有进到业务逻辑，
+		// 不存在「上一次已经生效」的可能。
+		SafeToResubmit: true,
+		Remediation:    "请求因过于频繁被拒绝，尚未进入处理流程。",
 	},
 	// 自报类只给出一位信息，据此推不出「可以立刻再打」：立刻重试是否安全取决于
 	// 成因，而成因正是本包不知道的那部分。故退避取保守侧——多等一会儿只是慢一点，
 	// 立刻重试撞上尚未恢复的条件则是把一次失败放大。确知可立刻重试的宿主应当
-	// 显式归类成有成因的类，而不是靠自报蒙混。
+	// 显式归类成有成因的类，而不是靠自报蒙混。重发安全同理取保守侧：自报只回答了
+	// 「有没有收益」，没回答「上次有没有生效」。
 	ClassSelfReported: {
 		Class: ClassSelfReported, Retryable: true, Backoff: true,
+		Remediation: "调用方声明该失败可恢复，但未说明成因。若想得到更精确的处置，请显式归类。",
 	},
 	ClassUnknown: {
 		Class: ClassUnknown, Retryable: false,
+		Remediation: "失败原因无法归类，只能按保守口径处理。请显式归类以获得明确的处置指引。",
 	},
 }
 
@@ -179,6 +244,19 @@ type Failure struct {
 
 	// Message 人读文案（进日志与上报，不参与判定）。
 	Message string
+
+	// RemediationOverride 该次失败专有的模型指引；为空时取 PolicyOf(Class).Remediation。
+	//
+	// 为什么允许逐次覆盖：处置指引的下一步动作常常取决于**具体是哪个**参数非法、
+	// 哪个标识没找到，逐次覆盖比让模型去猜更快也更准。
+	RemediationOverride string
+
+	// Idempotency 宿主对本次调用的幂等性表态；未表态时按类别默认取值。
+	//
+	// 为什么要宿主逐次声明：同一个类别下不同工具的幂等性可以完全相反
+	//（同样是 transient，一个只读查询重发毫无风险，另一个创建接口重发就重复了）。
+	// 类别只能给缺省，逐次表态才是准确的。
+	Idempotency Idempotency
 
 	// RetryAfter 服务端建议的等待时长；0 表示无此提示。
 	// 仅在 PolicyOf(Class).SurfaceDelay 为真时有意义。
