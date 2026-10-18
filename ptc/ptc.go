@@ -47,16 +47,46 @@ var (
 
 // Binding 一个宿主函数绑定（工具即绑定）：Call 收程序传来的 JSON 参数文本，回工具
 // 输出原文（不截断——与模型直读同一信任级；注入嫌疑扫描在装饰链上照常生效）。
+//
+// Signature 可选，给出后模型按普通函数调用而不必手写 JSON：`get_logs(host, count)`
+// 会被挂成 `host.get_logs(host, count)`，ptc 负责把形参打包成 JSON 再交给 Call。
+// 为空则退化为 `host.<name>(argsJSON)`，与既有行为逐字一致。详见 signature.go。
 type Binding struct {
 	Name string
-	Call func(ctx context.Context, argsJSON string) (string, error)
+	// Signature JS 调用形态，如 "get_logs(host, count)"。由宿主用自己的工具目录
+	// 翻译而来——ptc 不认识任何 schema 类型。
+	Signature string
+	Call      func(ctx context.Context, argsJSON string) (string, error)
 }
+
+// Discovered 程序内发现到的一个工具。
+type Discovered struct {
+	Name        string `json:"name"`
+	Signature   string `json:"signature,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// Discoverer 程序内的工具发现入口。
+//
+// # 为什么需要它
+//
+// 渐进披露（tooldisclose 那种检索换 schema）与程序化执行此前是**两半没接上**的：
+// 检索在模型面（下一轮对话里查），程序在程序面（只能用装配时给的那张表）。
+// 模型想在程序里换个工具，得退回一轮 ReAct——Code Mode 收益被抵掉一半。
+//
+// 宿主把自己的检索器接进来，程序内即可 discover("重启")。ptc 不依赖任何目录包：
+// 「工具目录长什么样」是宿主的模型，不是内核的。
+type Discoverer func(query string) []Discovered
 
 // Options 三预算闸（≤0=各自缺省）。
 type Options struct {
 	Timeout  time.Duration
 	MaxCalls int
 	MaxBytes int
+	// Discover 可选：暴露程序内工具发现入口 discover(query)。
+	// 为 nil 则**根本不暴露**该全局——没装配的东西不该以空壳形式出现在沙箱里，
+	// 那会让模型以为「没有别的工具了」而放弃检索。
+	Discover Discoverer
 }
 
 // CallRecord 一次绑定调用记账（ptc_run 明细事件与审计的账目面：程序把大输出「洗」成
@@ -163,6 +193,29 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 		return res
 	}
 
+	// 调用形态预检：同样在装配期。形态串非法却放行，模型侧表现为
+	// 「绑定了却怎么调都不对」——最难往形态串上想的那种故障。
+	for _, b := range bindings {
+		if b.Signature == "" {
+			continue
+		}
+		ps, serr := parseSignature(b.Signature)
+		if serr != nil {
+			res.Error = fmt.Sprintf("绑定 %q 的调用形态非法: %v", b.Name, serr)
+			res.ErrorKind = "binding_signature"
+			return res
+		}
+		// 形态里的函数名必须等于绑定名净化后的标识符。不一致就静默取其中一个的话，
+		// 宿主改了形态却没改绑定名（或反之）时，模型调用的名字和实际挂载的名字会
+		// 对不上，而两侧都不报错——「怎么调都不对」是最难查的一类故障。
+		if id := jsIdent(b.Name); ps.name != id {
+			res.Error = fmt.Sprintf("绑定 %q 的调用形态函数名 %q 与其在 host 下的名字 %q 不一致",
+				b.Name, ps.name, id)
+			res.ErrorKind = "binding_signature"
+			return res
+		}
+	}
+
 	// 语法预检（批三百零七）：先编译后建 VM——语法错误带 goja 行号在 syntax kind 里
 	// 如实回包，不烧预算不进 VM（运行期 RunString 的同类错误混在 runtime kind 里
 	// 面目不清）。编译产物直接 RunProgram，不二次编译。
@@ -248,7 +301,21 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 		if name == "" {
 			continue
 		}
-		if err := host.Set(name, fn); err != nil {
+		mountable := vm.ToValue(fn)
+		if b.Signature != "" {
+			// 有调用形态：把「形参 → JSON 对象」的包装交给 JS 侧，
+			// 三预算闸仍在本包的 Go 包装层（fn），包装只是再包一层壳。
+			ps, _ := parseSignature(b.Signature) // 预检已过，这里不会失败
+			w, werr := compileWrapper(vm, wrapperSource(ps), mountable, name, len(ps.params))
+			if werr != nil {
+				return Result{
+					Error:     fmt.Sprintf("绑定 %q 的调用形态包装失败: %v", b.Name, werr),
+					ErrorKind: "binding_signature",
+				}
+			}
+			mountable = w
+		}
+		if err := host.Set(name, mountable); err != nil {
 			return Result{
 				Error:     fmt.Sprintf("绑定 %q 挂载失败: %v", b.Name, err),
 				ErrorKind: "runtime",
@@ -256,6 +323,11 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 		}
 	}
 	_ = vm.Set("host", host)
+
+	// 程序内工具发现：装配了才挂，没装配就不存在这个全局。
+	if derr := mountDiscover(vm, opts.Discover); derr != nil {
+		return Result{Error: fmt.Sprintf("发现入口挂载失败: %v", derr), ErrorKind: "runtime"}
+	}
 
 	// async IIFE：同步绑定的 await 全部在 RunProgram 的 job queue 自排内落定；
 	// return 值即程序结果（undefined→null）。语法已预检，此处只跑编译产物。
