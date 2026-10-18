@@ -289,7 +289,12 @@ func ApplyValue(s Surface, v any) (any, bool) {
 	// 那里对未登记面已经 fail-closed，结构与阻断信号都自然保住。
 	if !SurfaceEnabled(s) {
 		if _, err := SurfaceBit(s); err == nil {
-			return v, false // 确属已登记但显式关闭：既定语义，原样返回
+			// 快路径，不是语义守卫：面关闭时逐叶走 Apply 本来也会透传，
+			// 且 applyValue 保留 nil 容器，两者行为完全等价。
+			// 这里提前返回只是为了省掉一次载荷遍历。
+			// （实测把本分支拆掉，`surface_disabled_test.go` 的用例仍全绿——
+			//  这行因此无法被行为断言覆盖，别再往这里加"语义"注释。）
+			return v, false
 		}
 	}
 	return applyValue(v, func(t string) (string, bool) { return Apply(s, t) })
