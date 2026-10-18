@@ -1,0 +1,30 @@
+name: gate-probe
+
+# 临时工作流：本地沙箱禁止 rename(2)，go 模块缓存无法落盘，跑不了门禁。
+# make check 是串行的，test 失败会挡住 cover-gate 与 architecture-check，
+# 故此处拆开单跑，以确认后半段门禁的实际状态。用完即删。
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: cover-gate
+        run: make cover-gate
+
+      - name: architecture-check
+        run: make architecture-check
+
+      - name: architecture-check full report
+        if: always()
+        run: go run ./cmd/archcheck --report
