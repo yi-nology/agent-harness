@@ -44,7 +44,13 @@ func mountBindings(
 			}
 			// 判定环先于执行体：程序里的 host.<tool>() 走的是这条路，
 			// 不接判定环它就成了整条链上唯一绕过披露门/审计门/出站门的路径。
-			if serr := runStages(runCtx, stages, b.Name, args); serr != nil {
+			//
+			// 求值交给 invoke.EvaluateStages，不在此处自己排环：本包此前排过一份，
+			// 那份已与 invoke.Chain.Do 漂移——环 panic 归口用守卫自己的名字、
+			// 且 Cause 留空，于是「守卫自己崩了」与「守卫正常拒绝了」在调用方
+			// 眼里不可区分。归口用的环节名是 invoke 包内未导出常量，
+			// 本包补不了，只能由上游提供唯一入口。
+			if serr := invoke.EvaluateStages(runCtx, stages, invoke.Call{Name: b.Name, Args: args}); serr != nil {
 				// 被拒**同样计数**：程序可以 try/catch 掉这次错误再循环，
 				// 若不计预算，一个被拒的工具就能被无限重试，MaxCalls 形同虚设。
 				res.Calls++
@@ -160,43 +166,3 @@ const (
 	StatusError  = "error"  // 执行体报错
 	StatusDenied = "denied" // 被判定环拒绝，**未触达执行体**
 )
-
-// runStages 按序跑判定环，任一环拒绝即拒绝；环报错与环 panic 一律按拒绝处理。
-//
-// 语义与 invoke 链同源（fail-closed、逐环 recover），刻意不各写一套：两处若不一致，
-// 会出现「普通调用按环报错放行、程序调用按环报错拒绝」的分裂，而那恰恰是本条
-// 接线要消除的同一类问题。
-func runStages(ctx context.Context, stages []invoke.Stage, name, argsJSON string) (err error) {
-	if len(stages) == 0 {
-		return nil
-	}
-	call := invoke.Call{Name: name, Args: argsJSON}
-	for _, st := range stages {
-		if st == nil {
-			continue
-		}
-		v, serr := runStage(ctx, st, call)
-		if serr != nil {
-			return serr
-		}
-		if !v.Allow {
-			return &invoke.DenyError{Stage: st.Name(), Tool: name, Reason: v.Reason, Retryable: v.Retryable}
-		}
-	}
-	return nil
-}
-
-// runStage 跑一环并兜住它的 panic——环是宿主代码，宿主代码不该有机会杀掉编排进程。
-func runStage(ctx context.Context, st invoke.Stage, call invoke.Call) (v invoke.Verdict, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			v = invoke.Verdict{}
-			err = &invoke.DenyError{
-				Stage:  st.Name(),
-				Tool:   call.Name,
-				Reason: fmt.Sprintf("判定环 panic: %v", r),
-			}
-		}
-	}()
-	return st.Check(ctx, call)
-}

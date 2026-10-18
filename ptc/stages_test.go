@@ -119,9 +119,16 @@ func TestStagesFailClosedOnStageError(t *testing.T) {
 	}
 }
 
-// TestStagePanicDoesNotKillProgram 判定环 panic 不得杀掉编排进程。
+// TestStagePanicDoesNotKillProgram 判定环 panic 不得杀掉编排进程，
+// 且**不得被归口成「守卫自己判定拒绝」**。
+//
+// 后半句是本包排过一份环留下的坑：那份把 panic 归口到守卫自己的名字、Cause 留空，
+// 于是「守卫自己崩了」与「守卫正常拒绝了」在调用方眼里完全一样——调用方于是去修
+// 策略，而真正该修的是守卫代码。判据用否定式（消息里不该出现守卫名）而不是去匹配
+// 上游的归口环节名：上游把那个名字改成什么，本包都不该跟着碎。
 func TestStagePanicDoesNotKillProgram(t *testing.T) {
-	bind := Binding{Name: "t", Call: func(context.Context, string) (string, error) { return "x", nil }}
+	hits := 0
+	bind := Binding{Name: "t", Call: func(context.Context, string) (string, error) { hits++; return "x", nil }}
 	crasher := invoke.StageFunc{StageName: "crasher", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
 		panic("环里炸了")
 	}}
@@ -130,6 +137,28 @@ func TestStagePanicDoesNotKillProgram(t *testing.T) {
 
 	if !r.OK || r.Value != `"已拦下"` {
 		t.Fatalf("环 panic 应被 recover 并按拒绝收口，实得 OK=%v value=%s err=%q", r.OK, r.Value, r.Error)
+	}
+	if hits != 0 {
+		t.Fatalf("环 panic 不得触达执行体，实得 %d 次", hits)
+	}
+
+	var denied *CallRecord
+	for i := range r.CallLog {
+		if r.CallLog[i].Status == StatusDenied {
+			denied = &r.CallLog[i]
+		}
+	}
+	if denied == nil {
+		t.Fatalf("被拒调用应留一条 denied 账，实得 %+v", r.CallLog)
+	}
+	if !strings.Contains(denied.Error, "环里炸了") {
+		t.Fatalf("拒绝账应带 panic 原文（定位要能到那一句），实得 %q", denied.Error)
+	}
+	if strings.Contains(denied.Error, "crasher") {
+		t.Fatalf("守卫 panic 不得归口到守卫自己的名字——那正是把它谎报成「守卫判定拒绝」，实得 %q", denied.Error)
+	}
+	if r.Calls < 1 {
+		t.Fatalf("被拒同样计数，否则程序可以 try/catch 后无限重试，实得 Calls=%d", r.Calls)
 	}
 }
 
