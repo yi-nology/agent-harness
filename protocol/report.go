@@ -59,17 +59,32 @@ var severityAll = map[string]bool{
 	SeverityHigh: true, SeverityCritical: true,
 }
 
-// SeverityRank 严重度序（越大越重；空=0 未评估）。聚合取 max、dispute 钳制都用它。
-var SeverityRank = map[string]int{
+// severityRank 严重度序（越大越重；空/未知=0 未评估）。聚合取 max、dispute 钳制都用它。
+//
+// # 为什么不做成导出的 map
+//
+// 导出的 map 可被任何导入方就地改写，而 `protocol.SeverityRank["critical"] = 0`
+// 会让 MaxSeverity 把最高危静默降级成「未评估」——**无编译错误、无运行错误、
+// 无日志**，只在若干天后表现为「报告的严重度排序不对」，极难回溯到这一行。
+//
+// 这不是假想的风险：netguard/policy.go 对拦截名单守住了同一条（"默认名单刻意
+// 不做成可写变量"），而本包此前是**全仓唯一的例外**——一次全仓扫描显示，除哨兵
+// error 外，本仓导出变量中只有 SeverityRank 一个是可变容器。
+//
+// 读取一律走 SeverityRankOf；需要遍历的内部代码直接读本表。
+var severityRank = map[string]int{
 	SeverityInfo: 1, SeverityLow: 2, SeverityMedium: 3, SeverityHigh: 4, SeverityCritical: 5,
 }
+
+// SeverityRankOf 严重度序取值。未知值与空串一律返回 0（未评估）。
+func SeverityRankOf(s string) int { return severityRank[s] }
 
 // IsSeverityValid 严重度白名单判定（空合法=未评估）。
 func IsSeverityValid(s string) bool { return s == "" || severityAll[s] }
 
 // MaxSeverity 取两者较重者（未知值视为未评估，不参与比较）。
 func MaxSeverity(a, b string) string {
-	if SeverityRank[b] > SeverityRank[a] {
+	if SeverityRankOf(b) > SeverityRankOf(a) {
 		return b
 	}
 	return a
