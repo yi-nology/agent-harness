@@ -1,0 +1,29 @@
+name: ci
+
+# 门禁的检出能力由 CI 持续保证：本地跑不动 make check 不等于合规，
+# 反向验证样本也不该常驻仓里（见 .gitignore 的说明段）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: fmt + vet + test + cover-gate + archcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # 版本跟随 go.mod 的 go 指令，避免两处各写一份然后悄悄漂移。
+          go-version-file: go.mod
+          cache: true
+
+      # Makefile 已内置 CGO_ENABLED=0；Linux 上同样适用，不覆盖。
+      - name: make check
+        run: make check
