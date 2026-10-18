@@ -22,7 +22,6 @@ import (
 	"net"
 	"net/url"
 	"strings"
-	"sync/atomic"
 
 	"github.com/oagentkit/guardx/egress"
 	"github.com/oekit/pkg/errors"
@@ -102,89 +101,13 @@ var (
 
 // ── 宿主扩展位 ──
 //
-// 与默认名单**并集**生效，只能加不能减；默认名单刻意不做成可写变量：一个 `=` 赋值
-// 就能把元数据名拦截悄悄摘掉，而这种改动没有任何编译期或运行期信号。确有例外需求，
-// 说明这条出站链路不该走共享闸门，应由宿主在自己的连接配置上收紧。
+// 扩展位（精确主机名 + 非公网命名空间后缀）与默认名单**并集**生效，只能加不能减。
+// 判据与交换语义全部在 policy.go：本文件只负责读，读的时候**一次取快照**。
 //
-// ## 为什么扩展位也是函数、不是导出变量
-//
-// 这不是风格问题，是两个各自足以致命的问题：
-//
-//  1. **并发读写是 fatal，不是 panic**。classifyHostName 在每条出站链路上被调用，
-//     而注册方在装配期写。导出 `map[string]struct{}` 让这两个动作直接构成数据竞争——
-//     map 的并发读写是 runtime fatal error，`recover` **抓不住**，整个进程当场没了。
-//     即便换成 `[]string` 也仍是数据竞争（切片头三字 + 底层数组一起被读）。
-//  2. **「=` 赋值即静默摘除」正是默认名单拒绝的形状**。上一条注释里写的理由
-//     （悄悄摘掉拦截、无任何信号）对扩展位同样成立，却原样发给了调用方。
-//
-// 故走 atomic.Pointer：读侧一次原子取到快照，写侧整体替换一份新容器，
-// 读侧永远看不到「改了一半」的名单。写侧仍是**整体替换**（不是逐项 mutate），
-// 这样快照不可变，替换就是一次指针交换。
-var (
-	extraBlockedHostnames    atomic.Pointer[map[string]struct{}]
-	extraBlockedHostSuffixes atomic.Pointer[[]string]
-)
+// 为什么读侧必须只取一次：策略是「主机名 + 后缀」两份数据合起来的，两次 Load
+// 落在不同时刻，热重载的中间态就会被读成撕裂策略——每个字段都原子，组合起来
+// 的那一瞬间不是。详见 policy.go 的文件头。
 
-// SetExtraBlockedHostnames 注册/清空扩展精确主机名名单（不传即清空）。
-// 整体替换而非累加：重复调用覆盖上一次，故「清空」就是再调一次空参。
-//
-// 归一化与判定侧同口径（小写 + 去尾点 + 去空白），调用方不必自己保证大小写——
-// 与默认名单一样，`Foo.Example.` 和 `foo.example` 是同一个名字。空项直接丢弃。
-func SetExtraBlockedHostnames(names ...string) {
-	m := make(map[string]struct{}, len(names))
-	for _, n := range names {
-		if n = normalizeHost(strings.TrimSpace(n)); n != "" {
-			m[n] = struct{}{}
-		}
-	}
-	extraBlockedHostnames.Store(&m)
-}
-
-// ErrInvalidBlockedSuffix 扩展后缀非法（注入期拒绝）。errors.Is 判定。
-var ErrInvalidBlockedSuffix = errors.New("扩展拦截后缀非法")
-
-// SetExtraBlockedHostSuffixes 注册/清空扩展后缀名单（不传即清空）。
-//
-// ## 归一化与拒绝规则，以及为什么都在**注入时**做
-//
-// 名单「不命中」是这个拦截面最坏的失败模式：`.CORP` 静默不匹配，等于挂了一个
-// 看着在拦、实际不拦的后缀，而且没有任何信号。所以：
-//
-//   - 大小写 / 空白：**一律在这里归一**，匹配侧只做 HasSuffix，不做任何清洗。
-//   - **无前导点的后缀：拒绝**（返回 ErrInvalidBlockedSuffix，不安装）。
-//     默认表里每个后缀都带点，因为 `internal` 是顶级域，不该因为 `foo.internal`
-//     被拦就整片拒掉；`corp` 这种写法若照单全收，语义会从「拦 foo.corp」悄悄
-//     变成「拦一切以 corp 结尾的名字」——比不拦更糟。与其在匹配时补点，不如
-//     在调用点当场报错。
-//   - **归一化后永不匹配的后缀：拒绝**（裸 `.`、以 `.` 结尾）。主机名判定前已去
-//     尾点，这两种写法进去了也一条都拦不到，属于同一类静默失效。
-//
-// 拒绝发生在注入处而非匹配处：调用方在装配期就能拿到 error；等到某天发现
-// 「这批主机名一直没被拦」再回头查，已经无从追溯是哪次注册写错了。
-//
-// 全量校验通过后才替换：任一项非法则**旧名单原样保留**，不做部分应用——
-// 半套名单比旧名单更难推理。
-func SetExtraBlockedHostSuffixes(suffixes ...string) error {
-	norm := make([]string, 0, len(suffixes))
-	for _, s := range suffixes {
-		s = strings.ToLower(strings.TrimSpace(s))
-		switch {
-		case s == "":
-			return errors.Wrap(ErrInvalidBlockedSuffix, "扩展拦截后缀为空")
-		case !strings.HasPrefix(s, "."):
-			return errors.Wrap(ErrInvalidBlockedSuffix,
-				"扩展拦截后缀必须带前导点（无点会把顶级域整片拒掉）", "suffix", s)
-		case s == "." || strings.HasSuffix(s, "."):
-			return errors.Wrap(ErrInvalidBlockedSuffix,
-				"扩展拦截后缀归一化后永不匹配（尾点已去）", "suffix", s)
-		}
-		norm = append(norm, s)
-	}
-	extraBlockedHostSuffixes.Store(&norm)
-	return nil
-}
-
-// ErrBlockedName 主机名命中名字层拦截名单。
 var ErrBlockedName = errors.New("出站主机名命中拦截名单")
 
 // BlockedNameError 名字层拒绝结论。带 host 与命中原因，便于留痕判断是哪个名、
@@ -218,8 +141,9 @@ func checkHostName(host string, allowLoopback bool) error {
 
 // classifyHostName 返回 (是否拦截, 是否回环族, 命中原因)。
 //
-// 扩展位一律走原子取快照：读到的 map/切片在本次判定内**不被任何写侧触碰**
-// （写侧只整体替换新容器），故拿到指针后可以安全遍历，无需再加锁。
+// 扩展位**一次取快照**，本次判定全程用这一份：主机名与后缀来自同一次 Load，
+// 因此读不到「新主机名 + 旧后缀」的撕裂策略。取到的 Policy 在其生命周期内
+// 不可被写侧触碰（写侧只整体替换新实例），故拿到指针后可安全遍历，无需再加锁。
 func classifyHostName(h string) (blocked, loopbackFamily bool, reason string) {
 	if h == "" {
 		return false, false, ""
@@ -227,10 +151,9 @@ func classifyHostName(h string) (blocked, loopbackFamily bool, reason string) {
 	if _, ok := defaultBlockedHostnames[h]; ok {
 		return true, false, "精确名单"
 	}
-	if names := extraBlockedHostnames.Load(); names != nil {
-		if _, ok := (*names)[h]; ok {
-			return true, false, "扩展精确名单"
-		}
+	p := CurrentPolicy()
+	if p.BlocksHostname(h) {
+		return true, false, "扩展精确名单"
 	}
 	if _, ok := loopbackHostnames[h]; ok {
 		return true, true, "回环族名字"
@@ -240,12 +163,8 @@ func classifyHostName(h string) (blocked, loopbackFamily bool, reason string) {
 			return true, isLoopbackSuffix(sfx), "后缀 " + sfx
 		}
 	}
-	if sfx := extraBlockedHostSuffixes.Load(); sfx != nil {
-		for _, s := range *sfx {
-			if strings.HasSuffix(h, s) {
-				return true, false, "扩展后缀 " + s
-			}
-		}
+	if sfx, hit := p.BlocksSuffix(h); hit {
+		return true, false, "扩展后缀 " + sfx
 	}
 	return false, false, ""
 }
