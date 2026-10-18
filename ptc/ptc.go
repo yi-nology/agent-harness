@@ -73,15 +73,23 @@ type CallRecord struct {
 // ""=成功 / deadline / budget_calls / budget_bytes / runtime（JS 异常或拒绝）/
 // pending（await 永不落定——VM 无定时器，此类程序永不完成）/ bad_result（return 值
 // 不可 JSON 序列化）/ syntax（程序体语法错误，预检期即拒，带 goja 行号）/
-// binding_collision（绑定撞名，见 bindCollision）。
+// binding_collision（绑定撞名，见 findBindingCollision）。
+//
+// Location 与 Suggestions 是给**模型**读的诊断面：调用方是模型，只回一个类别串
+// 对它几乎不可用——它不知道该改哪一行，也不知道该改成什么。详见 diagnostic.go。
 type Result struct {
 	OK        bool
 	Value     string // return 值的 JSON 文本（成功时恒合法 JSON，undefined→"null"）
 	Error     string
 	ErrorKind string
-	Calls     int
-	Bytes     int
-	CallLog   []CallRecord
+	// Location 出错位置（1-based 行列）。取不到时为零值——不猜：假的行号会让模型
+	// 去改一行根本没问题的代码，比没有行号更坏。
+	Location Position
+	// Suggestions 面向模型的修复建议，由 ErrorKind 唯一决定（成功时为 nil）。
+	Suggestions []string
+	Calls       int
+	Bytes       int
+	CallLog     []CallRecord
 }
 
 // findBindingCollision 找绑定面的标识符冲突：工具名经 jsIdent 净化后可能撞名。
@@ -124,7 +132,7 @@ func findBindingCollision(bindings []Binding) (ident, first, dup string, ok bool
 // Interrupt，绑定调用带 runCtx 出去：墙钟到点阻塞调用被 ctx 断掉（CallRecord 留
 // error 痕），程序随后被 Interrupt 收口。审批挂起=终止+已执行步骤留痕（spec §4 P2
 // 取舍：暂停恢复复杂度不值）。
-func Run(ctx context.Context, program string, bindings []Binding, opts Options) Result {
+func Run(ctx context.Context, program string, bindings []Binding, opts Options) (res Result) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
@@ -138,7 +146,13 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 		maxBytes = DefaultMaxBytes
 	}
 
-	res := Result{}
+	// 建议在唯一的收口处统一补，不在每个 return 分支里各写一遍——分支一多必然
+	// 漏一处，而漏掉的后果是「模型收到一条没有修复建议的失败」这种安静退化。
+	defer func() {
+		if !res.OK {
+			res.Suggestions = suggestionsFor(res.ErrorKind)
+		}
+	}()
 
 	// 绑定面冲突预检：装配期缺陷，先于语法预检暴露——程序还没编译就已经跑不到
 	// 「那个工具」了，先报语法错误只会把根因往后推一层。
@@ -152,9 +166,12 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 	// 语法预检（批三百零七）：先编译后建 VM——语法错误带 goja 行号在 syntax kind 里
 	// 如实回包，不烧预算不进 VM（运行期 RunString 的同类错误混在 runtime kind 里
 	// 面目不清）。编译产物直接 RunProgram，不二次编译。
-	prog, cerr := goja.Compile("program", ";(async function(){\n"+program+"\n})()", false)
+	// 包裹源码抽成变量：诊断折算行号必须用与编译**同一份**字符串。
+	wrapped := wrapProgram(program)
+	prog, cerr := goja.Compile(programSourceName, wrapped, false)
 	if cerr != nil {
-		res.Error, res.ErrorKind = fmt.Sprintf("程序语法错误: %v", cerr), "syntax"
+		res.Location = locationOfSyntax(cerr, wrapLines)
+		res.Error, res.ErrorKind = fmt.Sprintf("程序语法错误%s: %v", describePosition(res.Location), cerr), "syntax"
 		return res
 	}
 
@@ -272,7 +289,7 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 }
 
 // failFrom 执行期错误分类：中断哨兵→预算/超时 kind；ctx 取消→runtime（带原文）；
-// 其余 JS 异常→runtime。
+// 其余 JS 异常→runtime，并尽力带上程序内位置。
 func failFrom(res Result, err error) Result {
 	switch {
 	case errors.Is(err, errDeadline):
@@ -287,7 +304,13 @@ func failFrom(res Result, err error) Result {
 			res.Error, res.ErrorKind = fmt.Sprintf("执行被中断: %v", intErr.Value()), "runtime"
 			return res
 		}
-		res.Error, res.ErrorKind = err.Error(), "runtime"
+		if loc := locationOfException(err, wrapLines); loc.Valid() {
+			res.Location = loc
+			res.Error = fmt.Sprintf("程序异常%s: %v", describePosition(loc), err)
+		} else {
+			res.Error = err.Error()
+		}
+		res.ErrorKind = "runtime"
 	}
 	return res
 }
