@@ -161,7 +161,10 @@ func (m *Meter) Total() int {
 }
 
 // Segments 按固定顺序列出：规范分段在前，未知（宿主）分段按名字排序在后。
-// 空计量结果返回空切片而非 nil——调用方遍历不必判空。
+//
+// 未计量过时返回的是**规范分段的零值列表**（六条 Tokens=0），不是空切片——
+// 调用方遍历不必判空，且「这一段存在但量为 0」本身就是一句诚实的陈述。
+// 快照同理（见 Snapshot）：规范段永远出现，未计量就是 0。
 func (m *Meter) Segments() []SegmentUsage {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -175,6 +175,73 @@ func TestApplyNotWired(t *testing.T) {
 	}
 }
 
+// TestApplyRefusesEmptyPlan 空计划压不出东西，却会产出一条摘要 + 一条「已压实」的
+// 成功回执：上下文一字未动，宿主却以为已经处置过。这正是本包常量注释里写的
+// 「报成功而什么都没做，比报错更糟」，所以它必须是错误而不是成功。
+func TestApplyRefusesEmptyPlan(t *testing.T) {
+	cases := []struct {
+		name string
+		plan Plan
+	}{
+		{"零值计划", Plan{}},
+		{"声明了条目却一条都不摘要", Plan{Items: 10, Cutoff: 0, SummarizeItems: 0, KeepTailItems: 10}},
+	}
+	for _, c := range cases {
+		arc := &fakeArchive{locator: "arc-01"}
+		sum := &fakeSummarizer{summary: Summary{Text: "摘要", Tokens: 40}}
+		res, err := Apply(context.Background(), c.plan, nil, nil, arc, sum)
+		if !errors.Is(err, ErrEmptyPlan) {
+			t.Fatalf("%s：应被 ErrEmptyPlan 拒绝，实得 %v", c.name, err)
+		}
+		if res.Segment != nil {
+			t.Fatalf("%s：被拒时不得产出幽灵会话段，实得 %+v", c.name, res.Segment)
+		}
+		if arc.calls != 0 || sum.calls != 0 {
+			t.Fatalf("%s：拒绝必须先于任何副作用，实得 archive=%d summarize=%d", c.name, arc.calls, sum.calls)
+		}
+	}
+}
+
+// TestApplyRefusesInconsistentPlan 计划各字段互不自洽时拒绝：Cutoff 真正驱动的是
+// 「哪一段进摘要」，它与被实际使用的两个数字对不上时，这份计划不可复核。
+func TestApplyRefusesInconsistentPlan(t *testing.T) {
+	cases := []struct {
+		name string
+		plan Plan
+	}{
+		{"切分加起来不等于条目总数", Plan{Items: 10, Cutoff: 6, SummarizeItems: 6, KeepTailItems: 9}},
+		{"截断下标与待摘要数不等", Plan{Items: 10, Cutoff: 4, SummarizeItems: 6, KeepTailItems: 4}},
+	}
+	for _, c := range cases {
+		arc := &fakeArchive{locator: "arc-01"}
+		sum := &fakeSummarizer{summary: Summary{Tokens: 40}}
+		_, err := Apply(context.Background(), c.plan,
+			items(c.plan.SummarizeItems, 25, "item"), items(c.plan.KeepTailItems, 25, "msg"), arc, sum)
+		if !errors.Is(err, ErrPlanInconsistent) {
+			t.Fatalf("%s：应被 ErrPlanInconsistent 拒绝，实得 %v", c.name, err)
+		}
+		if arc.calls != 0 || sum.calls != 0 {
+			t.Fatalf("%s：拒绝必须先于任何副作用，实得 archive=%d summarize=%d", c.name, arc.calls, sum.calls)
+		}
+	}
+}
+
+// TestApplyStalePlanStillRefusedBeforeSideEffects 三条计划校验的顺序不变量：
+// 过期计划仍然被拒，且拒绝发生在归档之前——不可逆操作一旦发生就撤不回来。
+func TestApplyStalePlanStillRefusedBeforeSideEffects(t *testing.T) {
+	arc := &fakeArchive{locator: "arc-01"}
+	sum := &fakeSummarizer{summary: Summary{Tokens: 40}}
+	// 计划说 6 进摘要、4 条尾部，调用方给了 8 条尾部 → 计划已过期。
+	_, err := Apply(context.Background(), mustPlan(t, 10, 4, 25),
+		items(6, 25, "item"), items(8, 25, "msg"), arc, sum)
+	if !errors.Is(err, ErrPlanMismatch) {
+		t.Fatalf("过期计划仍应被 ErrPlanMismatch 拒绝，实得 %v", err)
+	}
+	if arc.calls != 0 || sum.calls != 0 {
+		t.Fatalf("被拒时不得有任何副作用，实得 archive=%d summarize=%d", arc.calls, sum.calls)
+	}
+}
+
 // TestApplyArchiveFailureAborts 归档失败必须中止：原文没落地就不许丢。
 func TestApplyArchiveFailureAborts(t *testing.T) {
 	boom := errors.New("存储不可用")

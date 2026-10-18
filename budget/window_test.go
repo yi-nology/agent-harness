@@ -142,6 +142,31 @@ func TestClassifyLargeValuesNoFloatDrift(t *testing.T) {
 	}
 }
 
+// TestClassifyNoOverflowAtInt64Extremes used*100 在 int64 量级必然回绕，
+// 回绕后比较的是两个垃圾数：满载被判成 normal、四分之一占用被判成 critical——
+// 方向与真实压力相反，且错在最该报警的时候。判定必须对整个 int64 区间成立。
+func TestClassifyNoOverflowAtInt64Extremes(t *testing.T) {
+	const maxI = int64(^uint64(0) >> 1)                         // int64 上限（64 位平台下即为 maxInt64）
+	const threeQuarters, cap3Q = int64(9) << 59, int64(3) << 61 // 恰为 3/4 与满量：整数除法不引入舍入
+	cases := []struct {
+		name            string
+		input, capacity int64
+		want            Pressure
+	}{
+		{"满载（100%）", maxI, maxI, PressureCritical},
+		{"越界（200%）", maxI, maxI / 2, PressureCritical},
+		{"正好 75%", threeQuarters, cap3Q, PressureTight},
+		{"四分之一占用", maxI / 4, maxI, PressureNormal},
+		{"容量 1 且已占用", 1, 1, PressureCritical},
+		{"容量 1 未占用", 0, 1, PressureNormal},
+	}
+	for _, c := range cases {
+		if got := Classify(int(c.input), int(c.capacity)); got != c.want {
+			t.Fatalf("%s：Classify(%d,%d) 应为 %v，实得 %v", c.name, c.input, c.capacity, c.want, got)
+		}
+	}
+}
+
 func TestPressureString(t *testing.T) {
 	cases := map[Pressure]string{
 		PressureNormal: "normal", PressureTight: "tight",

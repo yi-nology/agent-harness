@@ -242,25 +242,25 @@ func TestApplySpansOneStrategyPerCall(t *testing.T) {
 			if len(out) != len(txt) {
 				t.Fatalf("mask 应保长，实得 %d vs %d", len(out), len(txt))
 			}
-			if n := strings.Count(out, "****"); n != 2 { // 手机号与身份证各一段
-				t.Fatalf("mask 下两个 span 都该保长打码，实得 %d 段：%q", n, out)
+			if !strings.Contains(out, "138****1234") || !strings.Contains(out, "1101************32") {
+				t.Fatalf("mask 下两个 span 都该保长打码（一次调用内形态一致），实得 %q", out)
 			}
 		}},
 		{"block 形态同 mask 但必须报阻断", StrategyBlock, true, func(t *testing.T, out string) {
-			if n := strings.Count(out, "****"); n != 2 || len(out) != len(txt) {
+			if !strings.Contains(out, "138****1234") || !strings.Contains(out, "1101************32") || len(out) != len(txt) {
 				t.Fatalf("block 处置形态应同 mask（内核不代为阻断），实得 %q", out)
 			}
 		}},
 		{"redact", StrategyRedact, false, func(t *testing.T, out string) {
 			if n := strings.Count(out, redactedPlaceholder); n != 2 {
-				t.Fatalf("redact 下两个 span 都该换占位，实得 %d 处：%q", n, out)
+				t.Fatalf("redact 下两个 span 都该换占位（一次调用内形态一致），实得 %d 处：%q", n, out)
 			}
-			if strings.Contains(out, "****") {
+			if strings.Contains(out, "*") {
 				t.Fatalf("redact 下不得混入 mask 形态（策略中途被换过）：%q", out)
 			}
 		}},
 		{"hash", StrategyHash, false, func(t *testing.T, out string) {
-			if n := strings.Count(out, redactedPlaceholder); n != 0 || strings.Contains(out, "****") {
+			if strings.Contains(out, "*") || strings.Contains(out, redactedPlaceholder) {
 				t.Fatalf("hash 下不得混入其它策略形态：%q", out)
 			}
 			if len(out) != len("a ")+16+len(" b ")+16+len(" c") { // 每段定长 16 摘要
@@ -308,22 +308,33 @@ func TestApplyValueKeepsNilContainers(t *testing.T) {
 		{"[]any", nilSliceAny},
 		{"[]string", nilSliceStr},
 	}
+	// 顶层直传与嵌套在载荷里两条路径都要保形（顶层走的是同四个 case 分支）。
+	wrappers := []struct {
+		name   string
+		nested bool
+		wrap   func(any) any
+	}{
+		{"顶层直传", false, func(v any) any { return v }},
+		{"嵌套载荷", true, func(v any) any { return map[string]any{"field": v} }},
+	}
 	for _, c := range cases {
-		// 顶层直传与嵌套在载荷里两条路径都要保形（顶层走的是同四个 case 分支）。
-		for _, in := range []any{c.nilIn, map[string]any{"field": c.nilIn}} {
-			out, blocked := ApplyValue(SurfaceToolResults, in)
+		for _, w := range wrappers {
+			out, blocked := ApplyValue(SurfaceToolResults, w.wrap(c.nilIn))
 			if blocked {
-				t.Fatalf("%s：nil 容器里没有任何检出，不该报阻断", c.name)
+				t.Fatalf("%s/%s：nil 容器里没有任何检出，不该报阻断", c.name, w.name)
 			}
-			var got any = out
-			if _, nested := in.(map[string]any); nested {
+			got := out
+			if w.nested {
 				got = out.(map[string]any)["field"]
 			}
+			if got == nil {
+				t.Fatalf("%s/%s：应返回带类型的 nil（无类型 nil 会让调用方的类型断言失效），实得 %#v", c.name, w.name, out)
+			}
 			if !reflect.ValueOf(got).IsNil() {
-				t.Fatalf("%s：nil 容器被换成了非 nil 值（%#v）", c.name, got)
+				t.Fatalf("%s/%s：nil 容器被换成了非 nil 值（%#v）", c.name, w.name, got)
 			}
 			if reflect.TypeOf(got) != reflect.TypeOf(c.nilIn) {
-				t.Fatalf("%s：动态类型应保持不变，实得 %v", c.name, reflect.TypeOf(got))
+				t.Fatalf("%s/%s：动态类型应保持不变，实得 %v", c.name, w.name, reflect.TypeOf(got))
 			}
 		}
 	}

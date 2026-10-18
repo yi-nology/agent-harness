@@ -54,6 +54,21 @@ var (
 	// 宁可不压：按过期计划摘要，会把该保留的尾部内容一起吞掉。
 	ErrPlanMismatch = errors.New("压实拒绝：入参条目与计划不符（计划已失效）")
 
+	// ErrEmptyPlan 计划没有指定任何待摘要条目（零值 Plan，或 Cutoff/待摘要数为 0）。
+	//
+	// 为什么不并入 ErrPlanMismatch：两条病因的现场不同——过期计划是「会话已经长了」，
+	// 空计划是「压根没打算处置」（宿主建计划失败后拿了零值继续跑）。按同一条理由
+	// 合并成一种，等于让宿主看到 ErrPlanMismatch 却在错误的地方找原因。
+	ErrEmptyPlan = errors.New("压实拒绝：计划未指定任何待摘要条目（空计划压不出东西）")
+
+	// ErrPlanInconsistent 计划各字段互不自洽（Cutoff 与待摘要数不等、或
+	// 待摘要+保留尾部不等于条目总数）。
+	//
+	// 自洽的计划由 BuildPlan 产出且只有一种构造方式；手搓出矛盾字段的计划，
+	// 其 Cutoff 只是一个谎——Apply 真正用的是另外两个数，于是「按计划压实」变成
+	// 「按一份自相矛盾的回执压实」，事后无法复核。宁可拒绝。
+	ErrPlanInconsistent = errors.New("压实拒绝：计划各字段互不自洽")
+
 	// ErrNotWired 执行压实所需接口未装配。
 	ErrNotWired = errors.New("压实拒绝：归档 / 摘要接口未装配")
 )
@@ -107,6 +122,19 @@ func (r Result) SnapshotDelta() int {
 // 摘要失败（超时、限流、模型返回空）时原文已经落盘，可以直接重试；反序则可能出现
 // 「摘要已丢弃原文、摘要本身又没拿到」的净损失。不可逆操作之后的那一步，必须最便宜。
 //
+// # 计划自身的三条前置校验（在归档之前，全部无副作用）
+//
+//  1. ErrEmptyPlan：待摘要条目数 <= 0。零值 Plan 能一路通过「入参条数与计划相等」
+//     这道校验（0 == 0），于是产出「1 条摘要 + 0 条尾部」和一条成功回执——上下文
+//     一字未动，宿主却以为已经处置过。本包对空操作的态度写在 BuildPlan 的常量注释里：
+//     **报成功而什么都没做，比报错更糟**。
+//  2. ErrPlanInconsistent：Cutoff≠待摘要数，或 待摘要+保留尾部≠条目总数。
+//     Cutoff 真正驱动的是「哪一段进摘要」，它与被实际使用的两个数字对不上时，
+//     这份计划不可复核。
+//  3. ErrPlanMismatch：入参条数与计划对不上——计划已过期。既有语义，不变。
+//
+// 三条都在任何归档之前判定：被拒的调用不得留下任何副作用。
+//
 // # 内核做什么、不做什么
 //
 // 编排（校验 → 归档 → 摘要 → 拼接 → 给修正量）是代码，所以归内核；
@@ -115,6 +143,14 @@ func (r Result) SnapshotDelta() int {
 func Apply(ctx context.Context, p Plan, leading, tail []Item, arc Archive, sum Summarizer) (Result, error) {
 	if arc == nil || sum == nil {
 		return Result{}, ErrNotWired
+	}
+	if p.SummarizeItems <= 0 {
+		return Result{}, fmt.Errorf("%w: plan(items=%d cutoff=%d summarize=%d keep_tail=%d)",
+			ErrEmptyPlan, p.Items, p.Cutoff, p.SummarizeItems, p.KeepTailItems)
+	}
+	if p.Cutoff != p.SummarizeItems || p.SummarizeItems+p.KeepTailItems != p.Items {
+		return Result{}, fmt.Errorf("%w: plan(items=%d cutoff=%d summarize=%d keep_tail=%d)",
+			ErrPlanInconsistent, p.Items, p.Cutoff, p.SummarizeItems, p.KeepTailItems)
 	}
 	// 计划是一张对下标的承诺：入参条数与计划不符说明计划已过期。
 	if len(leading) != p.SummarizeItems || len(tail) != p.KeepTailItems {

@@ -141,10 +141,22 @@ func TestSegmentsCanonicalThenHostSorted(t *testing.T) {
 	}
 }
 
-func TestSegmentsEmptyNotNil(t *testing.T) {
+// TestSegmentsUnmeasuredReturnsCanonicalZeroes 未计量过时返回规范分段的零值列表，
+// 不是空切片：调用方遍历不必判空，且「存在但量为 0」是比「不存在」更诚实的陈述。
+// （原用例注释写的是「返回空切片而非 nil」，与实现不符，实现为准。）
+func TestSegmentsUnmeasuredReturnsCanonicalZeroes(t *testing.T) {
 	var m Meter
-	if got := m.Segments(); got == nil {
-		t.Fatal("空计量应返回空切片而非 nil（调用方遍历不该判空）")
+	got := m.Segments()
+	if got == nil {
+		t.Fatal("零值 Meter 的 Segments 应恒非 nil（调用方遍历不该判空）")
+	}
+	if len(got) != len(canonicalSegments) {
+		t.Fatalf("未计量时应逐条列出 %d 个规范分段，实得 %d 条", len(canonicalSegments), len(got))
+	}
+	for i, u := range got {
+		if u.Segment != canonicalSegments[i] || u.Tokens != 0 {
+			t.Fatalf("第 %d 条应为 %q 的零值，实得 %+v", i, canonicalSegments[i], u)
+		}
 	}
 }
 

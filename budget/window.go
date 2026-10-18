@@ -103,6 +103,28 @@ const (
 	CriticalAtPct = 90
 )
 
+// thresholdAt 占用率 pct% 对应的最小 used，即 used*100 >= c*pct 的精确整数解。
+//
+// # 为什么改成除法
+//
+// 原始判据 `used*100 >= c*pct` 两边都是可溢出量：c 取到 int64 量级时 pct 的乘法必然
+// 回绕成负数，于是「满载」被比成「占用率远低于阈值」——报出来的档位与真实压力**相反**。
+// 除法版没有这个问题：c 可达 int64 上限，全程不产生任何超过 int64 的中间值。
+//
+// # 为什么还要拆成 a/r 两段
+//
+// 直接写 c*pct 一样溢出。pct 是小常量，把 c 拆成 c = 100*a + r 之后，
+// floor(c*pct/100) = a*pct + r*pct/100，余数非零时再进一取上整。
+// a*pct 的上界是 (int64上限/100)*90 < int64上限，r*pct < 100*90，两段都不溢出。
+func thresholdAt(c, pct int64) int64 {
+	a, r := c/100, c%100
+	q := a*pct + r*pct/100
+	if r*pct%100 != 0 {
+		q++ // 向上取整：阈值取「到达即进档」，故解为最小满足者
+	}
+	return q
+}
+
 // Classify 按占用率判定压力档。纯函数，无副作用。
 //
 // # 边界取「到达即进档」
@@ -124,9 +146,9 @@ func Classify(input, capacity int) Pressure {
 	}
 	c := int64(capacity)
 	switch {
-	case used*100 >= c*CriticalAtPct:
+	case used >= thresholdAt(c, CriticalAtPct):
 		return PressureCritical
-	case used*100 >= c*TightAtPct:
+	case used >= thresholdAt(c, TightAtPct):
 		return PressureTight
 	default:
 		return PressureNormal
