@@ -82,6 +82,25 @@ func (ss SurfaceSet) Has(s Surface) bool {
 	return ss&bit != 0
 }
 
+// ValidateSurface 校验面名是否已登记，供宿主在**接线期**自查配置。
+//
+// # 为什么需要它
+//
+// Apply / ApplyValue 对未登记面采取 fail-closed（整段替换 + 要求阻断），那是
+// 运行期的兜底，代价是一次误伤。宿主若把面名做成配置项，应该在启动时调一次
+// 本函数把拼写错误挡在外面——fail-closed 是保险，不是日常路径。
+//
+//	// 宿主启动时：
+//	for _, name := range cfg.PiiSurfaces {
+//	    if err := pii.ValidateSurface(pii.Surface(name)); err != nil {
+//	        return fmt.Errorf("PII 面名 %q 未登记: %w", name, err)
+//	    }
+//	}
+func ValidateSurface(s Surface) error {
+	_, err := SurfaceBit(s)
+	return err
+}
+
 // ParseSurfaces 由宿主配置解析面集合（未知面名报错，不静默丢弃）。
 func ParseSurfaces(names ...string) (SurfaceSet, error) {
 	if len(names) == 0 {
@@ -238,8 +257,22 @@ func applySpansAs(text string, s StrategyKind) (string, bool) {
 //   - 检出且策略为 block → (处置后文本, true)，**调用方必须履行阻断**
 //   - 其余 → (处置后文本, false)
 func Apply(s Surface, text string) (string, bool) {
-	if !Enabled() || !SurfaceEnabled(s) {
+	if !Enabled() {
 		return text, false
+	}
+	// 未知面名**不静默放行**：面未登记与「宿主显式关闭」是两件事，塌缩成同一个
+	// 状态就等于拼错一个字符即可让该面完全不脱敏——而 tool_results 正是 PII
+	// 最需要兜住的面（工具产出直接回喂模型）。无信号才是这里真正危险的地方：
+	// 宿主会以为自己在保护，其实什么都没做。
+	//
+	// 取舍：整段替换 + 要求阻断，而不是 panic。panic 更响，但会顺着调用栈杀掉
+	// 正在跑的编排；静默放行最省事，代价是数据裸奔。这里取两者之间可恢复的那个：
+	// 结果仍然是「原文没有出去」，同时让宿主在返回值里看见异常。
+	if _, err := SurfaceBit(s); err != nil {
+		return redactedPlaceholder, true
+	}
+	if !SurfaceEnabled(s) {
+		return text, false // 确属显式关闭：既定语义，原文返回
 	}
 	return applySpans(text)
 }
@@ -247,7 +280,14 @@ func Apply(s Surface, text string) (string, bool) {
 // ApplyValue 递归下探常见载荷结构处置（与 RedactValue 同结构面，收口其
 // 行为并加上面/策略维度）。返回 (处置后载荷, 是否阻断)。
 func ApplyValue(s Surface, v any) (any, bool) {
-	if !Enabled() || !SurfaceEnabled(s) {
+	if !Enabled() {
+		return v, false
+	}
+	// 与 Apply 同口径：未知面名不按「未启用」放行（见 Apply 的取舍说明）。
+	if _, err := SurfaceBit(s); err != nil {
+		return redactedPlaceholder, true
+	}
+	if !SurfaceEnabled(s) {
 		return v, false
 	}
 	return applyValue(v, func(t string) (string, bool) { return Apply(s, t) })

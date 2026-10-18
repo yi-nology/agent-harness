@@ -55,7 +55,7 @@ delta      增量节流 + 标签分流   模型供应商路由
 | `toolfail` | 408 | oekit/pkg | 工具失败的错误分类契约：类别 → 可重试性/退避/需人工为**数据表**而非散落 if；不可归类一律不可重试 |
 | `delta` | 241 | oagentkit/runtime | 增量节流：分片合并 + 权威整段优先 + 确定性收口扫序 |
 | `pending` | 53 | 无 | 多轮挂起态载体：单一编码入口 + 宽容解码（非法值降级为无挂起）|
-| `reminder` | 41 | 无 | 系统注入提示的防伪包裹：source 声明 + body 内伪造标签转义 |
+| `reminder` | 30 | oagentkit/guardx | 系统注入提示的防伪包裹（门面）：核心已下沉 `guardx/injectband`，本包只保调用路径稳定，宿主调用点一行不动 |
 | `drain` | 188 | oekit/logx、oekit/pkg | 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀（经 `Turns` 接口）|
 | `ptc` | 326 | goja、oekit/concurrency、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面** |
 | `watchdog` | 127 | 无| 被动配对不变量监视：环节收口仍有未执行声明 / 结果无对应声明；**只告警不裁决**（热路径裁决在守卫侧）|
