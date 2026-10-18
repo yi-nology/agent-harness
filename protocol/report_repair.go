@@ -41,7 +41,52 @@ var reportJSONSchema = &jsonrepair.Schema{
 	OnMap:      normalizeReportMap,
 }
 
+// ParseReport 解析**外部输入**（LLM 产出），并剥离全部引擎侧字段。
+//
+// # 为什么解析外部输入要剥离
+//
+// Report 里有五个字段在定义处就标注了「引擎侧确定性填写 / 引擎回填 / 非 LLM
+// 输出字段」：followups、meta、profile、awaiting_user、guidance。它们决定**呈现**
+// ——profile 切答案视图会丢掉影响范围、风险回退、合议与 severity 渲染；
+// guidance 置位会走轻装视图（不出 agent 标题与置信度）。让模型能写这几个键，
+// 等于让它能自己决定「哪些治理信息不必呈现」，与本包的 fail-closed 口径相反。
+//
+// 解析后剥零值即可，无需动 JSON：解码路径共用，剥离点放在最后一步。
+//
+// # 往返解析走 ParsePersistedReport
+//
+// 落库的 FinalReportJSON 带着真实的引擎字段，回读时**必须保留**，否则渲染历史
+// 报告会静默丢掉 followups/meta。刻意不提供「宽松开关」——外部与往返是两个
+// 不同信任级别的输入，用不同函数名表达比用布尔参数更难用错。
 func ParseReport(raw string) (*Report, error) {
+	r, err := parseReport(raw)
+	if err != nil {
+		return nil, err
+	}
+	stripEngineFields(r)
+	return r, nil
+}
+
+// ParsePersistedReport 解析**本仓/宿主自己落库后回读**的 JSON 往返，保留引擎侧
+// 字段（followups / meta / profile / awaiting_user / guidance）。
+//
+// 只用于回读自己的产物。**不要**拿它解析模型输出——那是 ParseReport 的事。
+func ParsePersistedReport(raw string) (*Report, error) {
+	return parseReport(raw)
+}
+
+// stripEngineFields 清零全部引擎侧字段。宿主在解析后按自己的判定赋值（见
+// bianque scheduler 的 Meta / AwaitingUser / Profile 回填点）。
+func stripEngineFields(r *Report) {
+	r.Followups = nil
+	r.Meta = nil
+	r.Profile = ""
+	r.AwaitingUser = false
+	r.Guidance = false
+}
+
+// parseReport 报告解析本体（不加信任级别假设），供上面两个入口共用。
+func parseReport(raw string) (*Report, error) {
 	if len(raw) > maxReportInput {
 		raw = raw[:maxReportInput]
 	}
