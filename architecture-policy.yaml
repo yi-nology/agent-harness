@@ -375,7 +375,7 @@ thresholds:
   # 任何一次改动要在多大的影响面上评估，全凭这个数。宿主仓实测出现单类型 175 个方法
   # 的实例，故此判据比行数更能提前报警。
   max_methods_per_type: 25
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, watchdog, delta, pending, reminder, drain, contract, checkpoint, budget, offload, tooldisclose, toolfail, cmd]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, cmd]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
