@@ -22,8 +22,19 @@ COV_MIN  := 60
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
 
+# fmt-check 的文件集由 git 决定，不由 `.` 递归决定。
+#
+# 为什么不用 `gofmt -l .`：devlink 会在仓内留下 `.*-work/`（当前 .toolgate-work
+# 174MB），里面是 Go 官方与各库的 testdata——**故意写坏语法的样本**。gofmt 扫到
+# 它们会刷几十行 expected type found ')' 的 stderr，而 `grep -v '^\.'` 只能过滤
+# stdout，接不住 stderr。实测 fmt-check 被拖到 12 秒，真违规淹没在噪音里。
+#
+# git ls-files 覆盖「已跟踪」，--others --exclude-standard 覆盖「新写但没 add」
+#（如本仓测试夹具），两者合起来正好等于「gitignore 之外的全部 Go 源码」——
+# 第三方工作副本已被 .gitignore 收走，天然不在文件集里。CI 里两者都在版本库中，
+# 覆盖面不变。
 fmt-check:
-	@files=$$(gofmt -l . | grep -v '^\.' || true); \
+	@files=$$(gofmt -l $$(git ls-files '*.go'; git ls-files --others --exclude-standard '*.go') || true); \
 	if [ -n "$$files" ]; then echo "gofmt 未格式化文件:"; echo "$$files"; exit 1; fi
 
 vet:
