@@ -152,7 +152,7 @@ func mountDiscover(vm *goja.Runtime, d Discoverer) error {
 		q, _ := argString(call.Argument(0))
 		found := d(q)
 		// 转成 map 再交出去：goja 未配置 FieldNameMapper 时按**字段原名**暴露
-		// （Name 而非 name），JS 侧读到的是 undefined——模型会以为没查���到，
+		// （Name 而非 name），JS 侧读到的是 undefined——模型会以为没查到，
 		// 于是退回逐个试，而那正是本机制要替掉的行为。
 		out := make([]map[string]any, 0, len(found))
 		for _, t := range found {
