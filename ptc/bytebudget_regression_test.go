@@ -40,11 +40,11 @@ func TestByteBudgetCoversErrorPath(t *testing.T) {
 
 	// 超限必须中断收口：要么报字节预算超限，要么整体失败，
 	// 但绝不能「跑完了 50 次报错调用还返回 OK」。
-	if r.OK && r.ErrorKind != "byte_budget" {
+	if r.OK && r.ErrorKind != "budget_bytes" {
 		t.Fatalf("报错路径必须同样受字节闸约束，实得 OK=%v ErrorKind=%q Error=%q",
 			r.OK, r.ErrorKind, r.Error)
 	}
-	if !r.OK && r.ErrorKind == "byte_budget" {
+	if !r.OK && r.ErrorKind == "budget_bytes" {
 		return // 预期路径：以字节预算超限收口
 	}
 	t.Fatalf("预期以字节预算超限中断，实得 OK=%v Value=%q ErrorKind=%q",
