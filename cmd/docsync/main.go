@@ -176,17 +176,21 @@ func measure(pkg string) (int, []string, error) {
 }
 
 // normalizeDep 把 module 路径归并到「owner/repo」两段——
-// oagentkit/guardx/egress 与 oagentkit/guardx/fence 同属 guardx。
+// github.com/oekit/pkg 与 github.com/oekit/logx 同属 oekit；
+// santhosh-tekuri/jsonschema/v6 没有 module host，第一段就是 owner。
+//
+// host 的判据是「第一段含点且至少还有两段」：github.com / gopkg.in / mvdan.cc
+// 都带点，而 owner 名（santhosh-tekuri、oagentkit）不带点。
 func normalizeDep(path string) string {
 	parts := strings.Split(path, "/")
-	host := parts[0]
-	if i := strings.Index(host, "."); i >= 0 {
-		host = host[i+1:] // 去掉 github.com 前缀
+	rest := parts
+	if len(parts) >= 3 && strings.Contains(parts[0], ".") {
+		rest = parts[1:] // 去掉 module host（github.com/x → x）
 	}
-	if len(parts) < 2 {
-		return host
+	if len(rest) < 2 {
+		return rest[0]
 	}
-	return host + "/" + parts[1]
+	return rest[0] + "/" + rest[1]
 }
 
 // listPackages 列出一级子目录中的 Go 包（以含 .go 文件为准）。

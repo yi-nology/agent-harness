@@ -166,14 +166,19 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 			if err != nil {
 				rec.Status = "error"
 				rec.Error = err.Error()
-				res.CallLog = append(res.CallLog, rec)
-				panic(vm.NewGoError(err)) // 程序可 try/catch；未捕获=拒绝落 Result
+			} else {
+				rec.Status = "ok"
 			}
-			rec.Status = "ok"
 			res.CallLog = append(res.CallLog, rec)
+			// 字节闸必须盖住**错误路径**：报错调用的 out 同样记了账，而错误分支
+			// 紧接着就 panic 出去——判定若留在其后等于没有闸。程序 try/catch 掉
+			// 每次报错，字节就能无限攒下去，只剩 MaxCalls 还拦着。
 			if res.Bytes > maxBytes {
 				vm.Interrupt(errBudgetByte)
 				return goja.Undefined()
+			}
+			if err != nil {
+				panic(vm.NewGoError(err)) // 程序可 try/catch；未捕获=拒绝落 Result
 			}
 			return vm.ToValue(out)
 		}
