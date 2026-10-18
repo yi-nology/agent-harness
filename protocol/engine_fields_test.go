@@ -9,16 +9,16 @@ const engineFieldReport = `{"agent_name":"a","domain":"d","conclusion":"c","conf
 	`"meta":{"duration_ms":1500,"tool_calls":3},` +
 	`"profile":"answer","awaiting_user":true,"guidance":true}`
 
-// TestParseReportStripsEngineFields 钉住「外部输入不得携带引擎侧字段」。
+// TestParseLLMReportStripsEngineFields 钉住「模型输出不得携带引擎侧字段」。
 //
 // 这五个字段在定义处就标注「引擎侧确定性填写 / 非 LLM 输出字段」，且直接决定
 // 呈现：profile 切答案视图会丢掉影响范围 / 风险回退 / 合议 / severity 渲染；
 // guidance 置位走轻装视图（不出 agent 标题与置信度）。让模型能写它们，等于让它
 // 自己决定「哪些治理信息不必呈现」——与本包 fail-closed 的口径相反。
-func TestParseReportStripsEngineFields(t *testing.T) {
-	r, err := ParseReport(engineFieldReport)
+func TestParseLLMReportStripsEngineFields(t *testing.T) {
+	r, err := ParseLLMReport(engineFieldReport)
 	if err != nil {
-		t.Fatalf("解析应成功: %v", err)
+		t.Fatalf("ParseLLMReport 应成功: %v", err)
 	}
 	if r.Profile != "" {
 		t.Errorf("profile 是引擎侧字段，外部输入不应生效，实得 %q", r.Profile)
@@ -41,14 +41,14 @@ func TestParseReportStripsEngineFields(t *testing.T) {
 	}
 }
 
-// TestParsePersistedReportKeepsEngineFields 钉住往返路径必须保留引擎字段。
+// TestParseReportKeepsEngineFields 钉住往返路径必须保留引擎字段。
 //
-// 宿主两处用 ParseReport 回读已落库的 FinalReportJSON（handler 渲染、session
-// 元信息）。若这一路径也剥离，历史报告会静默丢掉 followups/meta。
-func TestParsePersistedReportKeepsEngineFields(t *testing.T) {
-	r, err := ParsePersistedReport(engineFieldReport)
+// ParseReport 同时是宿主回读已落库 FinalReportJSON 的入口（handler 渲染、session
+// 元信息），形态档靠它保真重渲染（TestProfileRoundTrip 已钉）。绝不可在此剥离。
+func TestParseReportKeepsEngineFields(t *testing.T) {
+	r, err := ParseReport(engineFieldReport)
 	if err != nil {
-		t.Fatalf("往返解析应成功: %v", err)
+		t.Fatalf("ParseReport（往返入口）应成功: %v", err)
 	}
 	if r.Profile != ProfileAnswer {
 		t.Errorf("往返解析应保留 profile，实得 %q", r.Profile)
@@ -64,16 +64,16 @@ func TestParsePersistedReportKeepsEngineFields(t *testing.T) {
 	}
 }
 
-// TestParseReportRoundTripIsExplicit 钉住两条路径的差异只在这五个字段上：
+// TestTwoEntryPointsDifferOnlyOnEngineFields 钉住两条路径的差异只在这五个字段上：
 // 同一份 JSON，走 ParseReport 得零值、走 ParsePersistedReport 得全值，其余完全一致。
-func TestParseReportRoundTripIsExplicit(t *testing.T) {
-	untrusted, err := ParseReport(engineFieldReport)
+func TestTwoEntryPointsDifferOnlyOnEngineFields(t *testing.T) {
+	untrusted, err := ParseLLMReport(engineFieldReport)
+	if err != nil {
+		t.Fatalf("ParseLLMReport: %v", err)
+	}
+	trusted, err := ParseReport(engineFieldReport)
 	if err != nil {
 		t.Fatalf("ParseReport: %v", err)
-	}
-	trusted, err := ParsePersistedReport(engineFieldReport)
-	if err != nil {
-		t.Fatalf("ParsePersistedReport: %v", err)
 	}
 
 	if untrusted.AgentName != trusted.AgentName ||
