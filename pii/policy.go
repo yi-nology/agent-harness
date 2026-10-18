@@ -196,6 +196,11 @@ func Gen() uint64 { return curPolicy.Load().gen }
 // 拆成独立的 Load 与 Store，中间被别的写侧插进来就会丢更新：宿主刚设的
 // enabled=false 被并发进来的 SetSurfaces 用旧副本覆盖回去。CAS 让「基于最新值
 // 修改」这条读改写链变成一次原子操作。
+//
+// CAS 成功即变更已落地，此后 notifyPolicy 才把新快照推给订阅者（subscribe.go）。
+// 通知在锁外、且订阅者 panic 被 recover：一次成功的 CAS 不因某个订阅者抛异常
+// 而被说成没发生。校验失败的写侧（SetStrategy 的未知策略）根本走不到这里，
+// 故被拒的变更一次通知都不发——发了就等于宣称「换过了」，而它没换。
 func updatePolicy(mutate func(*Policy)) {
 	for {
 		old := curPolicy.Load()
@@ -203,6 +208,7 @@ func updatePolicy(mutate func(*Policy)) {
 		mutate(&next)
 		next.gen = old.gen + 1
 		if curPolicy.CompareAndSwap(old, &next) {
+			notifyPolicy(next)
 			return
 		}
 	}

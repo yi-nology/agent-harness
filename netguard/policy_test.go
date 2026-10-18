@@ -8,9 +8,30 @@ import (
 )
 
 // resetPolicy 把扩展策略清回空，避免用例之间互相污染（本包是包级全局）。
+//
+// # 清理为什么必须限时
+//
+// t.Cleanup 跑在**测试 goroutine 本身**上。清理要写策略，于是要走通知路径——
+// 若被测实现的通知真在锁内（这正是 TestSubscriberMaySetPolicyRecursively 要抓的
+// 缺陷），清理自己也会撞上那把锁并卡死。此时死锁就不只是「那个用例红」，而是
+// **整个测试二进制挂到 Go 的总超时**：会挂死的门禁比没有门禁更糟，CI 上它只是变慢，
+// 本地却看不出是哪条用例出的问题。
+//
+// 故清理动作放进 goroutine 并限时等待。超时说明通知路径已经坏了（用例此刻已红），
+// 此时强行完成清理只会再卡一次。
 func resetPolicy(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() { _ = SetPolicy(nil, nil) })
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = SetPolicy(nil, nil)
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	})
 }
 
 // ── 不可撕裂读：本条改动的全部存在理由 ──

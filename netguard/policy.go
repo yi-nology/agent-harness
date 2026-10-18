@@ -26,6 +26,11 @@
 // 调用方据此在观察到 Generation 变化时留痕——**可观测性是这层的兜底**，
 // 因为策略生效与否最终只能由它是否被记录来证明。
 //
+// 但代次只是**信号**，不是**响应**：调用方必须自己起轮询去比对，而两次比对之间
+// 若换了两次，代次只能说明「变了」，说不出「变成了什么」。subscribe.go 把这
+// 半句接上——变更发生的那一刻由写侧直接把新快照推给订阅者。两者不是二选一：
+// 代次回答「换过没有」（可追溯到日志），订阅回答「换成了什么」（当场生效）。
+//
 // # 只能整份换，不能半份换
 //
 // 旧的 SetExtraBlockedHostnames / SetExtraBlockedHostSuffixes 各自只改一项，
@@ -132,6 +137,12 @@ var ErrInvalidBlockedSuffix = errors.New("扩展拦截后缀非法")
 //
 // 任一项非法则**旧策略原样保留**，不做部分应用。
 //
+// ## 订阅者只在成功时收到通知
+//
+// 通知发生在本次交换真正落地之后：校验失败的路径直接 return，一次通知都不发。
+// 发了就等于告诉订阅者「策略换过了」，而它此刻根本没换——订阅者据此重建的派生
+// 视图会对应一份从未生效过的策略，且没有任何东西能指出这一点。
+//
 // ## 相对内置默认名单的关系
 //
 // 扩展位与内置默认名单**并集**生效，默认名单不在这张表里、也不可被覆盖：
@@ -163,12 +174,16 @@ func SetPolicy(hostnames, suffixes []string) error {
 	// 校验全过才交换：否则旧策略原样保留。
 	// 代次在交换成功后递增，读者据此判断「期间换过策略」。
 	next := policyGen.Load() + 1
-	curPolicy.Store(&Policy{
+	p := &Policy{
 		gen:       next,
 		hostnames: normNames,
 		suffixes:  normSuffixes,
-	})
+	}
+	curPolicy.Store(p)
 	policyGen.Store(next)
+	// 交换已落地，此刻起通知才是「如实」。通知在锁外、且订阅者 panic 被 recover：
+	// 一次成功的交换不因某个订阅者抛异常而被说成失败（见 subscribe.go 头注）。
+	notifyPolicy(p)
 	return nil
 }
 

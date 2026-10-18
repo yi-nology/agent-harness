@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/oekit/pkg/errors"
 )
@@ -21,10 +22,21 @@ const (
 // restore 在每个策略用例后还原全局，避免用例间串扰。
 func restore(t *testing.T) {
 	t.Helper()
+	// 清理跑在测试 goroutine 上，而清理要写策略 → 要走通知路径；通知若真在锁内
+	// （TestSubscriberMaySetStrategyRecursively 要抓的正是这个），清理自己也会撞锁
+	// 并卡死，死锁就从「那个用例红」变成「整个二进制挂到总超时」。故清理限时等待。
 	t.Cleanup(func() {
-		SetSurfaces(SurfaceAll)
-		_ = SetStrategy(StrategyMask)
-		SetEnabled(true)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			SetSurfaces(SurfaceAll)
+			_ = SetStrategy(StrategyMask)
+			SetEnabled(true)
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
 	})
 }
 
