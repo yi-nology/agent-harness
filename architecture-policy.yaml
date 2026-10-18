@@ -321,6 +321,50 @@ rules:
     scope_exclude: [cmd]
     forbid_import_regex: '^\s*"errors"$|"github\.com/pkg/errors"'
 
+# ── 门面包不可变 ──
+#
+# 规则四：门面包只能是门面。
+#
+# 为什么单独一段而不是加进上面的 rules：rules 段是正则门禁，逐行看文本；「一个函数
+# 体是不是只有一条上游转发」是结构性问题，只有语法树能判。执行体在 cmd/archcheck/
+# facade.go，走 go/ast，不参与正则表。
+#
+# 为什么必须拦：docs/OAGENTKIT-OVERLAP.md 用散文写了「保持门面，别再在本仓加逻辑」。
+# 散文不是门禁。现有五条规则查的全是写法（用什么词、import 什么、goroutine 怎么起、
+# 回调怎么声明、errors 怎么包），没有一条查「本仓自己的门面有没有被自己改胖」。真有人
+# 往 policy/ 里加一份实现，没有规则会响，结果是与上游并存的第二份实现——正是该文档
+# 警告的事，却只靠一句人话拦着。
+#
+# 允许的四类声明（其余一律违规）：
+#   type X = upstream.X                      类型别名
+#   const X = upstream.X                     常量别名（可成块）
+#   func X(...) T { return upstream.F(...) } 单条上游转发
+#   import 路径 ∈ upstream ∪ allowed_imports
+#
+# 「加真逻辑」三者必居其一——要新类型、要多条语句、或要新依赖——所以这条规则不能被
+# 「顺手写两行」绕过去。测试文件不在判定面内（构造违规样例本身就是验证手段）。
+#
+# severity 直接给 error：这三条门包当前零违规，说明纪律还没被破坏过；挂在 warn 上
+# 等于给未来的回涨留后门。升 error 前已做反向验证（见 facade.go 包头注释）。
+facades:
+  - package: dispatch
+    desc: 派发守卫门面包，核心在 oagentkit/agent/dispatch
+    severity: error
+    upstream: ["github.com/oagentkit/agent/dispatch"]
+
+  - package: policy
+    desc: 操作审计门门面包，核心在 oagentkit/toolgate/policy
+    severity: error
+    upstream: ["github.com/oagentkit/toolgate/policy"]
+    # 额外依赖是签名本身要求的，不是实现：io/fs 是 LoadOverrides 的参数类型，
+    # eino/components/tool 是 WithAuditGate 的出入参。两者都不提供任何实现。
+    allowed_imports: ["io/fs", "github.com/cloudwego/eino/components/tool"]
+
+  - package: reminder
+    desc: 系统注入防伪包裹门面包，核心在 oagentkit/guardx/injectband
+    severity: error
+    upstream: ["github.com/oagentkit/guardx/injectband"]
+
 # ── 全局阈值 ──
 thresholds:
   max_file_lines: 400

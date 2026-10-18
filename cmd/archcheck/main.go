@@ -53,6 +53,16 @@ func main() {
 		all = append(all, vs...)
 	}
 
+	// 门面包不可变：AST 判定（facade.go），不走正则规则表——这条纪律是结构性的。
+	for _, fr := range pol.Facades {
+		vs, err := facadeViolations(root, fr)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "archcheck:", err)
+			os.Exit(2)
+		}
+		all = append(all, vs...)
+	}
+
 	// severity 分流：error 违规阻断，warn 仅报告。
 	sevOf := map[string]string{}
 	for _, r := range pol.Rules {
@@ -61,6 +71,13 @@ func main() {
 			s = "error"
 		}
 		sevOf[r.ID] = s
+	}
+	for _, fr := range pol.Facades {
+		s := fr.Severity
+		if s == "" {
+			s = "error"
+		}
+		sevOf[facadeRuleID] = s
 	}
 	isBlocking := func(v violation) bool { return sevOf[v.rule] != "warn" }
 
@@ -122,6 +139,22 @@ func main() {
 				fmt.Fprintf(os.Stderr, "  … 另有 %d 处（--report 看全量）\n", len(vs)-limit)
 			}
 		}
+		// 门面规则不在 rules 段里声明（它是 facades 段逐包配置的），单独回显。
+		if vs := byRule[facadeRuleID]; len(vs) > 0 {
+			fmt.Fprintf(os.Stderr, "\n规则 %s [%s]：%s（%d 处）\n",
+				facadeRuleID, sevOf[facadeRuleID],
+				"门面包只允许类型别名/常量别名/单条上游转发，实现归上游仓", len(vs))
+			limit := len(vs)
+			if !report && limit > 10 {
+				limit = 10
+			}
+			for _, v := range vs[:limit] {
+				fmt.Fprintf(os.Stderr, "  %s:%d  [%s] %s\n", v.path, v.line, v.kind, v.text)
+			}
+			if !report && len(vs) > limit {
+				fmt.Fprintf(os.Stderr, "  … 另有 %d 处（--report 看全量）\n", len(vs)-limit)
+			}
+		}
 		// 已登记例外回显：债是显式的，不静默。
 		var shown int
 		for _, ex := range pol.Exceptions {
@@ -142,7 +175,8 @@ func main() {
 		}
 	}
 
-	fmt.Printf("架构门禁通过（%d 条规则，policy version %d；无阻断级违反）\n", len(pol.Rules), pol.Version)
+	fmt.Printf("架构门禁通过（%d 条规则 + %d 个门面包，policy version %d；无阻断级违反）\n",
+		len(pol.Rules), len(pol.Facades), pol.Version)
 
 	// ── 阈值门禁（结构债）──
 	th := pol.Thresholds

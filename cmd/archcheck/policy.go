@@ -48,10 +48,15 @@ type policyException struct {
 	Removal   string `yaml:"removal"`
 }
 
+// facadeRuleID 门面包不可变规则的 ID。所有门面包共用一条规则 ID：它们守的是同一条
+// 纪律（转发到上游、不得在本仓长实现），逐包差异体现在 violation 的 path 与 text 里。
+const facadeRuleID = "harness-facade-stays-facade"
+
 type policyFile struct {
 	Version    int               `yaml:"version"`
 	Modules    []struct{}        `yaml:"modules"`
 	Rules      []rule            `yaml:"rules"`
+	Facades    []facadeRule      `yaml:"facades"`
 	Thresholds threshold         `yaml:"thresholds"`
 	Exceptions []policyException `yaml:"exceptions"`
 }
