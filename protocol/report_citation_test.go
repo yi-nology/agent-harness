@@ -8,7 +8,7 @@ import (
 )
 
 func TestAssignEvidenceIDsOnParse(t *testing.T) {
-	r, err := ParseReport(`{"agent_name":"specialists/memory-analysis","domain":"故障诊断","conclusion":"c","confidence":"high","evidence":[{"tool":"free","snippet":"pid 123","interpretation":"i1"},{"tool":"ps","snippet":"503","interpretation":"i2"}]}`)
+	r, err := ParseReport(`{"agent_name":"specialists/memory-analysis","domain":"通用评估","conclusion":"c","confidence":"high","evidence":[{"tool":"free","snippet":"pid 123","interpretation":"i1"},{"tool":"ps","snippet":"503","interpretation":"i2"}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}

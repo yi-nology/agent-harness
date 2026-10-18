@@ -219,8 +219,12 @@ rules:
     # 用词是通用的。
 
   - id: harness-test-fixture-domain-vocabulary
-    desc: 测试夹具应使用合成数据而非真实运维词面（报告口径，不阻断）
-    severity: warn
+    desc: 测试夹具必须使用合成数据，不得携带真实运维词面
+    # 2026-10-18 由 warn 升为 error。长期挂着 warn 的规则等于没有规则——债务
+    # 清零后若还留在 warn 级，同一批词面可以无声回涨，且没人会去看告警清单。
+    # 清偿记录：15 处 warn 级债（protocol 11 + watchdog 4）已全部改为合成数据，
+    # 规则报告归零后才做的这次升级。
+    severity: error
     scope: [.]
     include: ["*.go"]
     ignore_test: false
@@ -229,6 +233,8 @@ rules:
     forbid_regex: '(故障链|巡检流|故障诊断|告警|根因分析|运维|本机|远程主机|集群健康|内存分析|IO\s*分析|网络分析|安全基线|变更管控|处置验证|工单)'
     # 负向前置：**断言「不得出现某词」的用例**本身必须写出那个词，否则无法断言。
     # 这类命中是测试意图而非领域知识，用 negative_follow 结构化豁免（RE2 无后顾断言）。
+    # 升 error 后此豁免更关键：protocol/generality_test.go:87 正是断言
+    # 「渲染结果不得含『运维』」，没有豁免它会被自己这条规则拦下。
     negative_follow:
       - anchor: 'strings.Contains(out, "'
         forbid_follow: '运维")'

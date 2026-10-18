@@ -10,20 +10,22 @@ import (
 )
 
 // validReport 基准合规报告（各用例在其上覆写）。
+// 夹具全用中性词面：契约示例带运维味等于把契约钉死在运维域上
+// （harness-test-fixture-domain-vocabulary 门禁）。
 func validReport() *Report {
 	return &Report{
-		AgentName:  "内存分析Agent",
-		Domain:     "内存",
-		Symptom:    "检测对象：localhost（本机）。检查本机是否存在OOM事件。",
-		Conclusion: "本机近7天未检出OOM Killer事件，内存状态健康",
+		AgentName:  "容量评估Agent",
+		Domain:     "容量",
+		Symptom:    "检测对象：node-a。检查该节点是否存在限流事件。",
+		Conclusion: "node-a 近7天未检出限流事件，容量水位健康",
 		Evidence: []Evidence{{
-			Tool:           "ask-ops_get_logs",
-			Snippet:        "3 次 OOM kill @T1/T2/T3，victim=java pid1234 RSS=8G",
-			Interpretation: "近7天发生3次OOM kill，受害者为java进程",
+			Tool:           "ask-metrics_get_samples",
+			Snippet:        "3 次 throttled @T1/T2/T3，target=svc-b",
+			Interpretation: "近7天发生3次限流，受影响对象为 svc-b",
 		}},
 		Recommendation: &Rec{Action: ActionNone, RequiresApproval: false},
 		Confidence:     ConfidenceHigh,
-		Summary:        "内存健康，无需处置",
+		Summary:        "容量水位健康，无需处理",
 		Scope:          "in",
 	}
 }
@@ -261,7 +263,7 @@ func TestRenderMarkdown(t *testing.T) {
 	r.Rollback = "重启同名服务恢复"
 	r.NeedsFollowup = []string{"specialists/io-analysis"}
 	out := Render(r)
-	for _, want := range []string{"## 内存分析Agent", "**结论**", "**证据要点**", "**方案与下一步**", "**风险与回退**", "**未决项与置信度**", "待审批", "kill -9 1234"} {
+	for _, want := range []string{"## 容量评估Agent", "**结论**", "**证据要点**", "**方案与下一步**", "**风险与回退**", "**未决项与置信度**", "待审批", "kill -9 1234"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("渲染缺关键内容 %q", want)
 		}
@@ -376,7 +378,7 @@ func TestExtractFromProseAndTruncated(t *testing.T) {
 
 // T-charts-1 正常 pie+line 完整解析。
 func TestChartsParse(t *testing.T) {
-	raw := `{"agent_name":"IO分析Agent","confidence":"high","conclusion":"c","summary":"s",
+	raw := `{"agent_name":"吞吐评估Agent","confidence":"high","conclusion":"c","summary":"s",
 		"charts":[
 			{"type":"pie","title":"磁盘用量分布","unit":"%","items":[{"label":"/ (sda1)","value":78.2},{"label":"/data","value":45.6}]},
 			{"type":"line","title":"eth0 流量","unit":"MB/s","series":[

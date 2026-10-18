@@ -81,7 +81,7 @@ make architecture-check   # 域词污染 + 依赖方向，违反即非零退出
 | 规则 | 级别 | 拦什么 |
 |---|---|---|
 | `harness-no-domain-vocabulary` | **error** | 生产代码里的运维领域词（故障链/巡检/告警/本机/内存分析…）|
-| `harness-test-fixture-domain-vocabulary` | warn | 测试夹具用了真实运维词面（应改合成数据，不阻断）|
+| `harness-test-fixture-domain-vocabulary` | **error** | 测试夹具用了真实运维词面（须改合成数据）。原 15 处 warn 级债已于 2026-10-18 清偿并升级为阻断 |
 | `harness-no-host-dependency` | **error** | 任何对宿主仓的 import |
 | `harness-no-domain-runtime-deps` | **error** | 对宿主仓 / 旧门面仓 / **已退役的 `agentkit` 门面** 的 import |
 

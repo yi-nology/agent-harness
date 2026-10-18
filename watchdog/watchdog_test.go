@@ -11,7 +11,7 @@ import (
 
 func stepPtr(id uint64) *uint64 { return &id }
 
-// rec 收集告警（模拟 repo+bus 落库广播路径）。
+// rec 收集提示（模拟 repo+bus 落库广播路径）。
 type rec struct {
 	mu  sync.Mutex
 	got []eventbus.Event
@@ -51,14 +51,14 @@ func finishEvent() eventbus.Event {
 }
 
 func TestWatchdogLeakDetected(t *testing.T) {
-	// INV1：声明后无结果、环节收口 → declared_not_executed 告警
+	// INV1：声明后无结果、环节收口 → declared_not_executed 提示
 	r := &rec{}
 	w := New(r.pub)
 	w.observe(callEvent("t1"))
 	w.observe(finishEvent())
 
 	if r.count() != 1 {
-		t.Fatalf("应有一条泄漏告警: %d", r.count())
+		t.Fatalf("应有一条泄漏提示: %d", r.count())
 	}
 	got := r.first()
 	if got.Type != eventbus.EventToolPairingLeak || got.Level != "warn" {
@@ -70,7 +70,7 @@ func TestWatchdogLeakDetected(t *testing.T) {
 }
 
 func TestWatchdogDuplicateResult(t *testing.T) {
-	// INV2：同一 call_id 结果回灌两次 → unpaired_result 告警
+	// INV2：同一 call_id 结果回灌两次 → unpaired_result 提示
 	r := &rec{}
 	w := New(r.pub)
 	w.observe(callEvent("t1"))
@@ -78,7 +78,7 @@ func TestWatchdogDuplicateResult(t *testing.T) {
 	w.observe(resultEvent("t1"))
 
 	if r.count() != 1 {
-		t.Fatalf("应有一条 unpaired 告警: %d", r.count())
+		t.Fatalf("应有一条 unpaired 提示: %d", r.count())
 	}
 	if r.first().Payload["reason"] != "unpaired_result" {
 		t.Fatalf("reason 应为 unpaired_result: %v", r.first().Payload)
@@ -86,7 +86,7 @@ func TestWatchdogDuplicateResult(t *testing.T) {
 }
 
 func TestWatchdogCleanPairing(t *testing.T) {
-	// 正常配对：声明→结果→收口，零告警；收口后状态清理，同号复跑仍零告警
+	// 正常配对：声明→结果→收口，零提示；收口后状态清理，同号复跑仍零提示
 	r := &rec{}
 	w := New(r.pub)
 	for i := 0; i < 2; i++ {
@@ -95,12 +95,12 @@ func TestWatchdogCleanPairing(t *testing.T) {
 		w.observe(finishEvent())
 	}
 	if r.count() != 0 {
-		t.Fatalf("正常配对不应告警: %+v", r.got)
+		t.Fatalf("正常配对不应提示: %+v", r.got)
 	}
 }
 
 func TestWatchdogNoPub(t *testing.T) {
-	// pub 未装配：告警静默丢弃，不 panic（不阻塞事件流语义）
+	// pub 未装配：提示静默丢弃，不 panic（不阻塞事件流语义）
 	w := New(nil)
 	w.observe(callEvent("t1"))
 	w.observe(finishEvent())
@@ -109,7 +109,7 @@ func TestWatchdogNoPub(t *testing.T) {
 
 func TestWatchdogRunSmoke(t *testing.T) {
 	// Run 订阅消费链路冒烟：订阅注册存在微小窗口（goroutine 启动 vs 首条发布），
-	// 轮询重发直到告警到达——泄漏判定语义本身已被上面的同步用例覆盖。
+	// 轮询重发直到提示到达——泄漏判定语义本身已被上面的同步用例覆盖。
 	bus := eventbus.New()
 	r := &rec{}
 	w := New(r.pub)
@@ -128,5 +128,5 @@ func TestWatchdogRunSmoke(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatal("Run 订阅链路应在超时前收到事件并告警")
+	t.Fatal("Run 订阅链路应在超时前收到事件并提示")
 }

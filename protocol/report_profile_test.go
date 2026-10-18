@@ -21,7 +21,7 @@ func answerFixture() *Report {
 			{Tool: "web_search", Interpretation: "业界主流做法一致"},
 		},
 		Recommendation: &Rec{Action: ActionNone, Steps: StringList{"1. 先备份", "2. 灰度切换", "3. 全量放量"}},
-		NeedsFollowup:  StringList{"预算归属需拍板", "切换窗口需运维确认"},
+		NeedsFollowup:  StringList{"预算归属需拍板", "切换窗口需相关方确认"},
 		Confidence:     ConfidenceMedium,
 		Summary:        "整体可行，注意灰度节奏",
 	}
@@ -43,7 +43,7 @@ func TestRenderAnswerProfileFull(t *testing.T) {
 	if !strings.Contains(out, "**建议与下一步**：\n\n1. 先备份\n2. 灰度切换\n3. 全量放量") {
 		t.Fatalf("steps 应按建议面渲染: %q", out)
 	}
-	if !strings.Contains(out, "**拍板点**：\n\n- 预算归属需拍板\n- 切换窗口需运维确认") {
+	if !strings.Contains(out, "**拍板点**：\n\n- 预算归属需拍板\n- 切换窗口需相关方确认") {
 		t.Fatalf("needs_followup 应正名拍板点: %q", out)
 	}
 	if !strings.Contains(out, "**置信度**：medium") || !strings.Contains(out, "**小结**：整体可行") {
@@ -76,7 +76,7 @@ func TestRenderAnswerProfileSummary(t *testing.T) {
 		t.Fatalf("summary 档步骤应只报步数: %q", out)
 	}
 	// 拍板点是管理层/通知面的决策核心，summary 档全量保留。
-	if !strings.Contains(out, "- 切换窗口需运维确认") {
+	if !strings.Contains(out, "- 切换窗口需相关方确认") {
 		t.Fatalf("summary 档拍板点应全量: %q", out)
 	}
 	if strings.Contains(out, "1. 先备份") {

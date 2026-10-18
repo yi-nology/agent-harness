@@ -152,12 +152,12 @@ func TestParseReportObjectStringField(t *testing.T) {
 		"```json\n" +
 		`{"agent_name":"IO与存储分析Agent","domain":"disk","symptom":"检测对象：localhost。IO排查",` +
 		`"conclusion":"满盘+swap高负荷","confidence":"low","summary":"IO侧诱因",` +
-		`"redirect":{"to":"内存分析Agent","reason":"OOM主因需内存域补充数据完成闭环"}}` + "\n```）"
+		`"redirect":{"to":"容量评估Agent","reason":"限流主因需容量域补充数据完成闭环"}}` + "\n```）"
 	r, err := ParseReport(raw)
 	if err != nil {
 		t.Fatalf("对象字段+散文+栅栏+尾缀应被宽容解析: %v", err)
 	}
-	if r.Redirect == "" || !regexp.MustCompile(`内存分析Agent`).MatchString(r.Redirect) || !regexp.MustCompile(`OOM主因`).MatchString(r.Redirect) {
+	if r.Redirect == "" || !regexp.MustCompile(`容量评估Agent`).MatchString(r.Redirect) || !regexp.MustCompile(`限流主因`).MatchString(r.Redirect) {
 		t.Fatalf("redirect 对象应扁平化为含 to/reason 的文本: %q", r.Redirect)
 	}
 	// 空对象不救（保持标准报错路径）。
