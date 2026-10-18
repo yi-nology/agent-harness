@@ -77,7 +77,7 @@ func mountBindings(
 			// 有调用形态：把「形参 → JSON 对象」的包装交给 JS 侧，
 			// 三预算闸仍在本包的 Go 包装层（fn），包装只是再包一层壳。
 			ps, _ := parseSignature(b.Signature) // 预检已过，这里不会失败
-			w, werr := compileWrapper(vm, wrapperSource(ps), mountable, name, len(ps.params))
+			w, werr := compileWrapper(vm, wrapperSource(ps), mountable, name, ps.required, len(ps.params))
 			if werr != nil {
 				return &Result{
 					Error:     fmt.Sprintf("绑定 %q 的调用形态包装失败: %v", b.Name, werr),

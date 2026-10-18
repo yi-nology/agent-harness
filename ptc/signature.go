@@ -32,10 +32,17 @@ import (
 // ErrInvalidSignature 形态串非法（装配期缺陷，非程序问题）。
 var ErrInvalidSignature = errors.New("绑定调用形态非法")
 
+// param 一个形参。optional 由尾部的 `?` 标记。
+type param struct {
+	name     string
+	optional bool
+}
+
 // parsedSignature 解析后的调用形态。
 type parsedSignature struct {
-	name   string   // JS 侧函数名（缺省用绑定名）
-	params []string // 形参名，按序
+	name     string // JS 侧函数名（须等于绑定名净化后的标识符）
+	params   []param
+	required int // 必填形参个数
 }
 
 // parseSignature 解析 `name(a, b)` 形态串。
@@ -59,17 +66,40 @@ func parseSignature(sig string) (parsedSignature, error) {
 	}
 	for _, raw := range strings.Split(inner, ",") {
 		p := strings.TrimSpace(raw)
+		optional := strings.HasSuffix(p, "?")
+		if optional {
+			p = strings.TrimSpace(strings.TrimSuffix(p, "?"))
+		}
 		if !isJSIdent(p) {
 			return parsedSignature{}, errors.Wrap(ErrInvalidSignature, "形参名不是合法 JS 标识符", "param", p)
 		}
 		for _, seen := range ps.params {
-			if seen == p {
+			if seen.name == p {
 				// 重复形参在 JS 里是合法的（后者遮蔽前者），但在这里意味着宿主
 				// 的目录翻译有 bug：打包时后者会覆盖前者，前一个参数静默消失。
 				return parsedSignature{}, errors.Wrap(ErrInvalidSignature, "形参重名，打包时后者会覆盖前者", "param", p)
 			}
 		}
-		ps.params = append(ps.params, p)
+		ps.params = append(ps.params, param{name: p, optional: optional})
+	}
+	// 可选形参必须排在必填形参**之后**。中间出现可选、后面又有必填时，模型为了
+	// 传后面的必填项就得先把前面的空位填上——而那正是「为不填的槽位瞎填值」，
+	// 比直接判非法更坏：它看起来能用，填进去的值却是编的。
+	// 全必填时 required 就是 len(params)。默认值必须显式写成 len——写成零值的话，
+	// 「没有可选形参」这条最常见的路径会落到 required=0，元数下限形同不存在，
+	// 少传参数照样放行，而这种形态是绝大多数工具的样子。
+	ps.required = len(ps.params)
+	for i, p := range ps.params {
+		if p.optional {
+			ps.required = i
+			break
+		}
+	}
+	for i, p := range ps.params {
+		if p.optional && i+1 < len(ps.params) && !ps.params[i+1].optional {
+			return parsedSignature{}, errors.Wrap(ErrInvalidSignature,
+				"可选形参必须排在必填形参之后", "param", p.name)
+		}
 	}
 	return ps, nil
 }
@@ -102,28 +132,47 @@ func isJSIdent(s string) bool {
 // 缺字段的 JSON，报错多半指向内部反序列化，读起来像宿主坏了。
 func wrapperSource(ps parsedSignature) string {
 	var b strings.Builder
-	b.WriteString("(function(__ptcRaw,__ptcName,__ptcN){return function(")
-	b.WriteString(strings.Join(ps.params, ","))
-	b.WriteString("){")
-	b.WriteString("if(arguments.length!==__ptcN){throw new TypeError(" +
-		"__ptcName+' 期望 '+__ptcN+' 个参数，实得 '+arguments.length)}")
-	b.WriteString("return __ptcRaw({")
+	names := make([]string, len(ps.params))
 	for i, p := range ps.params {
-		if i > 0 {
-			b.WriteString(",")
-		}
-		b.WriteString(p)
-		b.WriteString(":")
-		b.WriteString(p)
+		names[i] = p.name
 	}
-	b.WriteString("});};})")
+	b.WriteString("(function(__ptcRaw,__ptcName,__ptcLo,__ptcHi){return function(")
+	b.WriteString(strings.Join(names, ","))
+	b.WriteString("){")
+	// 全必填时不打区间（「期望 2 个参数」而不是「期望 2-2 个」）：这条文案是给
+	// 模型读的，多余的区间只会让它停下来想「2-2 是什么意思」。
+	b.WriteString("if(arguments.length<__ptcLo||arguments.length>__ptcHi){throw new TypeError(" +
+		"__ptcName+' 期望 '+(__ptcLo===__ptcHi?__ptcLo:__ptcLo+'-'+__ptcHi)+" +
+		"' 个参数，实得 '+arguments.length)}")
+	if len(ps.params) == 0 {
+		b.WriteString("return __ptcRaw({});};})")
+		return b.String()
+	}
+	// 可选槽位**只在真的给了值时才写入**。写进去一个 undefined 到 JSON 里就是
+	// null，宿主收到 {"count":null} 与「没给 count」是两件事：前者可能走进显式的
+	// 空值分支，后者才是走默认值——这两条路的后果不一样，不能混。
+	b.WriteString("var __ptcO={")
+	b.WriteString(ps.params[0].name)
+	b.WriteString(":")
+	b.WriteString(ps.params[0].name)
+	b.WriteString("}")
+	for _, p := range ps.params[1:] {
+		b.WriteString(";if(")
+		b.WriteString(p.name)
+		b.WriteString("!==undefined){__ptcO.")
+		b.WriteString(p.name)
+		b.WriteString("=")
+		b.WriteString(p.name)
+		b.WriteString("}")
+	}
+	b.WriteString(";return __ptcRaw(__ptcO);};})")
 	return b.String()
 }
 
 // compileWrapper 编译并执行包装函数，返回挂到 host 上的 JS 函数值。
 //
 // 编译的源码只由本包生成（形参名已过 isJSIdent），宿主文本不参与拼接。
-func compileWrapper(vm *goja.Runtime, src string, raw goja.Value, name string, arity int) (goja.Value, error) {
+func compileWrapper(vm *goja.Runtime, src string, raw goja.Value, name string, lo, hi int) (goja.Value, error) {
 	fn, err := goja.Compile("", src, false)
 	if err != nil {
 		return nil, err
@@ -136,7 +185,7 @@ func compileWrapper(vm *goja.Runtime, src string, raw goja.Value, name string, a
 	if !ok {
 		return nil, errors.New("调用形态包装器不是可调用值")
 	}
-	return maker(goja.Undefined(), raw, vm.ToValue(name), vm.ToValue(arity))
+	return maker(goja.Undefined(), raw, vm.ToValue(name), vm.ToValue(lo), vm.ToValue(hi))
 }
 
 // discoverGlobalName 程序内发现入口的全局名。
