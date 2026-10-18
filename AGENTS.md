@@ -65,15 +65,26 @@ AI 代理在本仓干活时最容易犯的错是「顺手把宿主的需求写�
 ## 工程门禁
 
 ```bash
-make check                # fmt-check + vet + test + cover-gate + architecture-check
+make check                # 全量门禁，见下方 check 目标的依赖链
 make architecture-check   # 单跑架构门禁；--report 看全量
 ```
 
+门禁本体**全部在 `make check` 里**，CI 只执行它——门禁若只挂在 ci.yml 上，
+本地要到推送之后才知道自己违规，那不是「提交前门禁」而是「推送后门禁」。
+新增门禁一律接进 `check`，不要只加到工作流文件里。
+
 - 提交前必须绿。门禁红了不要绕过——先判断是**代码错了**还是**规则该改**，
-  后者必须走「先改 policy 再改代码」，且在 commit 说明里写清理由。
+  后者必须走「先改 policy 再写代码」，且在 commit 说明里写清理由。
 - 覆盖率阈值 `COV_MIN=60` 是真阈值不是摆设；内核包新增必须带测试。
 - 正则一律 RE2（Go 原生不支持 `(?!...)`）；负向前置用 policy 的
   `negative_follow` 结构化表达，不写进正则。
+
+## LICENSE 署名
+
+`Copyright (c) 2024-2026 enjoydream` —— **照此为准，不要因为仓名是 `yi-nology`
+就改**。版权归属看的是作者实体，不是代码挂在哪个 GitHub org 下；`oagentkit/*`
+与 `oekit/*` 全部是这一行，本仓属同一家族，改了反而制造不一致。
+（`yi-nology` org 下各仓目前都没有 LICENSE 文件，无从参照。）
 
 ## 本机环境
 
