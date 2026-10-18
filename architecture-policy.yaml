@@ -1,0 +1,353 @@
+# agent-harness 架构治理策略
+#
+# 双面设计：本文件既是「声明面」（模块清单 + 依赖方向 + owner，供人阅读与 AI 对齐），
+# 也是「可执行面」（rules 段由 cmd/archcheck 逐条执行，`make architecture-check` 门禁；
+# 违反即非零退出）。正则一律 RE2 语法（Go regexp 原生，不支持 (?!...)——
+# 负向前置用 negative_follow 结构化表达）。
+#
+# ── 与宿主仓的 architecture-policy.yaml 的分工 ──
+# 本仓管「harness 不得长出领域知识」+「harness 内部依赖方向」；
+# 宿主仓管「宿主不得上溯 harness」+「领域包治理」。两边互不覆盖，
+# 合起来才构成完整红线（拆分后最怕的就是半年后业务代码慢慢渗回内核）。
+#
+# 纪律：
+#   - 提交前跑 `make check`（本仓的 verify 聚合）；
+#   - 新依赖方向先改本文件再写代码（policy 先行）；
+#   - 新模块登记 {id, roots, requires, owner} 三元组；
+#   - 例外必须带注释说明原因与拆除条件。
+
+version: 1
+
+# ── 模块清单（requires = 允许的内部依赖方向）──
+modules:
+  - id: protocol
+    roots: [protocol]
+    requires: [] # 统一报告协议 + 宽容解析 + 结构化校验：机制层叶子包，零内部依赖
+    owner: harness
+    managed: true
+    notes: |
+      Report 结构含少量宿主填充的领域味字段（如 symptom 首句的检测对象标注）。
+      该味**只存在于字段注释与格式约定**，不引入任何领域词表或判定逻辑——
+      字段本身是通用字符串。域约束应落在宿主的 prompt/包声明里，不落进本包代码。
+
+  - id: statemachine
+    roots: [statemachine]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 环节状态机：条件迁移的纯函数件，零依赖
+
+  - id: eventbus
+    roots: [eventbus]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责
+
+  - id: policy
+    roots: [policy]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 操作审计门：阈值只降不升、解析失败即拒
+
+  - id: spill
+    roots: [spill]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 输出预算溢出：提示契约/取回/按龄清理，宿主与前端共用判据
+
+  - id: pii
+    roots: [pii]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 个人信息价值面脱敏（正则），与宿主日志脱敏面互补
+
+  - id: netguard
+    roots: [netguard]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 出站 URL 守卫（SSRF），纯 stdlib 叶子层
+
+  - id: dispatch
+    roots: [dispatch]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      派发守卫（权限即拓扑的机制面）。拓扑数据经 EdgeSource 由宿主提供，
+      本包不认识任何具体 agent——「全拓扑只有一条边能到达执行器」是宿主的
+      产品级安全不变量，其断言测试留在宿主仓，本包只测机制。
+
+  - id: contract
+    roots: [contract]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      编排运行契约：编排引擎与宿主状态之间的**唯一边界**（纯接口面，零实现）。
+      L2 抽取在 flowEngine 处撞到的硬墙是「宿主状态模型带领域语义」——
+      contract 是那道出口：编排语义字段定死在接口上，领域字段走开放键。
+      零内部依赖、零外部依赖，故 requires 为空。
+
+  - id: checkpoint
+    roots: [checkpoint]
+    requires: [contract] # 只为复用 contract 的编排状态常量，避免终态语义被定义两次而漂移
+    owner: harness
+    managed: true
+    notes: |
+      编排续跑契约：进度快照的存取边界 + 「续跑而非重放」的恢复判定机制。
+      「编排是代码」的必然推论是「崩溃后能接着跑」——此前本仓把编排状态全押在
+      宿主 DB 上（eventbus 注明「持久化在发布点由宿主负责」），内核自己回答不了
+      「这一步执行到哪了、重启后该从哪继续」。本包把这个选择做成可机械判定的纯函数，
+      而不是留给宿主在崩溃那一刻临场决定（临场决定必然选最坏）。
+      领域字段走开放键，与 contract 同口径。
+
+  - id: budget
+    roots: [budget]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      上下文预算：分段计量 + 窗口钳位 + 「压实而非丢弃」的压实计划骨架。
+      本仓原有 spill 只管**输出**超预算；输入侧的上下文计量此前完全缺位。
+      摘要生成与原文落盘各留一个接口由宿主实现（内核不自己调 LLM、不碰存储）——
+      与「LLM 只做单环节」「编排只认接口」同一条纪律。
+
+  - id: offload
+    roots: [offload]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      内联大对象外置：把 base64 二进制从每轮重发的历史里换成占位文本。
+      与 spill 是姊妹机制但语义不同——spill 管文本输出溢出，offload 管
+      「二进制本体躺在消息里」。两阶段（首次标记、后续轮才替换）是正确性关键：
+      首次就替换会让模型永远看不到该对象。
+
+  - id: tooldisclose
+    roots: [tooldisclose]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      渐进式工具披露 + 执行门禁。工具一多，tool_definitions 自己就吃满上下文，
+      故先只暴露「名字+描述」占位，按关键词检索换完整 schema。
+      门禁的核心是把两类失败严格区分开：未加载（可重试，顺手激活）与
+      不在目录（不可重试，明确禁止绕过）。目录与打分均为确定性，编排才可复现。
+
+  - id: toolfail
+    roots: [toolfail]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      工具失败的错误分类契约：瞬时/永久/鉴权/未找到/权限/参数非法/限流，
+      另加「自报」类：错误自报 Retryable() bool 时按其结论归类，避免
+      「该不该重试」在两个包各判一次且判出相反答案。
+      各自带可重试性与退避建议。
+      本仓此前只有 policy 的「解析失败即拒」，没有「失败是否可重试」这层语义——
+      上层要自动退避就必须能机械判定，故单独立一个契约包。
+
+  # L2 第二批机制包（随包下沉登记；requires 均为空——它们互不依赖，
+  # watchdog 依赖 eventbus 属同仓叶子引用，不是模块间方向约束）。
+  - id: ptc
+    roots: [ptc]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 程序化工具编排沙箱（goja VM，三重预算替代 OS 沙盘）
+
+  - id: watchdog
+    roots: [watchdog]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 工具调用配对不变量监视，只告警不裁决
+
+  - id: delta
+    roots: [delta]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 增量节流：(kind,iteration) 键控 + 权威整段优先 + 确定性收口扫序
+
+  - id: pending
+    roots: [pending]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 多轮挂起态载体：单一编码入口 + 宽容解码
+
+  - id: reminder
+    roots: [reminder]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 系统注入提示的防伪包裹（source 声明 + 伪造标签转义）
+
+  - id: drain
+    roots: [drain]
+    requires: []
+    owner: harness
+    managed: true
+    notes: 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀
+
+# ── 可执行规则 ──
+rules:
+  # 规则一（拆分后的头号红线）：harness 不得出现领域词。
+  # 拆分做完后最现实的风险不是拆不动，而是业务代码一年年渗回内核，
+  # 等发现时 harness 已经退化成「换了个名字的 monolith」。用门禁把它钉死。
+  #
+  # 分两级执行，避免门禁虚红导致被习惯性忽略：
+  #   - 生产代码（ignore_test: true）→ severity: error，违反即红；
+  #   - 测试夹具（only_test: true） → severity: warn，只报告不阻断。
+  - id: harness-no-domain-vocabulary
+    desc: 内核生产代码不得含运维领域词表（词表属于宿主/领域包）
+    severity: error
+    scope: [.]          # 全仓
+    include: ["*.go"]
+    ignore_test: true   # 测试夹具由下一条规则单独体检
+    scope_exclude: [cmd]
+    forbid_regex: '(故障链|巡检流|故障诊断|告警|根因分析|运维|主机构建|本机|远程主机|集群健康|节点诊断|内存分析|IO\s*分析|网络分析|安全基线|变更管控|处置验证|审批单|工单)'
+    # 说明：以上均为**运维领域中文词**。刻意不拦 host/cluster/pod 等通用技术词——
+    # 它们在协议字段名（如 ImpactScopes 的 host 级）中合法出现，硬拦会误杀。
+    # 判定范围只覆盖「词表/编排图」语境：真正的机制判定（如深度上限、allow 矩阵）
+    # 用词是通用的。
+
+  - id: harness-test-fixture-domain-vocabulary
+    desc: 测试夹具应使用合成数据而非真实运维词面（报告口径，不阻断）
+    severity: warn
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    only_test: true
+    scope_exclude: [cmd]
+    forbid_regex: '(故障链|巡检流|故障诊断|告警|根因分析|运维|本机|远程主机|集群健康|内存分析|IO\s*分析|网络分析|安全基线|变更管控|处置验证|工单)'
+    # 负向前置：**断言「不得出现某词」的用例**本身必须写出那个词，否则无法断言。
+    # 这类命中是测试意图而非领域知识，用 negative_follow 结构化豁免（RE2 无后顾断言）。
+    negative_follow:
+      - anchor: 'strings.Contains(out, "'
+        forbid_follow: '运维")'
+      - anchor: '!strings.Contains(out, "'
+        forbid_follow: '运维")'
+
+  # 规则二：harness 不得反向依赖宿主。这是拆分的定义性约束——
+  # 一旦 harness import 宿主仓，harness 就永久绑死在运维域上。
+  - id: harness-no-host-dependency
+    desc: 内核不得依赖宿主仓任何包
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    scope_exclude: [cmd]
+    forbid_import_regex: 'git\.enjoye\.top/enjoydream/bianque/'
+
+  # 规则三：harness 包不得依赖宿主的运行时原语库。
+  # 2026-10-18 起**不再允许门面 agentkit**（上游私有旧门面仓）：
+  # 该门面已发至 v1.0.0 并进入退役期，agent 原语统一走 github.com/oagentkit/<mod>。
+  # 门禁不认「文档里说过要迁」——不写进机器约束的约定半年后必然回退。
+  - id: harness-no-domain-runtime-deps
+    desc: 内核不得引入宿主仓与领域运行时（含已退役的 agentkit 门面）
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: true
+    scope_exclude: [cmd]
+    forbid_import_regex: 'git\.enjoye\.top/enjoydream/(bianque|ekit|agentkit)/'
+
+  # ── oekit 家规（矩阵一致性）──
+  #
+  # agent-harness 与 oekit 同属一族：oekit=基础库、agentkit=agent 原语、
+  # harness=编排内核，三者本该是同一套工程纪律下的产物。harness 曾是矩阵里唯一
+  # 不守家规的孤岛——家规只写在别处的文档里，本仓既不执行也不自查。
+  #
+  # 这三条都不是风格洁癖，每条都对应一个真实故障模式：
+  #   - 裸 goroutine 的 panic 无法被外层 recover，会直接杀掉整个进程；
+  #   - printf 日志回调一旦焊进公开 API 签名就是不可逆的 API 债；
+  #   - 进程内混用第二套 errors 包会打断 BizError 的 As/Is 判定（Not Found 变 500）。
+
+  # 规则四：禁止裸 go func，走 concurrency/async 的 GoSafe（panic 被 recover）。
+  - id: harness-no-bare-goroutine
+    desc: 生产代码禁止裸 go func（panic 无法被外层 recover，会杀进程）；须走 concurrency/async 的 GoSafe
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: true   # 测试需要真 goroutine 来验证阻塞/超时语义，不适用
+    forbid_regex: '^\s*go\s+func\('
+
+  # 规则五：SDK 包不得把 printf 风格日志回调焊进公开 API。
+  # 留痕一律走 logx.Delegating 懒解析——宿主用 logx.SetDefault 换后端，
+  # 内核不必把日志函数收回参数（那会让每次调用都要包一层 adapter）。
+  - id: harness-no-printf-log-callback
+    desc: SDK 包不得把 printf 风格日志回调焊进公开 API 签名；留痕走 logx.Delegating
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    scope_exclude: [cmd]
+    forbid_regex: '\b(logf|logFunc|logFn|logger)\s+func\(string'
+
+  # 规则六：类型同一性红线——一个进程只允许一套 errors 包。
+  # **2026-10-18 已清偿**：oekit/pkg ≥ v0.12.0 起 New/As/Is/Unwrap 与 stdlib 同型透传
+  # （`errors.New` 就是 `stderrors.New` 的 shim，见 pkg/errors/std.go），哨兵与 As 判定
+  # 单 import 即可，双 import 的老理由已消失，全仓 24 个文件已切换完成。
+  #
+  # 因此本规则从「只拦第二套」**收紧为「只允许 oekit/pkg/errors 一套」**：
+  #   - `^\s*"errors"$`            → 禁 stdlib。双 import 是类型同一性红线的温床，
+  #                                  混用时 BizError 的 As 判定会静默失效（404 变 500）。
+  #   - `"github\.com/pkg/errors"`  → 禁同名不同型的第三方包。
+  # 匹配按整行（archcheck 跳过 // 注释行），故只命中 import 行，不会误伤正文里的 "errors" 字样。
+  - id: harness-single-errors-package
+    desc: 全仓只允许 oekit/pkg/errors 一套 errors 包（禁 stdlib errors 与 github.com/pkg/errors）
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    scope_exclude: [cmd]
+    forbid_import_regex: '^\s*"errors"$|"github\.com/pkg/errors"'
+
+# ── 全局阈值 ──
+thresholds:
+  max_file_lines: 400
+  # 单类型方法数上限——god object 的机械判据。
+  #
+  # 为什么单独设一条：大文件不等于大对象。1026 行的装配函数与 1026 行的纯声明文件
+  # 性质完全不同；而「一个类型挂了 N 个方法」是**可自动发现**的结构债——方法越多，
+  # 任何一次改动要在多大的影响面上评估，全凭这个数。宿主仓实测出现单类型 175 个方法
+  # 的实例，故此判据比行数更能提前报警。
+  max_methods_per_type: 25
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, watchdog, delta, pending, reminder, drain, contract, checkpoint, budget, offload, tooldisclose, toolfail, cmd]
+  enforce: false
+  # enforce=true 时超阈值即非零退出。切换条件：
+  #   1) 现存超限项清零或显式登记为债；
+  #   2) 接入 CI（本地 gate 会被习惯性绕过，CI 不会）。
+  # 当前为 false：内核仓规模小、超限面为零，但门禁先跑报告口径积累基线，
+  # 待 CI 接入即切 true。
+
+exceptions: []
+# 当前无例外。
+#
+# 历史（已清偿，保留记录以免将来重复犯）：
+#   protocol/report_render.go:14 `const AgentGuidance = "运维任务调度Agent"`
+#     —— 硬编码宿主哨兵名。已改为 Report.Guidance 结构化置位 + SetGuidanceAgentNames
+#        宿主注册双通道；内核不再认识任何 agent 名。
+#   protocol/report_render.go:52 `title = "运维诊断报告"`
+#     —— 内置宿主品牌兜底标题。已改为 RenderOptions.DefaultTitle 宿主注入 +
+#        中性兜底「诊断报告」；RenderView 签名不变，老调用零漂移。
+# 两处清偿均有测试钉住（protocol/generality_test.go），并由
+# harness-test-fixture-domain-vocabulary 规则持续体检回归。
+#
+# 例外登记格式（将来若确有不可立即清偿的债）：
+# - rule: <规则 id>
+#   path: <仓库相对路径>
+#   line: <行号>
+#   violation: <命中的词>
+#   reason: |
+#     <为什么现在不能清偿>
+#   until: "<版本或日期>"
+#   removal: <拆除条件>
+# 精确豁免：rule + path + line 三元组命中才放行，不做前缀模糊豁免。
