@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+	"github.com/oagentkit/toolgate/invoke"
 )
 
 // mountBindings 把全部绑定挂到 vm 的 host 对象上，并挂程序内发现入口。
@@ -26,6 +27,7 @@ func mountBindings(
 	res *Result,
 	maxCalls, maxBytes int,
 	discover Discoverer,
+	stages []invoke.Stage,
 ) *Result {
 	// host.<tool> 绑定面：三预算闸在包装层（超限=中断收口，不给程序「越限继续跑」）。
 	host := vm.NewObject()
@@ -39,6 +41,17 @@ func mountBindings(
 			args, aerr := argString(call.Argument(0))
 			if aerr != nil {
 				panic(vm.NewTypeError("绑定参数须为 JSON 文本或可序列化对象: %v", aerr))
+			}
+			// 判定环先于执行体：程序里的 host.<tool>() 走的是这条路，
+			// 不接判定环它就成了整条链上唯一绕过披露门/审计门/出站门的路径。
+			if serr := runStages(runCtx, stages, b.Name, args); serr != nil {
+				// 被拒**同样计数**：程序可以 try/catch 掉这次错误再循环，
+				// 若不计预算，一个被拒的工具就能被无限重试，MaxCalls 形同虚设。
+				res.Calls++
+				res.CallLog = append(res.CallLog, CallRecord{
+					Name: b.Name, Status: StatusDenied, Error: serr.Error(),
+				})
+				panic(vm.NewGoError(serr))
 			}
 			start := time.Now()
 			out, err := b.Call(runCtx, args) // runCtx：墙钟到点断阻塞调用（批三百零七）
@@ -139,4 +152,51 @@ func jsIdent(name string) string {
 		}
 	}
 	return b.String()
+}
+
+// CallRecord 的 Status 取值。
+const (
+	StatusOK     = "ok"     // 正常返回
+	StatusError  = "error"  // 执行体报错
+	StatusDenied = "denied" // 被判定环拒绝，**未触达执行体**
+)
+
+// runStages 按序跑判定环，任一环拒绝即拒绝；环报错与环 panic 一律按拒绝处理。
+//
+// 语义与 invoke 链同源（fail-closed、逐环 recover），刻意不各写一套：两处若不一致，
+// 会出现「普通调用按环报错放行、程序调用按环报错拒绝」的分裂，而那恰恰是本条
+// 接线要消除的同一类问题。
+func runStages(ctx context.Context, stages []invoke.Stage, name, argsJSON string) (err error) {
+	if len(stages) == 0 {
+		return nil
+	}
+	call := invoke.Call{Name: name, Args: argsJSON}
+	for _, st := range stages {
+		if st == nil {
+			continue
+		}
+		v, serr := runStage(ctx, st, call)
+		if serr != nil {
+			return serr
+		}
+		if !v.Allow {
+			return &invoke.DenyError{Stage: st.Name(), Tool: name, Reason: v.Reason, Retryable: v.Retryable}
+		}
+	}
+	return nil
+}
+
+// runStage 跑一环并兜住它的 panic——环是宿主代码，宿主代码不该有机会杀掉编排进程。
+func runStage(ctx context.Context, st invoke.Stage, call invoke.Call) (v invoke.Verdict, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			v = invoke.Verdict{}
+			err = &invoke.DenyError{
+				Stage:  st.Name(),
+				Tool:   call.Name,
+				Reason: fmt.Sprintf("判定环 panic: %v", r),
+			}
+		}
+	}()
+	return st.Check(ctx, call)
 }

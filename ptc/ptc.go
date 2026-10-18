@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+	"github.com/oagentkit/toolgate/invoke"
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
 )
@@ -87,6 +88,19 @@ type Options struct {
 	// 为 nil 则**根本不暴露**该全局——没装配的东西不该以空壳形式出现在沙箱里，
 	// 那会让模型以为「没有别的工具了」而放弃检索。
 	Discover Discoverer
+	// Stages 每次绑定调用前必过的判定环，与普通工具调用走的是**同一套** Stage。
+	//
+	// # 为什么这条是必需的而不是可选优化
+	//
+	// 程序里的 host.<tool>(...) 直达宿主工具。若这里不接判定环，本包就成了
+	// 「整条链上唯一绕过所有门禁的路径」：披露门不判、审计门不判、SSRF 出站门不判。
+	// 而本包恰恰是对外推荐的那条路（N 轮 ReAct 塌缩成 1 轮、原始数据不过模型面），
+	// 于是**看起来更安全的路径反而最不安全**——这正是 OpenCode 2.0 #52333 的形状：
+	// 信任边界移动了，沙箱没跟着移动。
+	//
+	// 为 nil 时不接任何判定，行为与本包引入 Stages 之前逐字一致（不破坏既有调用方），
+	// 但那条路径因此**不带门禁**——接入方须自行确认这是有意的。
+	Stages []invoke.Stage
 }
 
 // CallRecord 一次绑定调用记账（ptc_run 明细事件与审计的账目面：程序把大输出「洗」成
@@ -243,7 +257,7 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 	})
 
 	// 绑定面与程序内发现入口的挂载（实现见 binding.go）。
-	if mres := mountBindings(vm, bindings, runCtx, &res, maxCalls, maxBytes, opts.Discover); mres != nil {
+	if mres := mountBindings(vm, bindings, runCtx, &res, maxCalls, maxBytes, opts.Discover, opts.Stages); mres != nil {
 		return *mres
 	}
 
