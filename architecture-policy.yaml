@@ -152,8 +152,10 @@ modules:
       本仓此前只有 policy 的「解析失败即拒」，没有「失败是否可重试」这层语义——
       上层要自动退避就必须能机械判定，故单独立一个契约包。
 
-  # L2 第二批机制包（随包下沉登记；requires 均为空——它们互不依赖，
-  # watchdog 依赖 eventbus 属同仓叶子引用，不是模块间方向约束）。
+  # L2 第二批机制包（随包下沉登记）。requires 反映**真实**依赖方向，不是「理想形态」：
+  # watchdog 确实读 eventbus，就写 eventbus。此前这里写的是 requires: [] 并附一句
+  # 「同仓叶子引用不算模块间方向约束」——那是给自己开的口头豁免，且因为 requires
+  # 从未被执行过，连漂移都没人发现（执行体见 cmd/archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
     requires: []
@@ -163,10 +165,13 @@ modules:
 
   - id: watchdog
     roots: [watchdog]
-    requires: []
+    requires: [eventbus]
     owner: harness
     managed: true
-    notes: 工具调用配对不变量监视，只告警不裁决
+    notes: |
+      工具调用配对不变量监视，只告警不裁决。依赖 eventbus 是为了在检测到
+      「声明未执行 / 执行未声明」时把异常广播出去——配对不变量违反了却无人知晓，
+      等于没有监视。
 
   - id: delta
     roots: [delta]
@@ -195,6 +200,30 @@ modules:
     owner: harness
     managed: true
     notes: 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀
+
+  - id: commitgate
+    roots: [commitgate]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      环节终态独占提交闸：同一 (run, 环节) 的终态只允许被提交一次。
+      statemachine 是纯谓词、checkpoint 只排快照序号，两者都排不出
+      「两条并行分支都赢了」——那条边界只有独占提交闸能表达。
+      本条登记是 2026-10-18 依赖方向门禁落地时补的：包早已存在并被 docsync
+      计入 README 包表，却从未进过 modules 段，故对本门禁隐形（依赖方向无人判定）。
+
+  - id: guardset
+    roots: [guardset]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      守卫装配契约：一组相互独立的判定一并求值，多条拒绝合成一条。
+      接进 oagentkit/toolgate 的 invoke 链作为单独一环——链本身由上游负责，
+      本包只补它按设计不覆盖的那一面（链在第一个拒绝处就收口，后面的守卫没机会说话，
+      模型一次只听得到一个理由）。
+      不重复实现链：顺序执行、留痕、panic 兜底全部沿用 invoke.Chain。
 
 # ── 可执行规则 ──
 rules:
@@ -364,6 +393,39 @@ facades:
     desc: 系统注入防伪包裹门面包，核心在 oagentkit/guardx/injectband
     severity: error
     upstream: ["github.com/oagentkit/guardx/injectband"]
+
+# ── 包间依赖方向 ──
+#
+# modules 段的 requires 此前**只有声明、没有执行体**：policy.go 把 modules
+# 反序列化成 `[]struct{}`，requires 连内存都没进，于是 README 宣称的
+# 「域词污染 + 依赖方向」里「依赖方向」那一半是空的。且声明已经开始漂移
+# （watchdog 写 requires: []，实际 import 了 eventbus）——没人发现，
+# 因为没有东西会去读它。执行体见 cmd/archcheck/deps.go（go/ast 判 import）。
+#
+# 为什么值得做成门禁：依赖缠绕是本仓最难靠 review 发现的债。它零报错、零告警、
+# 构建全绿——每个单点 import 看起来都合理，只有把全图摊开才看得出 A→B→C→A。
+# 其余七条规则查的全是「写法」（用什么词、import 什么、goroutine 怎么起），
+# 没有一条查「包与包之间允许连成什么形状」。
+#
+# 两条判定路径：
+#   1. 越界依赖：包 A 的生产代码 import 了包 B，而 A 的 requires 未登记 B。
+#   2. 未登记包：顶层目录含生产 Go 文件但不在 modules 段——未登记的包对本门禁
+#      隐形，任何模块都能 import 它而不被判违规。这是该规则最大的盲区。
+#
+# 判定面只含生产代码（跳过 _test.go）：依赖方向决定交付物里出现什么，测试依赖
+# 是临时的、可随用例删掉的；纳入测试会逼出「只为共享夹具而做的注册」噪声，
+# 反而削弱规则可信度。
+#
+# severity 直接给 error：登记项当前零违规（声明与代码事实一致后才允许升 error），
+# 挂在 warn 上等于给未来回涨留后门。已做反向验证（注入越界依赖 / 未登记目录
+# → 门禁报错 + 退出码 1）。
+dependency_direction:
+  enabled: true
+  severity: error
+  desc: 包间依赖必须先在 modules 段登记 requires；未登记的包目录对门禁隐形，须补登记
+  # cmd 是门禁与文档工具自身（archcheck / docsync），不是机制包；
+  # 它们 import 各包是工具职责，不受机制包的依赖方向约束。
+  ignore_dirs: [cmd, docs]
 
 # ── 全局阈值 ──
 thresholds:

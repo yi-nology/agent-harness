@@ -52,13 +52,44 @@ type policyException struct {
 // 纪律（转发到上游、不得在本仓长实现），逐包差异体现在 violation 的 path 与 text 里。
 const facadeRuleID = "harness-facade-stays-facade"
 
+// moduleDecl 是 modules 段的一条登记：roots 定位包目录，requires 声明**允许**的
+// 内部依赖方向。
+//
+// 为什么这段必须被真的执行：requires 是一张 22 个包之间的依赖拓扑声明，写错或
+// 漏写时它不会自己报警——半年后没人知道它已经不成立，而依赖缠绕恰好是最难靠
+// review 发现的债类型（零报错、零告警、构建全绿）。
+type moduleDecl struct {
+	ID       string   `yaml:"id"`
+	Roots    []string `yaml:"roots"`
+	Requires []string `yaml:"requires"`
+	Owner    string   `yaml:"owner"`
+	Managed  bool     `yaml:"managed"`
+	Notes    string   `yaml:"notes"`
+}
+
+// dependencyDirection 是 dependency_direction 段的配置：依赖方向门禁的开关、
+// 级别与豁免目录。
+//
+// 为什么不塞进 modules 段：modules 段是**逐包**的声明，依赖方向是**跨包**的
+// 规则，混在一段里会让「这条登记的字段」与「整个文件的配置」两种粒度互相干扰。
+type dependencyDirection struct {
+	Enabled    *bool    `yaml:"enabled"` // 指针：缺省即启用，只有显式 false 才关
+	Severity   string   `yaml:"severity"`
+	Desc       string   `yaml:"desc"`
+	IgnoreDirs []string `yaml:"ignore_dirs"`
+}
+
+// on 报告依赖方向门禁是否启用（缺省启用）。
+func (d dependencyDirection) on() bool { return d.Enabled == nil || *d.Enabled }
+
 type policyFile struct {
-	Version    int               `yaml:"version"`
-	Modules    []struct{}        `yaml:"modules"`
-	Rules      []rule            `yaml:"rules"`
-	Facades    []facadeRule      `yaml:"facades"`
-	Thresholds threshold         `yaml:"thresholds"`
-	Exceptions []policyException `yaml:"exceptions"`
+	Version    int                 `yaml:"version"`
+	Modules    []moduleDecl        `yaml:"modules"`
+	Rules      []rule              `yaml:"rules"`
+	Facades    []facadeRule        `yaml:"facades"`
+	DepDir     dependencyDirection `yaml:"dependency_direction"`
+	Thresholds threshold           `yaml:"thresholds"`
+	Exceptions []policyException   `yaml:"exceptions"`
 }
 
 type violation struct {

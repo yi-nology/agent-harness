@@ -63,6 +63,17 @@ func main() {
 		all = append(all, vs...)
 	}
 
+	// 包间依赖方向：modules[].requires 的执行体（deps.go），同样是 AST 判定。
+	// 声明面早就在了，缺的是执行面——没有它，依赖拓扑就是散文。
+	if pol.DepDir.on() {
+		vs, err := dependencyViolations(root, pol.Modules, pol.DepDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "archcheck:", err)
+			os.Exit(2)
+		}
+		all = append(all, vs...)
+	}
+
 	// severity 分流：error 违规阻断，warn 仅报告。
 	sevOf := map[string]string{}
 	for _, r := range pol.Rules {
@@ -78,6 +89,9 @@ func main() {
 			s = "error"
 		}
 		sevOf[facadeRuleID] = s
+	}
+	if pol.DepDir.on() {
+		sevOf[depRuleID] = sevOrError(pol.DepDir.Severity)
 	}
 	isBlocking := func(v violation) bool { return sevOf[v.rule] != "warn" }
 
@@ -140,21 +154,11 @@ func main() {
 			}
 		}
 		// 门面规则不在 rules 段里声明（它是 facades 段逐包配置的），单独回显。
-		if vs := byRule[facadeRuleID]; len(vs) > 0 {
-			fmt.Fprintf(os.Stderr, "\n规则 %s [%s]：%s（%d 处）\n",
-				facadeRuleID, sevOf[facadeRuleID],
-				"门面包只允许类型别名/常量别名/单条上游转发，实现归上游仓", len(vs))
-			limit := len(vs)
-			if !report && limit > 10 {
-				limit = 10
-			}
-			for _, v := range vs[:limit] {
-				fmt.Fprintf(os.Stderr, "  %s:%d  [%s] %s\n", v.path, v.line, v.kind, v.text)
-			}
-			if !report && len(vs) > limit {
-				fmt.Fprintf(os.Stderr, "  … 另有 %d 处（--report 看全量）\n", len(vs)-limit)
-			}
-		}
+		printRuleViolations(facadeRuleID, sevOf[facadeRuleID],
+			"门面包只允许类型别名/常量别名/单条上游转发，实现归上游仓", byRule[facadeRuleID], report)
+		// 依赖方向同理：规则来自 modules 段的 requires 矩阵，不在 rules 段里。
+		printRuleViolations(depRuleID, sevOf[depRuleID],
+			depDirDesc(pol.DepDir), byRule[depRuleID], report)
 		// 已登记例外回显：债是显式的，不静默。
 		var shown int
 		for _, ex := range pol.Exceptions {
@@ -175,8 +179,8 @@ func main() {
 		}
 	}
 
-	fmt.Printf("架构门禁通过（%d 条规则 + %d 个门面包，policy version %d；无阻断级违反）\n",
-		len(pol.Rules), len(pol.Facades), pol.Version)
+	fmt.Printf("架构门禁通过（%d 条规则 + %d 个门面包 + %d 个包的依赖方向，policy version %d；无阻断级违反）\n",
+		len(pol.Rules), len(pol.Facades), len(pol.Modules), pol.Version)
 
 	// ── 阈值门禁（结构债）──
 	th := pol.Thresholds
@@ -206,5 +210,42 @@ func main() {
 			fmt.Println("\n阈值超限：结构债已超阈值，先清偿或显式上调阈值再提交。")
 			os.Exit(1)
 		}
+	}
+}
+
+// sevOrError 规则级别缺省即 error：悬空的 warn 等于没有规则。
+func sevOrError(s string) string {
+	if s == "" {
+		return "error"
+	}
+	return s
+}
+
+// depDirDesc 取依赖方向规则的说明，policy 未写时用兜底文案。
+func depDirDesc(d dependencyDirection) string {
+	if d.Desc != "" {
+		return d.Desc
+	}
+	return "包间依赖必须先在 policy modules 段登记 requires"
+}
+
+// printRuleViolations 回显一条规则的违反清单；--report 看全量，否则截断到 10 条。
+//
+// 抽出来是因为三类规则（rules 段正则、facades 段、modules 段 requires）
+// 的回显形状完全一样，复制三份意味着以后改截断口径要记得改三处。
+func printRuleViolations(id, sev, desc string, vs []violation, report bool) {
+	if len(vs) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n规则 %s [%s]：%s（%d 处）\n", id, sev, desc, len(vs))
+	limit := len(vs)
+	if !report && limit > 10 {
+		limit = 10
+	}
+	for _, v := range vs[:limit] {
+		fmt.Fprintf(os.Stderr, "  %s:%d  [%s] %s\n", v.path, v.line, v.kind, v.text)
+	}
+	if !report && len(vs) > limit {
+		fmt.Fprintf(os.Stderr, "  … 另有 %d 处（--report 看全量）\n", len(vs)-limit)
 	}
 }

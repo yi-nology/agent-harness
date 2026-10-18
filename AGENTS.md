@@ -100,6 +100,40 @@ make architecture-check   # 单跑架构门禁；--report 看全量
 - 正则一律 RE2（Go 原生不支持 `(?!...)`）；负向前置用 policy 的
   `negative_follow` 结构化表达，不写进正则。
 
+### 包间依赖方向现在有执行体了（2026-10-18 补齐）
+
+`architecture-policy.yaml` 的 `modules` 段逐包登记了 `{id, roots, requires}`，
+其中 `requires` 是本仓包与包之间**允许**的依赖方向。此前这张表**只有声明、没有执行体**
+——`cmd/archcheck/policy.go` 把 `modules` 反序列化成 `[]struct{}`，`requires`
+连内存都没进，于是「依赖方向」那一半门禁是空的，且声明已经开始漂移
+（`watchdog` 写 `requires: []`，实际 import 了 `eventbus`）。
+
+执行体在 `cmd/archcheck/deps.go`（`go/ast` 判 import，不走正则表），两条判定路径：
+
+1. **越界依赖**——包 A 的生产代码 import 了包 B，而 A 的 `requires` 未登记 B；
+2. **未登记包**——顶层目录含生产 Go 文件但不在 `modules` 段。**这条更隐蔽**：
+   未登记的包对本门禁完全隐形，任何模块都能 import 它而不判违规。
+
+新规则上线第一次跑就抓出 `commitgate` **从未登记**过——它早已在 README 包表里、
+早已被 docsync 计入行数，却在依赖拓扑上完全没人管。这正是这条规则该由机器看的原因：
+依赖缠绕零报错、零告警、构建全绿，每个单点 import 看起来都合理，只有把全图摊开才看得出
+A→B→C→A。
+
+**代理在本仓加新包时必须同步登记**，否则门禁立刻红：
+
+```yaml
+- id: 新包名
+  roots: [新包名]
+  requires: []        # 真实依赖，不是理想形态
+  owner: harness
+  managed: true
+  notes: ...
+```
+
+新增内部依赖的顺序是**先改 policy 再写代码**（与既有纪律同一条）。
+判定面只含生产代码（跳过 `_test.go`）：依赖方向决定交付物里出现什么，
+测试依赖是临时的，纳入只会逼出「只为共享夹具而做的注册」噪声。
+
 ## LICENSE 署名
 
 `Copyright (c) 2024-2026 enjoydream` —— **照此为准，不要因为仓名是 `yi-nology`
