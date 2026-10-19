@@ -1374,8 +1374,8 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 
 | 规则 | 拦什么 | 落点 |
 |---|---|---|
-| `harness-facade-stays-facade` | `dispatch`/`policy`/`reminder` 长出实现 | `policy.yaml` 的 `facades` 段 + `cmd/archcheck/facade.go` |
-| `harness-module-dependency-direction` | 包间依赖超出 `modules[].requires` 声明；**以及未登记的包目录** | `policy.yaml` 的 `modules` 段 + `cmd/archcheck/deps.go` |
+| `harness-facade-stays-facade` | `dispatch`/`policy`/`reminder` 长出实现 | `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
+| `harness-module-dependency-direction` | 包间依赖超出 `modules[].requires` 声明；**以及未登记的包目录** | `policy.yaml` 的 `modules` 段 + `archcheck/deps.go` |
 
 > 「未登记的包目录」这条更隐蔽：未登记的包对本门禁完全隐形，
 > 任何模块都能 import 它而不判违规。
@@ -1492,4 +1492,4 @@ tag 被删后条目仍留着直到缓存过期，而拿它当采购单会得到�
 | [AGENTS.md](../AGENTS.md) | 代理在本仓干活的工作纪律 |
 
 规则源：[`architecture-policy.yaml`](../architecture-policy.yaml)。
-执行器：`cmd/archcheck`（`deps.go` 判依赖方向、`facade.go` 判门包、`scan.go` 跑正则规则）。
+执行体：`archcheck` 包（`deps.go` 判依赖方向、`facade.go` 判门包、`scan.go` 跑正则规则、`selfcheck.go` 校验 policy 自身）；`cmd/archcheck` 只是它的 CLI 装配。

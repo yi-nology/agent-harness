@@ -1,7 +1,7 @@
 # agent-harness 架构治理策略
 #
 # 双面设计：本文件既是「声明面」（模块清单 + 依赖方向 + owner，供人阅读与 AI 对齐），
-# 也是「可执行面」（rules 段由 cmd/archcheck 逐条执行，`make architecture-check` 门禁；
+# 也是「可执行面」（rules 段由 archcheck 包逐条执行，`make architecture-check` 门禁；
 # 违反即非零退出）。正则一律 RE2 语法（Go regexp 原生，不支持 (?!...)——
 # 负向前置用 negative_follow 结构化表达）。
 #
@@ -155,7 +155,7 @@ modules:
   # L2 第二批机制包（随包下沉登记）。requires 反映**真实**依赖方向，不是「理想形态」：
   # watchdog 确实读 eventbus，就写 eventbus。此前这里写的是 requires: [] 并附一句
   # 「同仓叶子引用不算模块间方向约束」——那是给自己开的口头豁免，且因为 requires
-  # 从未被执行过，连漂移都没人发现（执行体见 cmd/archcheck/deps.go）。
+  # 从未被执行过，连漂移都没人发现（执行体见 archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
     requires: [toolname] # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包
@@ -246,6 +246,25 @@ modules:
       规整不保证唯一（get-logs 与 get_logs 同名）——撞不撞由调用方判
       （ptc 在装配期拒，因为顶替意味着副作用错位）。
 
+  # 2026-10-19 新增：门禁执行体从 package main 下沉为可导入包。
+  #
+  # 为什么它属于本仓（而不是留在宿主仓各写一遍）：判据是「AST + 一张声明表」，
+  # 不认识任何领域概念——**机制面**。而门禁执行体若锁在 package main 里，
+  # 别的仓就够不着：于是每个宿主要么各写一遍判据（各判一套，漂移到没人发现），
+  # 要么干脆不写（policy 的依赖拓扑表变成死条文：躺在文件里、看起来有人维护过，
+  # 实际一条都不判）。
+  - id: archcheck
+    roots: [archcheck]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      架构门禁执行体：architecture-policy.yaml 的可执行面（规则判定、门包判定、
+      依赖方向判定、policy 自校验、结构阈值）。
+      requires 为空：只依赖 stdlib 与 yaml.v3，不依赖本仓任何机制包——
+      门禁必须是**最底层**的东西，否则「用它判别人」就变成「它自己也在被判定」，
+      门禁的红绿会依赖它所判的代码。
+
 # ── 可执行规则 ──
 rules:
   # 规则一（拆分后的头号红线）：harness 不得出现领域词。
@@ -305,7 +324,7 @@ rules:
     ignore_test: false
     scope_exclude: [cmd]
     # 匹配对象是 **import 路径**（不含引号），不是源码行——实现走 go/ast，
-    # 单行/块/别名/空白导入一视同仁（见 cmd/archcheck/imports.go）。
+    # 单行/块/别名/空白导入一视同仁（见 archcheck/imports.go）。
     #
     # 路径末尾用 `(/|$)` 而不是裸 `/`：宿主仓的**根包** import 路径没有结尾斜杠
     # （github.com/yi-nology/bianque），只写 `/` 会漏掉它——而那恰恰是最可能被
@@ -396,7 +415,7 @@ rules:
 # 规则四：门面包只能是门面。
 #
 # 为什么单独一段而不是加进上面的 rules：rules 段是正则门禁，逐行看文本；「一个函数
-# 体是不是只有一条上游转发」是结构性问题，只有语法树能判。执行体在 cmd/archcheck/
+# 体是不是只有一条上游转发」是结构性问题，只有语法树能判。执行体在 archcheck/
 # facade.go，走 go/ast，不参与正则表。
 #
 # 为什么必须拦：docs/OAGENTKIT-OVERLAP.md 用散文写了「保持门面，别再在本仓加逻辑」。
@@ -441,17 +460,26 @@ facades:
 # 反序列化成 `[]struct{}`，requires 连内存都没进，于是 README 宣称的
 # 「域词污染 + 依赖方向」里「依赖方向」那一半是空的。且声明已经开始漂移
 # （watchdog 写 requires: []，实际 import 了 eventbus）——没人发现，
-# 因为没有东西会去读它。执行体见 cmd/archcheck/deps.go（go/ast 判 import）。
+# 因为没有东西会去读它。执行体见 archcheck/deps.go（go/ast 判 import）。
 #
 # 为什么值得做成门禁：依赖缠绕是本仓最难靠 review 发现的债。它零报错、零告警、
 # 构建全绿——每个单点 import 看起来都合理，只有把全图摊开才看得出 A→B→C→A。
 # 其余七条规则查的全是「写法」（用什么词、import 什么、goroutine 怎么起），
 # 没有一条查「包与包之间允许连成什么形状」。
 #
-# 两条判定路径：
+# 判定路径三条：
 #   1. 越界依赖：包 A 的生产代码 import 了包 B，而 A 的 requires 未登记 B。
-#   2. 未登记包：顶层目录含生产 Go 文件但不在 modules 段——未登记的包对本门禁
+#   2. 越界跨仓依赖：A import 了落在**受管外部包面**内的包，而 A 的 requires
+#      未登记它（登记形态：`ext:<import 路径前缀>`）。
+#   3. 未登记包：含生产 Go 文件的**包目录**未被任何 root 覆盖——未登记的包对本门禁
 #      隐形，任何模块都能 import 它而不被判违规。这是该规则最大的盲区。
+#
+# requires 的条目有两种形态：
+#   - `<模块 id>`：本仓内部模块，必须在 modules 段登记过（写错 id = policy 解析失败，
+#     不静默降级——否则「这条边是否被允许」变成永远为假的判定）。
+#   - `ext:<import 路径前缀>`：外部包面，用于表达跨仓依赖。机制面迁到外仓之后，
+#     宿主的依赖拓扑表需要能表达「我依赖外仓的哪个包」，而只认本仓模块 id 的判据
+#     表达不了。登记后该前缀成为受管包面，任何模块 import 落在其中却没登记 → 越界。
 #
 # 判定面只含生产代码（跳过 _test.go）：依赖方向决定交付物里出现什么，测试依赖
 # 是临时的、可随用例删掉的；纳入测试会逼出「只为共享夹具而做的注册」噪声，
@@ -463,7 +491,7 @@ facades:
 dependency_direction:
   enabled: true
   severity: error
-  desc: 包间依赖必须先在 modules 段登记 requires；未登记的包目录对门禁隐形，须补登记
+  desc: 包间依赖必须先在 modules 段登记 requires；跨仓依赖用 ext:<import 路径前缀> 登记；未登记的包目录对门禁隐形，须补登记
   # cmd 是门禁与文档工具自身（archcheck / docsync），不是机制包；
   # 它们 import 各包是工具职责，不受机制包的依赖方向约束。
   ignore_dirs: [cmd, docs]
@@ -485,7 +513,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, cmd]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, archcheck, cmd]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
@@ -494,6 +522,7 @@ thresholds:
   #        protocol/report_test.go     782 → report_test(373) + report_charts_test(227)
   #                                       + report_tolerance_test(196)
   #        cmd/archcheck/main.go       490 → main(175) + policy(84) + scan(253)
+  #        （2026-10-19 起执行体整体下沉为 archcheck/ 包，cmd/archcheck 只做装配）
   #   2) 接入 CI（本地 gate 会被习惯性绕过，CI 不会）——本门禁在 make check 里，
   #      而 make check 就是 CI 唯一执行物。
   # god object 判据（max_methods_per_type）当前零违规，随本条一并转为阻断。

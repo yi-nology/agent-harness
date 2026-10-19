@@ -13,7 +13,7 @@
 //
 // 同一类问题还有几处：
 //
-//   - 规则 id 重复 → 两条规则共用一个 id，豁免与告警都无法定位
+//   - 规则 id 重复 → 两条规则共用一个 id，豁免与警告都无法定位
 //   - thresholds.scan_roots 漏了 modules 里的某个包 → 该包对阈值门禁隐形
 //     （本仓真实发生过：guardset 登记在 modules 段却不在 scan_roots 段，
 //     于是「超长文件」「god object」两条阈值对它从来不生效）
@@ -33,7 +33,7 @@
 // 违规重新计入阻断集，同时明确回显「此例外已过期」。这是「债到期」的纪律
 // 在机器上的落点：到期不是提醒，是重新欠账。
 
-package main
+package archcheck
 
 import (
 	"fmt"
@@ -49,20 +49,22 @@ const selfCheckRuleID = "harness-policy-self-check"
 // selfCheckViolations 校验 policy 自身的结构一致性。
 //
 // 判定面是 policy 文件 + 仓库实际目录，不涉及任何业务代码。
-func selfCheckViolations(root string, pol policyFile) []violation {
-	var out []violation
+func selfCheckViolations(root string, pol *Policy) []Violation {
+	var out []Violation
 
 	add := func(path string, line int, format string, args ...any) {
-		out = append(out, violation{
-			rule: selfCheckRuleID,
-			path: path,
-			line: line,
-			text: fmt.Sprintf(format, args...),
-			kind: "policy_self_check",
+		out = append(out, Violation{
+			Rule: selfCheckRuleID,
+			Path: path,
+			Line: line,
+			Text: fmt.Sprintf(format, args...),
+			Kind: "policy_self_check",
 		})
 	}
 
-	const policyPath = "architecture-policy.yaml"
+	// policy 自身的位置：宿主仓的 policy 文件不一定叫 architecture-policy.yaml，
+	// 写死文件名会让违规指向一个不存在的文件（复用方看到的位置是错的）。
+	policyPath := PolicyPath(root, pol)
 
 	// ── 规则 id 唯一 + 每条规则都有执行体 + severity 合法 ──
 	seen := map[string]bool{}
@@ -72,7 +74,7 @@ func selfCheckViolations(root string, pol policyFile) []violation {
 			continue
 		}
 		if seen[r.ID] {
-			add(policyPath, 0, "规则 id %q 重复：两条规则共用一个 id，豁免与告警都无法定位到具体哪条", r.ID)
+			add(policyPath, 0, "规则 id %q 重复：两条规则共用一个 id，豁免与警告都无法定位到具体哪条", r.ID)
 		}
 		seen[r.ID] = true
 
@@ -125,6 +127,30 @@ func selfCheckViolations(root string, pol policyFile) []violation {
 		}
 	}
 
+	// ── modules 段登记的包根必须存在 ──
+	//
+	// 与上面那条同源：声明指向一个不存在的目录时，门禁判的是空气。
+	//
+	// 这条判定的代价在实测里很具体：机制包迁到外仓那天，policy 里的包根就陈旧了，
+	// 而**没有任何东西会读它**——于是声明与事实的偏离一直累积，直到有人把执行体
+	// 接上才暴露。接上执行体的第一件事就是让它红：迁出的包根当天即红。
+	//
+	// 判在 policy 自校验这一层（而不是依赖方向门禁）的原因：自校验恒开，
+	// 而依赖方向门禁可以被 policy 关掉；一个指向空目录的包根永远是假的声明。
+	for _, m := range pol.Modules {
+		for _, r := range m.Roots {
+			if r == "" {
+				add(policyPath, 0, "模块 %q 的 roots 里有空条目", m.ID)
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(root, r)); err != nil {
+				add(policyPath, 0,
+					"modules 段模块 %q 登记的包根 %q 不存在：它对依赖方向与阈值门禁都隐形"+
+						"（requires 声明随之失效），声明与事实已经偏离", m.ID, r)
+			}
+		}
+	}
+
 	// ── 例外登记的完整性 ──
 	for _, ex := range pol.Exceptions {
 		if ex.Rule == "" {
@@ -150,7 +176,7 @@ func selfCheckViolations(root string, pol policyFile) []violation {
 //   - 不可比较的字符串（版本号如 v1.2.0）→ 机器判不了，只保证它非空
 //
 // 返回 expired 与人类可读的说明。
-func exceptionExpiry(ex policyException, now time.Time) (bool, string) {
+func exceptionExpiry(ex Exception, now time.Time) (bool, string) {
 	until := strings.TrimSpace(ex.Until)
 	if until == "" {
 		return false, ""

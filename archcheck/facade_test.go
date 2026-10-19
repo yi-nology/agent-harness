@@ -18,7 +18,7 @@
 // 反过来也要钉住**合法形态不得被误伤**：门禁最容易的失败不是漏判，而是把真正的
 // 转发函数判成违规，于是维护者学会忽略它，规则随之名存实亡。
 
-package main
+package archcheck
 
 import (
 	"strings"
@@ -27,10 +27,10 @@ import (
 
 const facadeUpstream = "example.test/up"
 
-func textsOf(vs []violation) string {
+func textsOf(vs []Violation) string {
 	var sb strings.Builder
 	for _, v := range vs {
-		sb.WriteString(v.text)
+		sb.WriteString(v.Text)
 		sb.WriteString("\n")
 	}
 	return sb.String()
@@ -227,7 +227,7 @@ type Fixture struct{ N int }
 var _ = Fixture{}
 `,
 	})
-	fr := facadeRule{Package: "dispatch", Upstream: []string{facadeUpstream}}
+	fr := FacadeRule{Package: "dispatch", Upstream: []string{facadeUpstream}}
 	vs, err := facadeViolations(root, fr)
 	if err != nil {
 		t.Fatal(err)
@@ -238,11 +238,11 @@ var _ = Fixture{}
 }
 
 // facadeViolationsFixture 造最小仓并只跑这一个包的门面判定。
-func facadeViolationsFixture(t *testing.T, src string) []violation {
+func facadeViolationsFixture(t *testing.T, src string) []Violation {
 	t.Helper()
 	root := t.TempDir()
 	writeFixture(t, root, map[string]string{"dispatch/dispatch.go": src})
-	fr := facadeRule{
+	fr := FacadeRule{
 		Package:        "dispatch",
 		Upstream:       []string{facadeUpstream},
 		AllowedImports: []string{"example.test/sig"},

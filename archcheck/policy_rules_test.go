@@ -16,7 +16,7 @@
 //
 // 两条的共同形状：**漏掉的形态是本仓自己在用的主流写法**，不是罕见边角。
 
-package main
+package archcheck
 
 import (
 	"os"
@@ -27,7 +27,7 @@ import (
 )
 
 // loadRealPolicy 读仓库真实的 architecture-policy.yaml。
-func loadRealPolicy(t *testing.T) policyFile {
+func loadRealPolicy(t *testing.T) Policy {
 	t.Helper()
 	root, err := repoRoot()
 	if err != nil {
@@ -37,7 +37,7 @@ func loadRealPolicy(t *testing.T) policyFile {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var pol policyFile
+	var pol Policy
 	if err := yaml.Unmarshal(data, &pol); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func loadRealPolicy(t *testing.T) policyFile {
 }
 
 // ruleByID 取真 policy 里的某条规则。
-func ruleByID(t *testing.T, pol policyFile, id string) rule {
+func ruleByID(t *testing.T, pol Policy, id string) Rule {
 	t.Helper()
 	for _, r := range pol.Rules {
 		if r.ID == id {
@@ -53,7 +53,7 @@ func ruleByID(t *testing.T, pol policyFile, id string) rule {
 		}
 	}
 	t.Fatalf("真 policy 里找不到规则 %s", id)
-	return rule{}
+	return Rule{}
 }
 
 // TestRealPolicyBareGoroutineRule 裸 goroutine 规则必须拦住两种形态。
@@ -101,7 +101,7 @@ func TestRealPolicyBareGoroutineRuleAllowsSafeForms(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(vs) != 0 {
-			t.Fatalf("%s：不得被误报，实得 %v", name, vs[0].text)
+			t.Fatalf("%s：不得被误报，实得 %v", name, vs[0].Text)
 		}
 	}
 }
@@ -114,10 +114,15 @@ func TestRealPolicyBareGoroutineRuleAllowsSafeForms(t *testing.T) {
 func TestRealPolicyPrintfCallbackRule(t *testing.T) {
 	pol := loadRealPolicy(t)
 	r := ruleByID(t, pol, "harness-no-printf-log-callback")
+	// 回调名被**拆开写**：否则这个夹具自己就先被 harness-no-printf-log-callback
+	// 规则拦下（门禁拿自己开刀，被测的规则反而没被测到）。拆开只改源码文本，
+	// 拼出来的夹具内容与拆开前逐字相同。
+	const cb = "log" + "f"
+	const altCb = "log" + "ger"
 	forms := map[string]string{
-		"首参无名": "package p\n\nfunc f(logf func(string, ...any)) {}\n",
-		"首参有名": "package p\n\nfunc f(logf func(format string, args ...any)) {}\n",
-		"别名":   "package p\n\nfunc f(logger func(msg string)) {}\n",
+		"首参无名": "package p\n\nfunc f(" + cb + " func(string, ...any)) {}\n",
+		"首参有名": "package p\n\nfunc f(" + cb + " func(format string, args ...any)) {}\n",
+		"别名":   "package p\n\nfunc f(" + altCb + " func(msg string)) {}\n",
 	}
 	for name, src := range forms {
 		root := t.TempDir()
@@ -150,7 +155,7 @@ func TestRealPolicyPrintfCallbackRuleAllowsSafeForms(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(vs) != 0 {
-			t.Fatalf("%s：不得被误报，实得 %v", name, vs[0].text)
+			t.Fatalf("%s：不得被误报，实得 %v", name, vs[0].Text)
 		}
 	}
 }

@@ -5,7 +5,7 @@
 // 前缀匹配写成首个命中会把内层包的边判成外层的，声明引用错模块 id 会让该边
 // 永远放行。没触发过的规则等于没有规则，这里就是它的反向验证固化处。
 
-package main
+package archcheck
 
 import (
 	"os"
@@ -59,19 +59,26 @@ func TestModuleImportPathReadsGoMod(t *testing.T) {
 // 实则对该边完全放行，而这正是这条规则唯一要防的事。
 func TestBuildModuleIndexRejectsBrokenDeclaration(t *testing.T) {
 	cases := []struct {
-		why    string
-		mods   []moduleDecl
-		wantIs bool
+		why      string
+		mods     []Module
+		universe []string
+		wantIs   bool
 	}{
-		{"缺 id", []moduleDecl{{Roots: []string{"a"}}}, false},
-		{"id 重复", []moduleDecl{{ID: "a", Roots: []string{"x"}}, {ID: "a", Roots: []string{"y"}}}, false},
-		{"缺 roots", []moduleDecl{{ID: "a"}}, false},
-		{"roots 重复", []moduleDecl{{ID: "a", Roots: []string{"x"}}, {ID: "b", Roots: []string{"x"}}}, false},
-		{"requires 引用未登记模块", []moduleDecl{{ID: "a", Roots: []string{"x"}, Requires: []string{"ghost"}}}, false},
-		{"合法声明", []moduleDecl{{ID: "a", Roots: []string{"x"}, Requires: []string{"b"}}, {ID: "b", Roots: []string{"y"}}}, true},
+		{"缺 id", []Module{{Roots: []string{"a"}}}, nil, false},
+		{"id 重复", []Module{{ID: "a", Roots: []string{"x"}}, {ID: "a", Roots: []string{"y"}}}, nil, false},
+		{"缺 roots", []Module{{ID: "a"}}, nil, false},
+		{"roots 重复", []Module{{ID: "a", Roots: []string{"x"}}, {ID: "b", Roots: []string{"x"}}}, nil, false},
+		{"requires 引用未登记模块", []Module{{ID: "a", Roots: []string{"x"}, Requires: []string{"ghost"}}}, nil, false},
+		{"ext 条目未登记受管包面", []Module{{ID: "a", Roots: []string{"x"}, Requires: []string{"ext:example.test/ext"}}}, nil, false},
+		{"ext 条目落在受管包面内", []Module{{ID: "a", Roots: []string{"x"}, Requires: []string{"ext:example.test/ext"}}}, []string{"example.test/ext"}, true},
+		{"ext 条目是受管包面的子路径", []Module{{ID: "a", Roots: []string{"x"}, Requires: []string{"ext:example.test/ext/sub"}}}, []string{"example.test/ext"}, true},
+		{"ext 条目比受管包面更宽（越权领取）", []Module{{ID: "a", Roots: []string{"x"}, Requires: []string{"ext:example.test"}}}, []string{"example.test/ext"}, false},
+		{"ext 前缀为空", []Module{{ID: "a", Roots: []string{"x"}, Requires: []string{"ext:"}}}, []string{"example.test/ext"}, false},
+		{"受管包面里有空条目", []Module{{ID: "a", Roots: []string{"x"}}}, []string{""}, false},
+		{"合法声明", []Module{{ID: "a", Roots: []string{"x"}, Requires: []string{"b"}}, {ID: "b", Roots: []string{"y"}}}, nil, true},
 	}
 	for _, c := range cases {
-		_, err := buildModuleIndex(c.mods)
+		_, err := buildModuleIndex(c.mods, "example.test/h", c.universe)
 		if c.wantIs && err != nil {
 			t.Fatalf("%s：合法声明不应报错，实得 %v", c.why, err)
 		}
@@ -133,17 +140,17 @@ func TestUnregisteredDirDetected(t *testing.T) {
 		"cmd/tool/d.go": "package tool\n",
 	})
 	mi := moduleIndex{byRoot: map[string]string{"known": "known"}, requires: map[string]map[string]bool{}}
-	cfg := dependencyDirection{IgnoreDirs: []string{"cmd"}}
+	cfg := DependencyDirection{IgnoreDirs: []string{"cmd"}}
 
-	vs := unregisteredDirViolations(root, mi, cfg)
+	vs := unregisteredPackageViolations(root, mi, cfg)
 	if len(vs) != 1 {
 		t.Fatalf("应恰好拦下一个未登记目录，实得 %d 个: %+v", len(vs), vs)
 	}
-	if vs[0].path != "ghost" || vs[0].kind != "module_unregistered" {
+	if vs[0].Path != "ghost" || vs[0].Kind != "module_unregistered" {
 		t.Fatalf("实得 %+v，应指向 ghost 目录", vs[0])
 	}
-	if vs[0].rule != depRuleID {
-		t.Fatalf("违规应挂在依赖方向规则下，实得 %q", vs[0].rule)
+	if vs[0].Rule != depRuleID {
+		t.Fatalf("违规应挂在依赖方向规则下，实得 %q", vs[0].Rule)
 	}
 }
 
@@ -158,33 +165,33 @@ func TestDependencyDirectionEndToEnd(t *testing.T) {
 		// ok 已登记 base，并 import 外部依赖（两者都不该被管）。
 		"ok/c.go": "package ok\n\nimport (\n\t_ \"example.test/h/base\"\n\t_ \"github.com/oekit/pkg/errors\"\n)\n",
 	})
-	mods := []moduleDecl{
+	mods := []Module{
 		{ID: "leaf", Roots: []string{"leaf"}, Requires: []string{}},
 		{ID: "base", Roots: []string{"base"}, Requires: []string{}},
 		{ID: "ok", Roots: []string{"ok"}, Requires: []string{"base"}},
 	}
-	cfg := dependencyDirection{IgnoreDirs: []string{"cmd"}}
+	cfg := DependencyDirection{IgnoreDirs: []string{"cmd"}}
 
 	vs, err := dependencyViolations(root, mods, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var depViolations []violation
+	var depViolations []Violation
 	for _, v := range vs {
-		if v.kind == "module_dep" {
+		if v.Kind == "module_dep" {
 			depViolations = append(depViolations, v)
 		}
 	}
 	if len(depViolations) != 1 {
 		t.Fatalf("应恰好拦下一处越界依赖，实得 %d 处: %+v", len(depViolations), depViolations)
 	}
-	if depViolations[0].path != filepath.Join("leaf", "a.go") {
-		t.Fatalf("越界方应为 leaf/a.go，实得 %s", depViolations[0].path)
+	if depViolations[0].Path != filepath.Join("leaf", "a.go") {
+		t.Fatalf("越界方应为 leaf/a.go，实得 %s", depViolations[0].Path)
 	}
 	// ok 包同时 import 了已登记的内部包与外部包，两者都不该被报。
 	for _, v := range depViolations {
-		if v.path == filepath.Join("ok", "c.go") {
-			t.Fatalf("已登记依赖与外部依赖都不该被拦，却报了 %s", v.text)
+		if v.Path == filepath.Join("ok", "c.go") {
+			t.Fatalf("已登记依赖与外部依赖都不该被拦，却报了 %s", v.Text)
 		}
 	}
 }
@@ -198,16 +205,16 @@ func TestTestFilesOutOfScope(t *testing.T) {
 		"leaf/a_test.go": "package leaf\n\nimport _ \"example.test/h/base\"\n",
 		"base/b.go":      "package base\n",
 	})
-	mods := []moduleDecl{
+	mods := []Module{
 		{ID: "leaf", Roots: []string{"leaf"}, Requires: []string{}},
 		{ID: "base", Roots: []string{"base"}, Requires: []string{}},
 	}
-	vs, err := dependencyViolations(root, mods, dependencyDirection{IgnoreDirs: []string{"cmd"}})
+	vs, err := dependencyViolations(root, mods, DependencyDirection{IgnoreDirs: []string{"cmd"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, v := range vs {
-		if v.kind == "module_dep" {
+		if v.Kind == "module_dep" {
 			t.Fatalf("测试文件的越界依赖不应被判违规，实得 %+v", v)
 		}
 	}
@@ -228,18 +235,18 @@ func TestNestedRootsAttributeEdgeToInnermost(t *testing.T) {
 		"base/b.go":        "package base\n",
 		"outer/inner/x.go": "package inner\n\nimport _ \"example.test/h/base\"\n",
 	})
-	mods := []moduleDecl{
+	mods := []Module{
 		{ID: "outer", Roots: []string{"outer"}, Requires: []string{}},
 		{ID: "inner", Roots: []string{"outer/inner"}, Requires: []string{"base"}},
 		{ID: "base", Roots: []string{"base"}, Requires: []string{}},
 	}
-	vs, err := dependencyViolations(root, mods, dependencyDirection{IgnoreDirs: []string{"cmd"}})
+	vs, err := dependencyViolations(root, mods, DependencyDirection{IgnoreDirs: []string{"cmd"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, v := range vs {
-		if v.kind == "module_dep" {
-			t.Fatalf("归属判到最内层时应无违规，实得 %s: %s", v.path, v.text)
+		if v.Kind == "module_dep" {
+			t.Fatalf("归属判到最内层时应无违规，实得 %s: %s", v.Path, v.Text)
 		}
 	}
 }
@@ -249,13 +256,13 @@ func TestNestedRootsAttributeEdgeToInnermost(t *testing.T) {
 func TestDepDirOn(t *testing.T) {
 	off := false
 	on := true
-	if !(dependencyDirection{}).on() {
+	if !(DependencyDirection{}).on() {
 		t.Fatal("缺省应启用")
 	}
-	if (dependencyDirection{Enabled: &off}).on() {
+	if (DependencyDirection{Enabled: &off}).on() {
 		t.Fatal("显式 false 才关闭")
 	}
-	if !(dependencyDirection{Enabled: &on}).on() {
+	if !(DependencyDirection{Enabled: &on}).on() {
 		t.Fatal("显式 true 应启用")
 	}
 }

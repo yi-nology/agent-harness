@@ -69,6 +69,7 @@ delta      增量节流 + 标签分流   模型供应商路由
 | `ptc` | 983 | dop251/goja、oagentkit/toolgate、oekit/concurrency、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面**；绑定可带 Signature 让模型按位置传参（可选形参以 `?` 标记、未传则不出现在 JSON 里；形态里的函数名必须是**净化后**的名字，规则见 `toolname`）；**程序内的 host.<tool>() 与普通工具调用走同一套 Stage 判定环**（不做这一步，本包就成了整条链上唯一绕过所有门禁的路径）；绑定名净化后撞名即装配期拒（否则后绑者顶替前绑者，副作用错位无信号）|
 | `watchdog` | 127 | 无| 被动配对不变量监视：环节收口仍有未执行声明 / 结果无对应声明；**只告警不裁决**（热路径裁决在守卫侧）|
 | `guardset` | 406 | oagentkit/toolgate、oekit/pkg | 守卫装配契约：一组**相互独立**的判定一并求值，多条拒绝合成一条（按 Rank 定序、**不可重试优先**的保守裁决、指引指向真正卡住的那一条）。接成 `invoke` 链上单独一环——链在第一个拒绝处就收口，后面的守卫永远没机会说话，模型一次只听得到一个理由，这正是本包补的那一面；链本身的顺序/留痕/panic 兜底沿用上游，不重复实现 |
+| `archcheck` | 1886 | gopkg.in/yaml.v3 | 架构门禁执行体：`architecture-policy.yaml` 的**可执行面**（规则判定 / 门包判定 / 依赖方向判定 / policy 自校验 / 结构阈值）。**可导入包**——宿主仓复用同一套判据，不必各写一遍（各写一遍必然各判一套，漂移到没人发现为止）。判据与执行体分离：结构性判定一律走 `go/ast`（import 声明有六种以上书写形态，逐行正则必然漏）。依赖方向判三条：越界内部依赖 / 越界跨仓依赖（`ext:` 登记）/ 未登记包目录。**陈旧包根当天即红**——root 指向空目录即「声明与事实已偏离」，而没有执行体时这句话没人读 |
 
 > 「生产行数」口径：`wc -l` 统计 `*.go` 且**不含** `_test.go`——包体量看的是要交付的实现，
 > 不是它的测试。依赖列只列**仓外** import；「无」表示该包生产代码只用 stdlib。
@@ -159,7 +160,8 @@ harness 已经退化成「换了个名字的 monolith」。所以：
 make architecture-check   # 域词污染 + 依赖方向，违反即非零退出
 ```
 
-规则源 [`architecture-policy.yaml`](architecture-policy.yaml)，执行器 `cmd/archcheck`：
+规则源 [`architecture-policy.yaml`](architecture-policy.yaml)，执行体是 `archcheck` 包
+（`cmd/archcheck` 只是它的 CLI 装配，`make architecture-check` 调的就是它）：
 
 | 规则 | 级别 | 拦什么 |
 |---|---|---|
@@ -172,8 +174,8 @@ make architecture-check   # 域词污染 + 依赖方向，违反即非零退出
 
 | 规则 | 级别 | 拦什么 | 落点 |
 |---|---|---|---|
-| `harness-facade-stays-facade` | **error** | `dispatch`/`policy`/`reminder` 三个门面包长出实现（声明新类型、给类型挂方法、函数体超过一条转发语句、调用非上游包、import 非允许依赖）| `policy.yaml` 的 `facades` 段 + `cmd/archcheck/facade.go` |
-| `harness-module-dependency-direction` | **error** | 包间依赖超出 `modules[].requires` 声明的方向；以及**未登记的包目录**（它对本门禁隐形，任何模块都能 import 而不判违规）| `policy.yaml` 的 `modules` / `dependency_direction` 段 + `cmd/archcheck/deps.go` |
+| `harness-facade-stays-facade` | **error** | `dispatch`/`policy`/`reminder` 三个门面包长出实现（声明新类型、给类型挂方法、函数体超过一条转发语句、调用非上游包、import 非允许依赖）| `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
+| `harness-module-dependency-direction` | **error** | 包间依赖超出 `modules[].requires` 声明的方向；越界的**跨仓**依赖（`ext:` 面已登记却没在 requires 声明）；以及**未登记的包目录**（它对本门禁隐形，任何模块都能 import 而不判违规）| `policy.yaml` 的 `modules` / `dependency_direction` 段 + `archcheck/deps.go` |
 
 > 依赖方向这条是 2026-10-18 补的执行体。`modules` 段此前把 22 个包的依赖拓扑
 > 写得清清楚楚，README 也宣称门禁查「域词污染 + 依赖方向」——但执行器把
@@ -182,6 +184,42 @@ make architecture-check   # 域词污染 + 依赖方向，违反即非零退出
 > 新规则上线第一次跑就抓出 `commitgate` **从未登记**过——它早已在 README 包表里，
 > 却在依赖拓扑上完全隐形。这类问题零报错、零告警、构建全绿，只有把全图摊开才看得见，
 > 正是它必须由机器而不是 review 来看的原因。
+
+### 门禁执行体可被宿主复用（2026-10-19）
+
+执行体此前锁在 `package main` 里，宿主仓够不着——于是每个宿主要么各写一遍判据
+（各判一套，漂移到没人发现为止），要么干脆不写（policy 里的依赖拓扑表变成**死条文**：
+躺在文件里、看起来有人维护过，实际一条都不判）。现在它是可导入的包：
+
+```go
+import "github.com/yi-nology/agent-harness/archcheck"
+
+pol, err := archcheck.Load("docs/architecture-policy.yaml")
+if err != nil {
+    return err // policy 解析失败 = 门禁给不出结论，必须响亮失败
+}
+res, err := archcheck.Run(root, pol)
+if err != nil {
+    return err
+}
+archcheck.WriteReport(os.Stderr, res, archcheck.ReportOptions{Full: false})
+if res.HasBlocking() {
+    os.Exit(1)
+}
+```
+
+宿主复用时要知道的四条：
+
+1. **policy 的 `modules` 段要求每个 root 指向真实存在的包目录**——陈旧的 root 会被
+   policy 自校验判红（这正是「机制包迁出当天即红」的落点）。
+2. **跨仓依赖用 `ext:<import 路径前缀>` 登记**，且该前缀必须落在
+   `dependency_direction.ext_prefixes` 声明的受管包面之内。两层结构的理由见
+   `archcheck/deps.go` 包头：若「哪些外部包受管」也只由各模块自己声明，那么最后
+   一个声明它的模块撤掉声明时，整片包面随之消失，那条边就静默失管了。
+3. **未登记包判定按「包目录」粒度**，不是顶层目录——宿主的包根通常是嵌套的
+   （`internal/xxx`），按顶层目录判会把整棵 `internal/` 误报成一个未登记的包。
+4. **判据与实现分离**：policy 是声明，本包是执行体。宿主可以只用自己的声明面
+   （只写 `modules` 段 + `dependency_direction` 段），复用本包的全部判定。
 
 ### 与 oekit 家族的一致性（2026-10-17 补齐）
 
@@ -210,7 +248,7 @@ goroutine 怎么起、回调怎么声明、errors 怎么包），没有一条查
 一份实现，规则不会响，结果是与上游并存的第二份实现。
 
 **为什么用 AST 而不是正则**：正则逐行看文本，判不出「一个函数体是不是只有一条
-上游转发」，而这条纪律恰恰是结构性的。执行体在 `cmd/archcheck/facade.go`（`go/ast`），
+上游转发」，而这条纪律恰恰是结构性的。执行体在 `archcheck/facade.go`（`go/ast`），
 不走 `rules` 段的正则表。门面包只允许四种声明：类型别名、常量别名、单条上游转发函数、
 以及允许集合内的 import。「加真逻辑」三者必居其一（要新类型、要多条语句、或要新依赖），
 所以规则不能被「顺手写两行」绕过去。五条判定路径均已反向验证（注入违规 → 退出码 1）。
@@ -345,6 +383,6 @@ if err := g.Assert(caller, callee, depth); err != nil { /* 结构化 *dispatch.D
 - 内核包规模远小于宿主，`max_file_lines: 400` 直接阻断（宿主仓是报告口径）。
   2026-10-18 起 `thresholds.enforce` 由 false 切 true：此前 3 处超长文件
   （`protocol/report_types.go` 660、`protocol/report_test.go` 782、
-  `cmd/archcheck/main.go` 490）已拆分归零，切换条件才成立。**拆分只为满足
+  `cmd/archcheck/main.go` 490）已拆分归零，2026-10-19 起执行体整体下沉为 `archcheck` 包，切换条件才成立。**拆分只为满足
   机械阈值，单文件读不动时该模块应重新分组，而不是继续往上加。**
 - 拆自宿主仓的代码历史见 `docs/SPLIT_PLAN.md`（L2/L3 待拆部分）。

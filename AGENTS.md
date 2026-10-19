@@ -47,7 +47,7 @@ AI 代理在本仓干活时最容易犯的错是「顺手把宿主的需求写�
 要多条语句、或要新依赖），所以规则不能被「顺手写两行」绕过去。
 
 **判据走 `go/ast` 不走正则**：正则逐行看文本，判不出「函数体是不是只有一条转发语句」，
-而这条纪律恰恰是结构性的。执行体 `cmd/archcheck/facade.go`，配置在 policy 的 `facades`
+而这条纪律恰恰是结构性的。执行体 `archcheck/facade.go`，配置在 policy 的 `facades`
 段（逐包声明转发目标与允许依赖），**不在 `rules` 段**——rules 段是正则表，塞不下语法树判定。
 五条判定路径（类型定义 / 方法 / 多语句 / 非上游调用 / 非允许 import）均已反向验证。
 
@@ -104,15 +104,26 @@ make architecture-check   # 单跑架构门禁；--report 看全量
 
 `architecture-policy.yaml` 的 `modules` 段逐包登记了 `{id, roots, requires}`，
 其中 `requires` 是本仓包与包之间**允许**的依赖方向。此前这张表**只有声明、没有执行体**
-——`cmd/archcheck/policy.go` 把 `modules` 反序列化成 `[]struct{}`，`requires`
+——`archcheck/policy.go` 把 `modules` 反序列化成 `[]struct{}`，`requires`
 连内存都没进，于是「依赖方向」那一半门禁是空的，且声明已经开始漂移
 （`watchdog` 写 `requires: []`，实际 import 了 `eventbus`）。
 
-执行体在 `cmd/archcheck/deps.go`（`go/ast` 判 import，不走正则表），两条判定路径：
+执行体在 `archcheck/deps.go`（`go/ast` 判 import，不走正则表），三条判定路径：
 
 1. **越界依赖**——包 A 的生产代码 import 了包 B，而 A 的 `requires` 未登记 B；
-2. **未登记包**——顶层目录含生产 Go 文件但不在 `modules` 段。**这条更隐蔽**：
-   未登记的包对本门禁完全隐形，任何模块都能 import 它而不判违规。
+2. **越界跨仓依赖**——A import 了落在**受管外部包面**内的包（`ext_prefixes` 声明），
+   而 A 的 `requires` 未登记它（登记形态 `ext:<import 路径前缀>`）；
+3. **未登记包**——含生产 Go 文件的**包目录**未被任何 root 覆盖。**这条更隐蔽**：
+   未登记的包对本门禁完全隐形，任何模块都能 import 它而不判违规。判定粒度是包目录
+   而不是顶层目录——宿主的包根通常是嵌套的（`internal/xxx`），按顶层目录判会把
+   整棵 `internal/` 误报成一个未登记的包。
+
+跨仓依赖分两层声明（与内部模块同构）：**受管面**在 policy 的
+`dependency_direction.ext_prefixes`（policy 级），**逐模块的边**在 `requires`
+（模块级）。分两层是必须的：若「哪些外部包受管」也只由各模块自己声明，那么最后
+一个声明它的模块撤掉声明时，整片包面随之消失，那些 import 重新变成不判定的——
+而外部包没有「未登记目录」那道兜底（本仓没有它的目录），这条边就静默失管了。
+门禁的失败形态必须是变红，不能是变绿。
 
 新规则上线第一次跑就抓出 `commitgate` **从未登记**过——它早已在 README 包表里、
 早已被 docsync 计入行数，却在依赖拓扑上完全没人管。这正是这条规则该由机器看的原因：
@@ -134,6 +145,44 @@ A→B→C→A。
 判定面只含生产代码（跳过 `_test.go`）：依赖方向决定交付物里出现什么，
 测试依赖是临时的，纳入只会逼出「只为共享夹具而做的注册」噪声。
 
+### 门禁执行体必须可被宿主复用（2026-10-19）
+
+依赖方向门禁的执行体此前锁在 `cmd/archcheck/`（`package main`）里。判据是
+**AST + 一张声明表**，不认识任何领域概念——**机制面**，与 `protocol` /
+`eventbus` / `netguard` 等是同一类东西。但锁在 `package main` 里，宿主仓就够不着：
+
+- 各写一遍判据 → 各判一套，漂移到没人发现为止；
+- 干脆不写 → policy 里的依赖拓扑表变成**死条文**：躺在文件里、看起来有人维护过，
+  实际一条都不判。
+
+宿主仓 bianque 就是后一种：它的 `cmd/archcheck` 只执行 `rules` 段，
+`modules` 段反序列化成 `[]struct{}`，`requires` 连内存都没进——那张表里 6 个
+root 指向已迁走的包目录，而**没有一条会红**，因为没有任何东西会去读它。
+
+故执行体下沉为可导入包 `archcheck/`（`cmd/archcheck` 退化为 CLI 装配），
+对外 API 三件套：`Load` / `Run` / `WriteReport` + `Result.HasBlocking()`。
+宿主复用时**不需要复制实现**。
+
+纪律：**机制面若要跨仓复用，就不能锁在 `package main` 里**。判据与执行体分离
+（policy 是声明面，本包是执行面），宿主可以只写自己的声明面，复用全部判定。
+
+配套两条判据设计（都是这次下沉时才发现的真问题）：
+
+1. **受管面与逐模块的边分两层声明**。跨仓依赖的「受管面」在 policy 的
+   `dependency_direction.ext_prefixes`（policy 级），「本模块用了哪些」在
+   `requires`（模块级）。若两层合一（只由各模块自己声明），那么**最后一个声明
+   它的模块撤掉声明时，整片包面随之消失**，那些 import 重新变成不判定的——
+   而外部包没有「未登记目录」那道兜底（本仓没有它的目录），这条边就静默失管了。
+   **门禁的失败形态必须是变红，不能是变绿。**
+2. **未登记包的判定粒度是包目录，不是顶层目录**。宿主的包根通常是嵌套的
+   （`internal/xxx`），按顶层目录判会把整棵 `internal/` 误报成「一个未登记的包」，
+   宿主只能把 `internal` 整个加进豁免名单——于是那棵树彻底不受管。
+
+另有一条被这次下沉顺带补上的判据：**陈旧包根必须当天即红**（`modules` 段登记的
+root 指向空目录 = 声明与事实已偏离）。它判在 policy 自校验这一层（自校验恒开，
+而依赖方向门禁可以被 policy 关掉）。没有它，「机制包迁出」这件事在 policy 里
+就是一次**无声的漂移**。
+
 ### 门禁自己也要能被检查（2026-10-19 补齐）
 
 前四条纪律（域词、宿主依赖、裸 goroutine、printf 回调、errors 单包）都是
@@ -141,13 +190,13 @@ A→B→C→A。
 **静默失效**，且失效形态全部是**门禁变绿**——规则照常出现在报告里、
 severity 照常是 error，唯独一件事都不判。
 
-逐条都已修，且每条都配了反向验证用例（`cmd/archcheck/scan_test.go`、
+逐条都已修，且每条都配了反向验证用例（`archcheck/scan_test.go`、
 `selfcheck_test.go`、`policy_rules_test.go`）：
 
 | 失效 | 根因 | 修法 |
 |---|---|---|
 | **测试文件被整体跳过** | 判定面用 `if r.OnlyTest != isTest` 判，把 `only_test` 当成「必须等于 isTest」。于是「两者皆 false」（声明「生产与测试都扫」）这一态会把**所有测试文件**跳过——三条 `ignore_test: false` 的规则（宿主依赖 / printf 回调 / errors 单包）集体对测试文件失明 | 判定面改三态（`inTestScope`） |
-| **import 规则漏形态** | 逐行正则匹配**源码文本**，`^\s*"errors"$` 只认「整行就是一个裸路径」。`import "errors"`（单行）与 `import e "errors"`（别名）全漏——而本仓大量用单行 import | 匹配对象改为 **import 路径**，实现走 `go/ast`（`cmd/archcheck/imports.go`） |
+| **import 规则漏形态** | 逐行正则匹配**源码文本**，`^\s*"errors"$` 只认「整行就是一个裸路径」。`import "errors"`（单行）与 `import e "errors"`（别名）全漏——而本仓大量用单行 import | 匹配对象改为 **import 路径**，实现走 `go/ast`（`archcheck/imports.go`） |
 | **阈值判定面漏包** | `thresholds.scan_roots` 与 `modules.roots` 两张表无交叉校验。`guardset` 登记在 modules 却漏在 scan_roots 之外 → 「超长文件」「god object」两条阈值对它**从来不生效** | 新增 policy 自校验强制两者一致 |
 | **例外到期不失效** | `exceptions` 的 `until` 字段解析后就再没人看过 → 该清偿的债可无限期豁免 | `until` 真正生效：到期即不再豁免，违规重新计入阻断集 |
 | **规则可无执行体** | 规则若两个正则都为空（字段名拼错即如此），旧实现 `return nil, nil` 静默跳过，它却仍计入「N 条规则」 | policy 自校验把它报出来（`harness-policy-self-check`） |
@@ -161,7 +210,7 @@ severity 照常是 error，唯独一件事都不判。
    书写形态（单行 / 块 / 别名 / 空白导入 / 点导入 / 括号同行），逐行正则
    必然漏，且漏得毫无声响。
 3. **policy 自身也要过自校验**：规则须有执行体、id 唯一、阈值判定面须覆盖
-   全部登记包、例外须写 `until` 与拆除条件。执行体在 `cmd/archcheck/selfcheck.go`。
+   全部登记包、例外须写 `until` 与拆除条件。执行体在 `archcheck/selfcheck.go`。
 
 顺带清偿：一处**真实违规**被上面的漏洞藏了很久——`ptc/bytebudget_regression_test.go`
 用的是 stdlib `"errors"`，而 AGENTS.md 写着「全仓 24 个文件统一切到 `pkg/errors`」。

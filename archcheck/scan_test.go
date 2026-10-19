@@ -16,7 +16,7 @@
 // 每条用例都写成「错误实现会红」：只测正确实现能过的用例，一个把数字比较
 // 写成字符串比较的错实现照样全过。
 
-package main
+package archcheck
 
 import (
 	"strings"
@@ -35,16 +35,16 @@ import (
 func TestInTestScopeThreeStates(t *testing.T) {
 	cases := []struct {
 		why  string
-		r    rule
+		r    Rule
 		path string
 		want bool
 	}{
-		{"ignore_test=true → 只扫生产", rule{IgnoreTest: true}, "/x/a.go", true},
-		{"ignore_test=true → 测试文件不在面内", rule{IgnoreTest: true}, "/x/a_test.go", false},
-		{"only_test=true → 只扫测试", rule{OnlyTest: true}, "/x/a_test.go", true},
-		{"only_test=true → 生产文件不在面内", rule{OnlyTest: true}, "/x/a.go", false},
-		{"两者皆 false → 生产与测试都扫（这正是旧实现漏掉的那一态）", rule{}, "/x/a.go", true},
-		{"两者皆 false → 测试文件也必须扫", rule{}, "/x/a_test.go", true},
+		{"ignore_test=true → 只扫生产", Rule{IgnoreTest: true}, "/x/a.go", true},
+		{"ignore_test=true → 测试文件不在面内", Rule{IgnoreTest: true}, "/x/a_test.go", false},
+		{"only_test=true → 只扫测试", Rule{OnlyTest: true}, "/x/a_test.go", true},
+		{"only_test=true → 生产文件不在面内", Rule{OnlyTest: true}, "/x/a.go", false},
+		{"两者皆 false → 生产与测试都扫（这正是旧实现漏掉的那一态）", Rule{}, "/x/a.go", true},
+		{"两者皆 false → 测试文件也必须扫", Rule{}, "/x/a_test.go", true},
 	}
 	for _, c := range cases {
 		if got := inTestScope(c.r, c.path); got != c.want {
@@ -64,7 +64,7 @@ func TestRuleFilesCoversTestFiles(t *testing.T) {
 		"pkg/a.go":      "package pkg\n",
 		"pkg/a_test.go": "package pkg\n",
 	})
-	r := rule{Scope: []string{"."}, Include: []string{"*.go"}}
+	r := Rule{Scope: []string{"."}, Include: []string{"*.go"}}
 	files, err := ruleFiles(root, r)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestRuleFilesCoversTestFiles(t *testing.T) {
 	}
 
 	// 反向：ignore_test=true 时测试文件必须被排除。
-	r2 := rule{Scope: []string{"."}, Include: []string{"*.go"}, IgnoreTest: true}
+	r2 := Rule{Scope: []string{"."}, Include: []string{"*.go"}, IgnoreTest: true}
 	files2, err := ruleFiles(root, r2)
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ var _ = 1
 	for name, src := range forms {
 		root := t.TempDir()
 		writeFixture(t, root, map[string]string{"p/a.go": src})
-		r := rule{
+		r := Rule{
 			ID:           "t",
 			Scope:        []string{"."},
 			Include:      []string{"*.go"},
@@ -187,13 +187,13 @@ var m = map[string]string{"errors": "1"}
 func f() string { return "errors" }
 `,
 	})
-	r := rule{ID: "t", Scope: []string{"."}, Include: []string{"*.go"}, ForbidImport: `^errors$`}
+	r := Rule{ID: "t", Scope: []string{"."}, Include: []string{"*.go"}, ForbidImport: `^errors$`}
 	vs, err := importViolations(root, r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(vs) != 0 {
-		t.Fatalf("非 import 位置的 \"errors\" 不得误报，实得 %d 处：%v", len(vs), vs[0].text)
+		t.Fatalf("非 import 位置的 \"errors\" 不得误报，实得 %d 处：%v", len(vs), vs[0].Text)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestImportViolationsCoversTestFiles(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"p/a_test.go": "package p\n\nimport \"github.com/yi-nology/bianque/x\"\n",
 	})
-	r := rule{
+	r := Rule{
 		ID:           "t",
 		Scope:        []string{"."},
 		Include:      []string{"*.go"},
@@ -229,7 +229,7 @@ func TestImportViolationsCoversTestFiles(t *testing.T) {
 func TestImportViolationsFailsLoudlyOnParseError(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, map[string]string{"p/a.go": "package p\n\nfunc ( { }\n"})
-	r := rule{ID: "t", Scope: []string{"."}, Include: []string{"*.go"}, ForbidImport: `^errors$`}
+	r := Rule{ID: "t", Scope: []string{"."}, Include: []string{"*.go"}, ForbidImport: `^errors$`}
 	if _, err := importViolations(root, r); err == nil {
 		t.Fatal("语法坏掉的文件必须报错退出，不得静默跳过")
 	}
@@ -243,14 +243,18 @@ func TestImportViolationsFailsLoudlyOnParseError(t *testing.T) {
 // 在本行的**第一次**出现，后面那处永远看不到——结果是门禁把合法的负向断言
 // 报成违规（误报），而误报会让人直接关掉豁免机制。
 func TestNeutralizedHandlesMultipleAnchors(t *testing.T) {
-	nfs := []negFollow{{Anchor: `strings.Contains(out, "`, ForbidFollow: `运维")`}}
+	// 夹具用**合成词**：本用例测的是豁免机制（anchor + forbid_follow 的配对），
+	// 不是词表。若夹具里写真实领域词面，本仓那条域词规则会先把夹具拦下——
+	// 门禁拿自己开刀，而被测的机制根本没被测到。
+	const word = "禁词"
+	nfs := []NegFollow{{Anchor: `strings.Contains(out, "`, ForbidFollow: word + `")`}}
 	// 命中位置在**第二处** anchor 之后。
-	line := `if strings.Contains(out, "abc") || !strings.Contains(out, "运维") {`
-	idx := strings.Index(line, "运维")
+	line := `if strings.Contains(out, "abc") || !strings.Contains(out, "` + word + `") {`
+	idx := strings.Index(line, word)
 	if idx < 0 {
 		t.Fatal("夹具构造错误：未找到命中位置")
 	}
-	if !neutralized(line, idx, idx+len("运维"), nfs) {
+	if !neutralized(line, idx, idx+len(word), nfs) {
 		t.Fatal("第二处 anchor 的负向断言必须被识别为豁免")
 	}
 }

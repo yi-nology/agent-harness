@@ -1,6 +1,6 @@
 // 扫描与判定：目录遍历、规则匹配、注释中性化、超长文件与 god object 报告。
 
-package main
+package archcheck
 
 import (
 	"fmt"
@@ -57,7 +57,7 @@ func iterFiles(root string, includes []string, ignoreTest bool) []string {
 // 旧实现只取 anchor 在本行的**第一次**出现（strings.Index），于是同一行出现多处
 // anchor 时，后面那处永远看不到——而「断言不得出现某词」的用例里，同一行常常有
 // 两处断言（一正一反），漏判的表现是**门禁把合法的负向断言报成违规**。
-func neutralized(text string, start, end int, nfs []negFollow) bool {
+func neutralized(text string, start, end int, nfs []NegFollow) bool {
 	for _, nf := range nfs {
 		off := 0
 		for {
@@ -93,7 +93,7 @@ func neutralized(text string, start, end int, nfs []negFollow) bool {
 // 失败形态是门禁**变绿**而非变红：三条声明要覆盖测试文件的规则集体失效，
 // 且真实违规就躺在仓里（ptc/bytebudget_regression_test.go 里的 stdlib "errors"
 // 就是这样活下来的——AGENTS.md 写着「全仓 24 个文件统一切到 pkg/errors」）。
-func inTestScope(r rule, path string) bool {
+func inTestScope(r Rule, path string) bool {
 	isTest := strings.HasSuffix(path, "_test.go")
 	switch {
 	case r.OnlyTest:
@@ -109,7 +109,7 @@ func inTestScope(r rule, path string) bool {
 //
 // 测试面三态在 iterFiles 之前先滤一遍（少走一遍目录树），在 iterFiles 之后
 // 再用 inTestScope 兜一次（口径只有一处定义，避免两处漂移）。
-func ruleFiles(root string, r rule) ([]string, error) {
+func ruleFiles(root string, r Rule) ([]string, error) {
 	var out []string
 	for _, scope := range r.Scope {
 		p := filepath.Join(root, scope)
@@ -134,7 +134,7 @@ func ruleFiles(root string, r rule) ([]string, error) {
 	return out, nil
 }
 
-func checkRule(root string, r rule) ([]violation, error) {
+func checkRule(root string, r Rule) ([]Violation, error) {
 	if r.ForbidImport != "" {
 		// import 规则走语法树判定，不走逐行正则——理由见 imports.go 头注。
 		return importViolations(root, r)
@@ -152,7 +152,7 @@ func checkRule(root string, r rule) ([]violation, error) {
 		return nil, err
 	}
 
-	var out []violation
+	var out []Violation
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
@@ -172,7 +172,7 @@ func checkRule(root string, r rule) ([]violation, error) {
 				continue
 			}
 			rel, _ := filepath.Rel(root, f)
-			out = append(out, violation{rule: r.ID, path: rel, line: i + 1, text: strings.TrimSpace(line), kind: "forbid_regex"})
+			out = append(out, Violation{Rule: r.ID, Path: rel, Line: i + 1, Text: strings.TrimSpace(line), Kind: "forbid_regex"})
 		}
 	}
 	return out, nil

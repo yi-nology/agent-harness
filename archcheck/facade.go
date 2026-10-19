@@ -24,7 +24,7 @@
 // 与「反向验证」纪律配套：改这条判定逻辑时，同样要注入违规确认门禁会红，
 // 没触发过的规则等于没有规则。
 
-package main
+package archcheck
 
 import (
 	"fmt"
@@ -37,8 +37,8 @@ import (
 	"strings"
 )
 
-// facadeRule 声明一个门面包：它转发到哪、还允许带哪些签名所需的额外依赖。
-type facadeRule struct {
+// FacadeRule 声明一个门面包：它转发到哪、还允许带哪些签名所需的额外依赖。
+type FacadeRule struct {
 	Package        string   `yaml:"package"`
 	Desc           string   `yaml:"desc"`
 	Severity       string   `yaml:"severity"`
@@ -50,7 +50,7 @@ type facadeRule struct {
 var verSuffixRe = regexp.MustCompile(`^v[0-9]+$`)
 
 // facadeViolations 判定一个门面包是否仍然只是门面。
-func facadeViolations(root string, fr facadeRule) ([]violation, error) {
+func facadeViolations(root string, fr FacadeRule) ([]Violation, error) {
 	dir := filepath.Join(root, fr.Package)
 	entries, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil {
@@ -62,7 +62,7 @@ func facadeViolations(root string, fr facadeRule) ([]violation, error) {
 		allowed[p] = true
 	}
 
-	var out []violation
+	var out []Violation
 	fset := token.NewFileSet()
 	for _, path := range entries {
 		// 测试文件允许做别的事（构造违规样例本身就是验证手段），只扫生产代码。
@@ -84,12 +84,12 @@ func facadeViolations(root string, fr facadeRule) ([]violation, error) {
 
 		rel, _ := filepath.Rel(root, path)
 		report := func(pos token.Pos, format string, args ...any) {
-			out = append(out, violation{
-				rule: facadeRuleID,
-				path: rel,
-				line: fset.Position(pos).Line,
-				text: fmt.Sprintf(format, args...),
-				kind: "facade",
+			out = append(out, Violation{
+				Rule: facadeRuleID,
+				Path: rel,
+				Line: fset.Position(pos).Line,
+				Text: fmt.Sprintf(format, args...),
+				Kind: "facade",
 			})
 		}
 

@@ -34,7 +34,7 @@
 // 路径匹配同时覆盖：单行/块、别名/空白导入、点导入，以及任何未来新增的书写形态。
 // 判据一旦落到路径上，就不再随书写形态漂移。
 
-package main
+package archcheck
 
 import (
 	"fmt"
@@ -50,7 +50,7 @@ import (
 // 解析失败必须响亮失败（返回 error → 门禁退出码 2），不得静默跳过该文件：
 // 静默跳过等于「该文件对本规则隐形」，而语法坏掉的文件本就编译不过，
 // 真正的风险是「门禁在这个文件上给不出任何结论，却显示成通过」。
-func importViolations(root string, r rule) ([]violation, error) {
+func importViolations(root string, r Rule) ([]Violation, error) {
 	re, err := regexp.Compile(r.ForbidImport)
 	if err != nil {
 		return nil, fmt.Errorf("规则 %s forbid_import_regex 非法: %w", r.ID, err)
@@ -60,7 +60,7 @@ func importViolations(root string, r rule) ([]violation, error) {
 		return nil, err
 	}
 
-	var out []violation
+	var out []Violation
 	fset := token.NewFileSet()
 	for _, path := range files {
 		f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
@@ -76,12 +76,12 @@ func importViolations(root string, r rule) ([]violation, error) {
 			if !re.MatchString(p) {
 				continue
 			}
-			out = append(out, violation{
-				rule: r.ID,
-				path: rel,
-				line: fset.Position(im.Path.Pos()).Line,
-				text: fmt.Sprintf("import %q（禁止的依赖路径）", p),
-				kind: "forbid_import",
+			out = append(out, Violation{
+				Rule: r.ID,
+				Path: rel,
+				Line: fset.Position(im.Path.Pos()).Line,
+				Text: fmt.Sprintf("import %q（禁止的依赖路径）", p),
+				Kind: "forbid_import",
 			})
 		}
 	}
