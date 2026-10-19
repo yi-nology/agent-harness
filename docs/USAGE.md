@@ -333,7 +333,7 @@ func toReport(raw string) (*protocol.Report, error) {
 package myapp
 
 import (
-	"github.com/oagentkit/toolgate/invoke"
+	"github.com/oagentkit/guardx/invoke"
 	"github.com/oekit/pkg/errors"
 	"github.com/yi-nology/agent-harness/guardset"
 	"github.com/yi-nology/agent-harness/tooldisclose"

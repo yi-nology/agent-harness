@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oagentkit/toolgate/invoke"
+	"github.com/oagentkit/guardx/invoke"
 	"github.com/oekit/pkg/errors"
 )
 

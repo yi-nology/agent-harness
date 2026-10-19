@@ -22,7 +22,7 @@ version: 1
 modules:
   - id: protocol
     roots: [protocol]
-    requires: [] # 统一报告协议 + 宽容解析 + 结构化校验：机制层叶子包，零内部依赖
+    requires: ["ext:github.com/oekit/pkg"] # 统一报告协议 + 宽容解析 + 结构化校验：机制层叶子包，零内部依赖
     owner: harness
     managed: true
     notes: |
@@ -39,42 +39,42 @@ modules:
 
   - id: eventbus
     roots: [eventbus]
-    requires: []
+    requires: ["ext:github.com/oagentkit/runtime"]
     owner: harness
     managed: true
     notes: 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责
 
   - id: policy
     roots: [policy]
-    requires: []
+    requires: ["ext:github.com/oagentkit/toolgate"]
     owner: harness
     managed: true
     notes: 操作审计门：阈值只降不升、解析失败即拒
 
   - id: spill
     roots: [spill]
-    requires: []
+    requires: ["ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: 输出预算溢出：提示契约/取回/按龄清理，宿主与前端共用判据
 
   - id: pii
     roots: [pii]
-    requires: []
+    requires: ["ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: 个人信息价值面脱敏（正则），与宿主日志脱敏面互补
 
   - id: netguard
     roots: [netguard]
-    requires: []
+    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: 出站 URL 守卫（SSRF），纯 stdlib 叶子层
 
   - id: dispatch
     roots: [dispatch]
-    requires: []
+    requires: ["ext:github.com/oagentkit/agent"]
     owner: harness
     managed: true
     notes: |
@@ -95,7 +95,7 @@ modules:
 
   - id: checkpoint
     roots: [checkpoint]
-    requires: [contract] # 只为复用 contract 的编排状态常量，避免终态语义被定义两次而漂移
+    requires: [contract, "ext:github.com/oekit/pkg"] # 只为复用 contract 的编排状态常量，避免终态语义被定义两次而漂移
     owner: harness
     managed: true
     notes: |
@@ -108,7 +108,7 @@ modules:
 
   - id: budget
     roots: [budget]
-    requires: []
+    requires: ["ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -119,7 +119,7 @@ modules:
 
   - id: offload
     roots: [offload]
-    requires: []
+    requires: ["ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -130,7 +130,7 @@ modules:
 
   - id: tooldisclose
     roots: [tooldisclose]
-    requires: [toolname] # 派生调用形态时的函数名规整，与 ptc 共用同一套规则
+    requires: [toolname, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"] # 派生调用形态时的函数名规整，与 ptc 共用同一套规则
     owner: harness
     managed: true
     notes: |
@@ -141,7 +141,7 @@ modules:
 
   - id: toolfail
     roots: [toolfail]
-    requires: []
+    requires: ["ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -158,7 +158,7 @@ modules:
   # 从未被执行过，连漂移都没人发现（执行体见 archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
-    requires: [toolname] # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包
+    requires: [toolname, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"] # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包
     owner: harness
     managed: true
     notes: 程序化工具编排沙箱（goja VM，三重预算替代 OS 沙盘）
@@ -175,7 +175,7 @@ modules:
 
   - id: delta
     roots: [delta]
-    requires: []
+    requires: ["ext:github.com/oagentkit/runtime"]
     owner: harness
     managed: true
     notes: 增量节流：(kind,iteration) 键控 + 权威整段优先 + 确定性收口扫序
@@ -189,21 +189,21 @@ modules:
 
   - id: reminder
     roots: [reminder]
-    requires: []
+    requires: ["ext:github.com/oagentkit/guardx"]
     owner: harness
     managed: true
     notes: 系统注入提示的防伪包裹（source 声明 + 伪造标签转义）
 
   - id: drain
     roots: [drain]
-    requires: []
+    requires: ["ext:github.com/oekit/logx", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀
 
   - id: commitgate
     roots: [commitgate]
-    requires: []
+    requires: ["ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -215,7 +215,7 @@ modules:
 
   - id: guardset
     roots: [guardset]
-    requires: []
+    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -495,6 +495,29 @@ dependency_direction:
   # cmd 是门禁与文档工具自身（archcheck / docsync），不是机制包；
   # 它们 import 各包是工具职责，不受机制包的依赖方向约束。
   ignore_dirs: [cmd, docs]
+  # ── 受管外部包面（policy 级）──
+  #
+  # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
+  #
+  # 为什么必须管：上游把能力搬家的频率不低——2026-10-20 这一轮就搬了两处
+  # （toolgate/invoke → guardx/invoke、obs/obsx → llm/obsx）。而本仓的依赖
+  # 方向表此前**只管内部包**（本仓包与包之间），管不到「本仓用了哪个上游矩阵
+  # 模块」——于是那次搬家在本仓的门禁眼里**什么都没发生**：import 路径变了、
+  # 依赖面变了（判定环从 eino 重仓挪到零依赖底座），但没有任何一处声明跟着改。
+  #
+  # 声明面分两层（与内部模块同构）：
+  #   - 受管面（这里）：第一方矩阵整体
+  #   - 逐模块的边（modules 段的 requires）：本包实际用了哪个上游矩阵模块
+  #
+  # 粒度选**矩阵模块**级（如 ext:github.com/oagentkit/guardx）而不是包级：
+  # 包级会把 requires 撑成 import 清单（每换一个包名就是一次声明变更），
+  # 模块级则正好表达「本包依赖矩阵的哪一块」。
+  #
+  # 第三方依赖（goja / eino / jsonschema 等）**不在**受管面内——它们由
+  # forbid_import_regex 那几条规则管（禁宿主、禁宿主运行时），不需要逐包声明。
+  ext_prefixes:
+    - github.com/oagentkit
+    - github.com/oekit
 
 # ── 全局阈值 ──
 thresholds:

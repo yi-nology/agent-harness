@@ -59,16 +59,16 @@ delta      增量节流 + 标签分流   模型供应商路由
 | `commitgate` | 328 | oekit/pkg | 环节终态独占提交闸：同一 (run, 环节) 的终态只允许被提交一次（`statemachine` 是纯谓词，`SeqGate` 只排快照序号，两者都排不出「两条分支都赢了」）。终态词表由宿主注入。**放闸靠凭证**：`Acquire` 返回唯一令牌、`ReleaseLease` 凭令牌精确释放——靠 (状态,分支,序号) 认人的旧 `Release` 分辨不出两次同名同序的占用，迟到的释放会放掉别人的闸 |
 | `budget` | 756 | oekit/pkg | 上下文预算：分段计量 + 窗口钳位 + 压实计划骨架（三重空转守卫；摘要生成与原文落盘各留宿主接口）|
 | `offload` | 589 | oekit/pkg | 内联大对象外置：sha 去重 + **两阶段**（首次标记、后续轮才替换占位）+ fail-soft（与 `spill` 是姊妹机制）|
-| `tooldisclose` | 862 | oagentkit/toolgate、oekit/pkg | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分，**拒绝即激活**，重试不绕路）+ 接成 `invoke` 链的一环（`Stage`，链上 Reason 直接回面向模型的指引）|
+| `tooldisclose` | 862 | oagentkit/guardx、oekit/pkg | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分，**拒绝即激活**，重试不绕路）+ 接成 `invoke` 链的一环（`Stage`，链上 Reason 直接回面向模型的指引）|
 | `toolfail` | 624 | oekit/pkg | 工具失败的错误分类契约：类别 → 可重试性/退避/需人工/重发安全/模型指引为**数据表**而非散落 if；不可归类一律不可重试。**重发安全与重试价值是两个正交维度**——超时值得重试但服务端可能已执行，原样重发即重复施加副作用；`Guidance()` 是模型侧的唯一消费方 |
 | `toolname` | 96 | 无 | 工具名 → 程序内可用的 JS 标识符：**一条单一真相**。`IsJSIdent`（能不能直接用）+ `Normalize`（不能的话用哪个）。生产侧（`tooldisclose` 派生调用形态）与消费侧（`ptc` 挂载绑定并校验形态里的函数名）共用它——两侧必须逐字一致，否则就是「这里派得出、那里认不出」的夹缝。规整**不保证唯一**（`get-logs` 与 `get_logs` 同名），撞不撞由调用方判 |
 | `delta` | 253 | oagentkit/runtime | 增量节流：分片合并 + 权威整段优先 + 确定性收口扫序 |
 | `pending` | 62 | 无 | 多轮挂起态载体：单一编码入口 + 宽容解码（非法值降级为无挂起）|
 | `reminder` | 30 | oagentkit/guardx | 系统注入提示的防伪包裹（门面）：核心已下沉 `guardx/injectband`，本包只保调用路径稳定，宿主调用点一行不动 |
 | `drain` | 188 | oekit/logx、oekit/pkg | 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀（经 `Turns` 接口）|
-| `ptc` | 983 | dop251/goja、oagentkit/toolgate、oekit/concurrency、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面**；绑定可带 Signature 让模型按位置传参（可选形参以 `?` 标记、未传则不出现在 JSON 里；形态里的函数名必须是**净化后**的名字，规则见 `toolname`）；**程序内的 host.<tool>() 与普通工具调用走同一套 Stage 判定环**（不做这一步，本包就成了整条链上唯一绕过所有门禁的路径）；绑定名净化后撞名即装配期拒（否则后绑者顶替前绑者，副作用错位无信号）|
+| `ptc` | 983 | dop251/goja、oagentkit/guardx、oekit/concurrency、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面**；绑定可带 Signature 让模型按位置传参（可选形参以 `?` 标记、未传则不出现在 JSON 里；形态里的函数名必须是**净化后**的名字，规则见 `toolname`）；**程序内的 host.<tool>() 与普通工具调用走同一套 Stage 判定环**（不做这一步，本包就成了整条链上唯一绕过所有门禁的路径）；绑定名净化后撞名即装配期拒（否则后绑者顶替前绑者，副作用错位无信号）|
 | `watchdog` | 127 | 无| 被动配对不变量监视：环节收口仍有未执行声明 / 结果无对应声明；**只告警不裁决**（热路径裁决在守卫侧）|
-| `guardset` | 406 | oagentkit/toolgate、oekit/pkg | 守卫装配契约：一组**相互独立**的判定一并求值，多条拒绝合成一条（按 Rank 定序、**不可重试优先**的保守裁决、指引指向真正卡住的那一条）。接成 `invoke` 链上单独一环——链在第一个拒绝处就收口，后面的守卫永远没机会说话，模型一次只听得到一个理由，这正是本包补的那一面；链本身的顺序/留痕/panic 兜底沿用上游，不重复实现 |
+| `guardset` | 406 | oagentkit/guardx、oekit/pkg | 守卫装配契约：一组**相互独立**的判定一并求值，多条拒绝合成一条（按 Rank 定序、**不可重试优先**的保守裁决、指引指向真正卡住的那一条）。接成 `invoke` 链上单独一环——链在第一个拒绝处就收口，后面的守卫永远没机会说话，模型一次只听得到一个理由，这正是本包补的那一面；链本身的顺序/留痕/panic 兜底沿用上游，不重复实现 |
 | `archcheck` | 1886 | gopkg.in/yaml.v3 | 架构门禁执行体：`architecture-policy.yaml` 的**可执行面**（规则判定 / 门包判定 / 依赖方向判定 / policy 自校验 / 结构阈值）。**可导入包**——宿主仓复用同一套判据，不必各写一遍（各写一遍必然各判一套，漂移到没人发现为止）。判据与执行体分离：结构性判定一律走 `go/ast`（import 声明有六种以上书写形态，逐行正则必然漏）。依赖方向判三条：越界内部依赖 / 越界跨仓依赖（`ext:` 登记）/ 未登记包目录。**陈旧包根当天即红**——root 指向空目录即「声明与事实已偏离」，而没有执行体时这句话没人读 |
 
 > 「生产行数」口径：`wc -l` 统计 `*.go` 且**不含** `_test.go`——包体量看的是要交付的实现，
@@ -184,6 +184,13 @@ make architecture-check   # 域词污染 + 依赖方向，违反即非零退出
 > 新规则上线第一次跑就抓出 `commitgate` **从未登记**过——它早已在 README 包表里，
 > 却在依赖拓扑上完全隐形。这类问题零报错、零告警、构建全绿，只有把全图摊开才看得见，
 > 正是它必须由机器而不是 review 来看的原因。
+
+> **2026-10-20 补：本仓的上游依赖面也纳入这张表。** 此前它只管内部包，管不到
+> 「本仓用了哪个上游矩阵模块」——而上游把能力搬家的频率不低（这一轮就把
+> `toolgate/invoke` 挪到了 `guardx/invoke`、`obs/obsx` 挪到了 `llm/obsx`），
+> 搬家在本仓门禁眼里什么都没发生。现在第一方矩阵（`github.com/oagentkit` +
+> `github.com/oekit`）整体登记为受管包面，各包在 `requires` 里声明自己实际用了
+> 哪个矩阵模块（`ext:github.com/oagentkit/guardx` 这种粒度）。
 
 ### 门禁执行体可被宿主复用（2026-10-19）
 
@@ -338,6 +345,30 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 4. **`make devlink` 可重复执行。** 已有 `go.work` 时走 `go work use -add` 追加而不是
    重建，所以往 workspace 里加第二个仓不会抹掉别人已加的条目。
 5. **验下游而不是只验本仓。** 本仓作为主模块绿，不代表作为依赖也绿（replace 的失效就发生在这个差别里）。
+
+## 下游升级须知（破坏性变更）
+
+本仓的公开 API 里有一部分**类型来自上游矩阵**（`invoke` 判定环原语）。上游把它换了包，
+本仓跟随，**下游的 import 路径就要跟着换**——这类变更记在这里，不记在 tag 注解里
+（tag 注解会沉到 git 历史里，README 不会）。
+
+| 本仓版本 | 变更 | 下游要做什么 |
+|---|---|---|
+| **v0.5.0** | 上游把判定环原语 `invoke` 从 `oagentkit/toolgate` 迁到 `oagentkit/guardx`（框架无关的原语不该被 eino 重仓的地板拖住），本仓跟随 | import 路径换成 `github.com/oagentkit/guardx/invoke`；require 升到 `toolgate v0.12.0` + `guardx v0.8.0`。**编译期报错**（类型身份变了），不是静默行为变化 |
+| v0.4.0 | 门禁执行体从 `package main` 下沉为可导入包 `archcheck/` | 无（新增包，不改既有 API）|
+
+受影响的本仓 API（签名里带 `invoke` 类型）：
+
+```go
+guardset.Guard          // Check func(ctx, c invoke.Call) invoke.Verdict
+guardset.Set.Evaluate   // (ctx, c invoke.Call) Outcome
+guardset.Stage          // invoke.Stage
+tooldisclose.Stage      // invoke.Stage
+ptc.Options.Stages      // []invoke.Stage
+```
+
+> 依赖面变轻了：判定环从 eino 重仓挪到了零依赖底座。下游若自己 import 过
+> `toolgate/invoke`，那条依赖曾把 eino 拖进下游的模块图，现在没有了。
 
 ## 宿主接入
 

@@ -15,16 +15,16 @@ require (
 	github.com/cloudwego/eino v0.9.21
 	github.com/dop251/goja v0.0.0-20261010130053-73dc7edc278f
 	github.com/oagentkit/agent v0.10.0
-	github.com/oagentkit/guardx v0.5.0
-	github.com/oagentkit/llm v0.11.0
-	github.com/oagentkit/obs v0.7.0
+	github.com/oagentkit/guardx v0.8.0
+	github.com/oagentkit/llm v0.12.0
+	github.com/oagentkit/obs v0.9.0
 	github.com/oagentkit/runtime v0.7.0
-	github.com/oagentkit/textx v0.5.0
-	github.com/oagentkit/toolgate v0.11.0
+	github.com/oagentkit/textx v0.6.0
+	github.com/oagentkit/toolgate v0.12.0
 	github.com/oekit/concurrency v0.17.1
 	github.com/oekit/core v0.9.2
 	github.com/oekit/logx v0.7.1
-	github.com/oekit/pkg v0.15.1
+	github.com/oekit/pkg v0.16.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	gopkg.in/yaml.v3 v3.0.1
 )

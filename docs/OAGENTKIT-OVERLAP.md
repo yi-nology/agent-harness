@@ -33,8 +33,12 @@
 
 **已处置（2026-10-18）**：本仓包更名为 **`tooldisclose`**，点名机制而非泛称「门禁」，
 与上游彻底区分。涉及包目录、`package` 声明、policy 模块 id 与 `scan_roots`、
-README 清单，全部同步完成；改名后覆盖率仍 100%，上游 import 无需改动
-（Go 的包名冲突只发生在同时 import 两侧时，本仓不 import 上游 toolgate）。
+README 清单，全部同步完成；改名后覆盖率仍 100%。
+
+> 2026-10-20 更正：本仓**现已 import 上游 toolgate**（`policy` 门面包转发
+> `toolgate/policy`）与 `guardx/invoke`（判定环原语，2026-10-20 由
+> `toolgate/invoke` 迁来）。同名冲突仍不存在——冲突的前提是「本仓有包也叫
+> toolgate」，而本仓那个包已更名为 `tooldisclose`。
 
 ## 二、oracle 验出的分歧（对照 octop 自带测试）
 

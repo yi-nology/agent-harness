@@ -17,7 +17,7 @@
 //
 // # 与 invoke.Chain 的关系：这是组合，不是替代
 //
-// oagentkit/toolgate 的 invoke.Chain 已经提供了顺序执行、首个拒绝即短路、留痕与
+// oagentkit/guardx 的 invoke.Chain 已经提供了顺序执行、首个拒绝即短路、留痕与
 // panic 兜底。本包**不重复其中任何一条**，而是补它按设计不覆盖的那一面：
 //
 //	invoke.Chain 的语义是「排成一队逐个过，第一个拒就收口」——顺序即语义，
@@ -59,7 +59,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/oagentkit/toolgate/invoke"
+	"github.com/oagentkit/guardx/invoke"
 	"github.com/oekit/pkg/errors"
 )
 

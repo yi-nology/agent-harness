@@ -13,25 +13,27 @@
 // 钉子的实现方式是 blank import：它给每个包造出一个真实的 import 边，
 // 让 `tidy` 有理由把对应的 require 留下。
 //
-// ## 钉的是哪个版本
+// ## 钉的是哪个版本（2026-10-20 复核）
 //
-// 当前钉的版本与**上游各自声明的地板完全相等**（2026-10-19 核对）：
+//	llm   v0.12.0  ← 领先 agent 声明的地板（v0.11.0）
+//	obs   v0.9.0   ← 领先 agent 声明的地板（v0.7.0）
+//	textx v0.6.0   ← 领先 agent / llm 声明的地板（v0.5.0）
+//	core  v0.9.2   ← 等于 logx 声明的地板
 //
-//	llm   v0.11.0  ← agent v0.10.0 声明
-//	obs   v0.7.0   ← agent v0.10.0 声明（agent 侧标 indirect，本仓侧是 direct）
-//	textx v0.5.0   ← agent v0.10.0 声明
-//	core  v0.9.2   ← logx v0.7.1 声明
+// **钉子重新领先于上游地板了**，原因与 2026-10-19 那次「不再领先」相反：
 //
-// 这一点要如实记下来：**钉子不再领先于上游地板**。早期版本这里钉的是比上游地板
-// 更高的版本，作用是「将来本仓一旦 import 它，落到的是我们验证过的版本，
-// 而不是上游声明的旧地板」。现在两者相等，MVS 无论有没有这行 blank import
-// 都会解析到同一个版本——所以钉子当前的作用退化成两件更朴素的事：
+//  1. llm / textx：本轮上游把能力搬了家（obsx 从 obs 迁进 llm；textx 补了
+//     ratio / tokenize 两个原语），本仓要用就必须跟到新版——**这不是抬地板，
+//     是功能前提**。旧版 llm 里根本没有 obsx 这个包，钉在 v0.11.0 会直接编译不过。
+//  2. obs：钉子改指 `obs/audit`（obsx 已迁往 llm，obs 里现存的是从 guardx 迁入的
+//     audit）。指向哪个包不重要，重要的是**这条 require 还在 go.mod 里可见**——
+//     agent 声明的 obs 地板是 v0.7.0，而 audit 只在 v0.8.0 之后才有；将来本仓
+//     真要接审计留痕时，钉子已经把它放在能用的版本上，不会撞上「包不存在」的
+//     编译错误。
+//  3. core：仍等于 logx 声明的地板，无需动。
 //
-//  1. 让这四条 require 在 go.mod 里**显式可见**，而不是仅以传递依赖的身份
-//     藏在 agent / logx 的 go.mod 里（那样一旦上游改声明，本仓无从察觉）；
-//  2. 记录「本仓实际验证过这些版本」这个事实。
-//
-// 换句话说：现在改版本号仍是同一套动作，但理由从「抬高地板」变成了「声明并锁定」。
+// 钉子领先地板时的作用回到它最初的形态：「将来本仓一旦 import 它，落到的是我们
+// 验证过的版本，而不是上游声明的旧地板」。
 //
 // ## 代价（明写，不藏）
 //
@@ -51,7 +53,8 @@ package tools
 
 import (
 	_ "github.com/oagentkit/llm"
-	_ "github.com/oagentkit/obs/obsx"
+	_ "github.com/oagentkit/llm/obsx"
+	_ "github.com/oagentkit/obs/audit"
 	_ "github.com/oagentkit/textx/textutil"
 	_ "github.com/oekit/core/version"
 )

@@ -42,7 +42,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
-	"github.com/oagentkit/toolgate/invoke"
+	"github.com/oagentkit/guardx/invoke"
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
 	"github.com/yi-nology/agent-harness/toolname"

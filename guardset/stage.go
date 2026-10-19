@@ -1,6 +1,6 @@
 // stage.go —— 把守卫集合接成 invoke 链上的一环。
 //
-// 本包不自己提供链：顺序执行、留痕、panic 兜底都由 oagentkit/toolgate 的
+// 本包不自己提供链：顺序执行、留痕、panic 兜底都由 oagentkit/guardx 的
 // invoke.Chain 负责（理由见 guardset.go 包注释「与 invoke.Chain 的关系」）。
 // 这里只做一件上游按设计不做的事——把「一并求值 + 拒绝合成」压成单独一环，
 // 于是链照旧短路，而模型在这一环就已经拿到了全部拒绝。
@@ -10,7 +10,7 @@ package guardset
 import (
 	"context"
 
-	"github.com/oagentkit/toolgate/invoke"
+	"github.com/oagentkit/guardx/invoke"
 )
 
 // StageName 本环在链上的名字。固定值：留痕要能回答「是哪一环拒的」。
