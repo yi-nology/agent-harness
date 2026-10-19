@@ -32,6 +32,13 @@ var snippetQuality = []*regexp.Regexp{
 //
 // maxReportInput 解析输入上限（实弹审计）：repair 通道对超大输入的多次整串处理是
 // O(n·k)——2MB 已远超任何合法报告（max_output_tokens 上限约数百 KB），超限直接判非报告。
+//
+// 曾实现为「截断到 maxReportInput 再解析」，看似同样限住了 O(n·k)，**实则上限根本没生效**：
+// 截断后的 candidate = 完整报告对象 + 巨量垃圾尾巴，ExtractObject 通道会把对象原样捞出
+// 并丢弃其余部分，于是 3.4MB 输入以 confidence=high「解析成功」放行——既没拦住，
+// 也没走到 markRepaired 的降置信兜底（主解析通道就成功了，不经过修复通道）。
+// 方向比不设上限更坏：看起来成功、内容残缺、且置信度未被下调。
+// 故此处必须**直接判非报告**，不得改成截断。反向验证见 TestOversizeInputRejectedNotTruncated。
 const maxReportInput = 2 << 20
 
 // reportJSONSchema 报告解析的标量归一作用域（键集合为报告 schema 白名单面）。
@@ -86,8 +93,10 @@ func stripEngineFields(r *Report) {
 
 // parseReport 报告解析本体（不加信任级别假设），供上面两个入口共用。
 func parseReport(raw string) (*Report, error) {
+	// 超限直接判非报告：截断会让 ExtractObject 通道把「对象 + 垃圾尾巴」里的对象
+	// 原样捞出，使上限失效且残缺内容以高置信放行（见 maxReportInput 处的记录）。
 	if len(raw) > maxReportInput {
-		raw = raw[:maxReportInput]
+		return nil, ErrNotReport
 	}
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
