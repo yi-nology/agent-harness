@@ -24,11 +24,19 @@
 // 192.0.0/24、三个 TEST-NET、198.18/15、240/4 写进显式表；urlguard 则整表列举，
 // 多出 **`0.0.0.0/8`**。
 //
-// 这不是「谁更全」的问题，而是 egress 有一处**实证缺口**：实测
+// 这不是「谁更全」的问题，而是 egress 曾有一处**实证缺口**：
 // `egress.CheckHostWith("0.1.2.3")` 放行、`urlguard` 拒绝。根因是
 // `netip.Addr.IsUnspecified()` 只认全零这一个地址，而 0.0.0.0/8 不在显式表里，
 // 于是 RFC 1122 的 "this network" 段除 0.0.0.0 外全部漏判——是可用的 SSRF 路径。
-// 已向 guardx 提 issue（修复在它那边，不在本仓私补一份网段表）。
+//
+// 2026-10-19 已由上游修复（oagentkit/guardx#2 → v0.4.1，把 `0.0.0.0/8` 补进
+// `ipv4ExplicitBlocks`），本包升到 v0.4.1 后直接受益，**没有在本仓私补网段表**。
+// `thisnetwork_test.go` 钉住修复后的行为（含 IPv4-mapped 形态），使这条缺口
+// 不可能再靠「只测全零地址」的用例蒙过去。
+//
+// 顺带记一条上游的刻意契约，两者别混：`0.0.0.0` 这个**全零字面量**跟回环同组、
+// 由 allowLoopback 管辖；而 `/8` 余下整段无条件拒、**不受任何放行旗标影响**。
+// 见 egress 的 `IsUnspecified` 分支注释。
 //
 // 域名后缀层曾有两份且互相漂移（`.lan` 本包有 urlguard 无、`.localdomain` urlguard
 // 有本包无），2026-10-19 已把 `.localdomain` 补进下方名单，使本包成为 urlguard 的

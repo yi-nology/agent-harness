@@ -23,6 +23,8 @@ func TestCheckURL(t *testing.T) {
 		{"回环放行（凭证探测）", "http://127.0.0.1:18940/metrics", true, true, false},
 		{"云元数据拒绝", "http://169.254.169.254/latest/meta-data/", true, false, true},
 		{"未指定地址拒绝", "http://0.0.0.0/x", true, false, true},
+		{"this network 拒绝（.1）", "http://0.1.2.3/x", true, false, true},
+		{"this network 拒绝（.255）", "http://0.255.255.255/x", true, false, true},
 		{"私网放行（allowPrivate）", "http://192.168.1.10:8080/hook", true, false, false},
 		{"私网拒绝（严格档）", "http://10.0.0.5/hook", false, false, true},
 		{"非 http scheme 拒绝", "file:///etc/passwd", true, false, true},
