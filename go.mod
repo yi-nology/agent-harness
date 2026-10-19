@@ -23,7 +23,7 @@ require (
 	github.com/oagentkit/toolgate v0.9.0
 	github.com/oekit/concurrency v0.17.1
 	github.com/oekit/core v0.9.2
-	github.com/oekit/logx v0.7.0
+	github.com/oekit/logx v0.7.1
 	github.com/oekit/pkg v0.15.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	gopkg.in/yaml.v3 v3.0.1
