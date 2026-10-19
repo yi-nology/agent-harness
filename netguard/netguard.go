@@ -22,10 +22,11 @@
 // blockedCIDRs 是向 egress 的 ipv4ExplicitBlocks **看齐的收敛版**（少了 240.0.0.0/4
 // 保留段），换过去是放松防线而不是收紧。
 //
-// 但**域名后缀层如今有两份**：本包是 .local/.localhost/.internal/.lan，urlguard 是
-// localhost/internal/local/localdomain——`.lan` 本包有它没有、`.localdomain` 它有
-// 本包没有。两份各自演化就是静默漂移，所以增删后缀前先比对上面两份：确属缺口就改
-// 本包这处名单，**不要把 urlguard 引进来当第二份权威**。
+// 域名后缀层**曾有两份且互相漂移**（`.lan` 本包有它没有、`.localdomain` 它有本包没有），
+// 2026-10-19 已把 `.localdomain` 补进下方名单，使本包成为 urlguard 的严格超集——两份
+// 不再各说各话。此后增删后缀仍须先比对：urlguard 那边是收敛方向（不含 `.lan`，
+// 因为它是局域网约定域而非 RFC 保留段），本包这处是权威，**不要把 urlguard 引进来
+// 当第二份权威**。
 //
 // urlguard 的 `DialFunc(next)` 恰好能闭合上面「已知局限」记的 rebinding 窗口（预检
 // 每个解析 IP + 建连后核对真实 RemoteAddr）。但它是 transport 包装，而本包是刻意的
@@ -120,7 +121,12 @@ var (
 	}
 	// defaultBlockedHostSuffixes 非公网命名空间后缀。一律带前导点号：`internal`
 	// 是顶级域，不该因为 `foo.internal` 被拦就整片拒掉。
-	defaultBlockedHostSuffixes = []string{".local", ".localhost", ".internal", ".lan"}
+	//
+	// `.localdomain` 于 2026-10-19 补入：上游 oekit/pkg 的 urlguard 在 v0.15.0
+	// 新增该后缀时把它归为「本就不是合法出站目标的保留段」。本包此前漏判，且
+	// `.local` 后缀匹配不到 `foo.localdomain`（点分边界），属真实缺口——补的是
+	// 收紧面，与既有条目同属「私有命名空间无条件拒绝」分组，不看 allowPrivate。
+	defaultBlockedHostSuffixes = []string{".local", ".localdomain", ".localhost", ".internal", ".lan"}
 	// loopbackHostnames / loopbackHostSuffixes 回环族名字——唯一受 allowLoopback 影响的分组。
 	loopbackHostnames    = map[string]struct{}{"localhost": {}}
 	loopbackHostSuffixes = []string{".localhost"}

@@ -40,6 +40,12 @@ fmt-check:
 vet:
 	$(EXPORT) $(GOENV) go vet ./...
 
+# lint 版本口径：CI 装 v2.14.0（见 ci.yml），与本机验证过的版本一致。
+# **lint 原先既不在 check 也不在 CI**——它在哪儿都不跑，于是
+# `cmd/archcheck` 的死变量、`protocol` 的孤儿谓词这类问题会一路存活到没人查。
+# 「从没见过它触发」的规则等于没有规则，同理「没人跑的门禁」也不等于有门禁，
+# 故按 AGENTS.md「门禁本体全部在 check 里」把它接进来。CI 侧只负责把二进制装好，
+# 规则本体仍在本 Makefile——不放到 ci.yml 里，避免变成「推送后门禁」。
 lint: ## 静态检查（未安装时明确报错退出，与宿主仓同口径）
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint 未安装：brew install golangci-lint"; exit 1; }
 	$(EXPORT) $(GOENV) golangci-lint run ./...
@@ -102,7 +108,7 @@ modwork: ## go.work / go.work.sum 不得入库（只应存在于本机）
 	fi
 	@echo "go.work 未入库 ✓"
 
-check: fmt-check vet test cover-gate architecture-check docsync modreplace modwork ## 提交前门禁聚合
+check: fmt-check vet lint test cover-gate architecture-check docsync modreplace modwork ## 提交前门禁聚合
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy

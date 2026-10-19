@@ -19,16 +19,40 @@ permissions:
 
 jobs:
   check:
-    name: fmt + vet + test + cover-gate + archcheck + repo 卫生
-    runs-on: ubuntu-latest
+    name: fmt + vet + lint + test + cover-gate + archcheck + repo 卫生
+    runs-on: ubuntu-24.04
+    # 为什么钉死不用 ubuntu-latest：GitHub 公告该标签自 2026-10-19 起迁移到
+    # Ubuntu 26，迁移后 runner 镜像的 Go/工具链环境可能与本机不同——门禁在
+    # 「与开发者不同的镜像」上跑，绿灯的可信度要打折。钉死 major.minor 让
+    # 迁移变成一次显式的、可 review 的升版动作，而不是某天突然换底座。
+    # 升级动作：同时改本行与本仓需要的 Go 版本验证。
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # 版本跟随 go.mod 的 go 指令，避免两处各写一份然后悄悄漂移。
           go-version-file: go.mod
           cache: true
+
+      # 只负责把二进制装进 PATH，**不在本 step 里跑 lint**——
+      # 规则本体在 Makefile 的 lint target 里（已接进 make check）。
+      # 在这里再跑一遍就是「门禁本体在 ci.yml」，与本文件开头写的那条相反。
+      #
+      # 版本钉 v2.14.0：与本地验证过的版本一致。本机装的是 v2.15.0 时，
+      # CI 与本地可能出现不同的判定结果——那种差异应该在升级本行时
+      # 显式发生，而不是随某台机器的 brew upgrade 悄悄发生。
+      #
+      # ⚠️ 若将来升级 go.mod 时上游发生过 tag 重写（oagentkit/oekit 的
+      # 历史标签被移动或删除），必须先清本仓的 setup-go 缓存再推，
+      # 否则 restore-keys 前缀回退会恢复重写前的模块副本，报
+      # checksum mismatch 而本地全绿。详见 README 提交前检查段。
+      - name: 安装 golangci-lint（make check 的 lint 门禁需要）
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.14.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/golangci-lint" --version
 
       # Makefile 已内置 CGO_ENABLED=0；Linux 上同样适用，不覆盖。
       - name: make check

@@ -49,6 +49,7 @@ func TestCheckURLBlockedNameBeforeDNS(t *testing.T) {
 		{"精确名（容器网关）", "http://gateway.docker.internal/x"},
 		{"后缀族（.internal）", "http://svc.internal/x"},
 		{"后缀族（.local）", "http://printer.local/x"},
+		{"后缀族（.localdomain，点分边界）", "http://svc.localdomain/x"},
 		{"后缀族（.lan）", "http://box.lan/x"},
 		{"大小写与尾点归一化", "http://Metadata.Google.Internal./x"},
 	}
@@ -68,6 +69,36 @@ func TestCheckURLBlockedNameBeforeDNS(t *testing.T) {
 	}
 }
 
+// TestLocaldomainSuffixBoundary `.localdomain` 是 2026-10-19 补入的默认后缀
+// （对齐上游 oekit/pkg/urlguard v0.15.0：它把该后缀归为「本就不是合法出站目标」
+// 的保留段，而本仓此前漏判，且 `.local` 的点分边界匹配不到 `svc.localdomain`）。
+// 此处钉两件事：命中的是 `.localdomain` 这个后缀本身，以及匹配仍是点分边界、
+// 没退化成「含 localdomain 即拦」的子串比较。
+//
+// 命中与反向断言都走 checkHostName：未命中意味着还要继续解析，走 CheckURL 会真去
+// 查 DNS。这里要验的只是名单匹配本身，不必付网络的代价。
+func TestLocaldomainSuffixBoundary(t *testing.T) {
+	for _, h := range []string{
+		"svc.localdomain",
+		"a.b.localdomain",
+		"MiXeD.Example.LocalDomain", // 大小写与多级标签
+		"svc.localdomain.",          // 尾点写法
+	} {
+		if err := checkHostName(h, false); !errors.Is(err, ErrBlockedName) {
+			t.Errorf("主机名 %q 应命中 .localdomain 后缀，实得 %v", h, err)
+		}
+	}
+	for _, h := range []string{
+		"localdomain",                // 顶级域本身不该因本后缀被整片拒
+		"notlocaldomain.example.com", // 子串不等于后缀
+		"mylocaldomain.net",
+	} {
+		if err := checkHostName(h, false); err != nil {
+			t.Errorf("主机名 %q 不应命中 .localdomain（点分边界，非子串），实得 %v", h, err)
+		}
+	}
+}
+
 // TestCheckURLBlockedNameIgnoresAllowFlags 非回环族名单项不看放行旗标：
 // allowPrivate/allowLoopback 都为 true（放行面参数）时依然拒绝。
 // 这条断言钉住「allowPrivate 只放行私网地址、不放行私有命名空间」的口径。
@@ -81,6 +112,7 @@ func TestCheckURLBlockedNameIgnoresAllowFlags(t *testing.T) {
 		"http://host.docker.internal/x",
 		"http://svc.internal/x",
 		"http://printer.local/x",
+		"http://svc.localdomain/x",
 		"http://box.lan/x",
 	} {
 		if err := CheckURL(u, true, true); !errors.Is(err, ErrBlockedName) {
@@ -138,7 +170,8 @@ func TestExtraBlockedNamesCannotDisableDefaults(t *testing.T) {
 	for _, u := range []string{
 		"http://metadata.google.internal/x", "http://metadata.goog/x",
 		"http://host.docker.internal/x", "http://gateway.docker.internal/x",
-		"http://svc.internal/x", "http://printer.local/x", "http://box.lan/x",
+		"http://svc.internal/x", "http://printer.local/x", "http://svc.localdomain/x",
+		"http://box.lan/x",
 	} {
 		if err := CheckURL(u, false, false); !errors.Is(err, ErrBlockedName) {
 			t.Errorf("%s: 扩展表不应能摘掉默认名单项，实得 %v", u, err)
