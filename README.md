@@ -5,7 +5,12 @@
 
 从上游私有宿主仓（代号见内部文档）拆出的内核层，宿主业务不公开。定位对标同族的
 `oagentkit`（Agent/LLM 编排工具链矩阵）与 `oekit`（基础库）：**独立发版、版本化引入、
-零 replace**（宿主仓当前处于本地并行开发期，暂用 replace，见下）。
+零 replace**（go.mod 含 replace 即门禁红；本地并行开发走 `make devlink` 的 workspace，见下）。
+
+> **本文档导航**
+> - [README](README.md)（本文）= 是什么、为什么这么设计、边界纪律
+> - **[docs/USAGE.md](docs/USAGE.md) = 怎么接、接错了会怎样** ← 宿主开发者从这儿开始
+> - [AGENTS.md](AGENTS.md) = 在本仓干活的工作纪律
 
 ## 边界：本仓有什么、没有什么
 
@@ -41,7 +46,7 @@ delta      增量节流 + 标签分流   模型供应商路由
 
 | 包 | 生产行数 | 外部依赖 | 职责 |
 |---|---|---|---|
-| `protocol` | 1821 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
+| `protocol` | 1850 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
 | `dispatch` | 36 | oagentkit/agent | allow 矩阵物化 + 深度上限 + 自派发拒绝 + 环检测（拓扑经 `EdgeSource` 由宿主提供）|
 | `eventbus` | 341 | oagentkit/runtime | 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责 |
 | `policy` | 64 | cloudwego/eino、oagentkit/toolgate | 操作审计门：阈值只降不升、解析失败即拒 |
@@ -72,6 +77,77 @@ delta      增量节流 + 标签分流   模型供应商路由
 > ——容差内的逐行涨落不拦，改一行代码不必顺手改文档，而跨量级的误述
 > （某包声称 ~86 行、实际 412 行那种）仍然拦下。行数取较大者为分母，
 > 「少写」与「夸大」同等对待。职责列与依赖列非空也在判定内。
+
+## 特性
+
+### 边界不是文档，是门禁
+
+「内核不许长出领域知识」这句话写在散文里就会烂掉。本仓把它做成了 7 条正则规则
++ 2 条 `go/ast` 结构性规则，全部挂在 `make check` 上，CI 只执行这一条。
+散文与门禁的分界线很清楚：**散文不是门禁**——真有人往门面包里塞一份实现，
+规则不响，结果是与上游并存的第二份实现。
+
+```
+policy/     只有类型别名、常量别名、单条上游转发函数 —— 多一条语句就红
+modules[]   包间依赖方向逐条登记，未登记的包目录对本门禁隐形（所以必须同步登记）
+rules[]     域词污染、裸 goroutine、printf 回调、双 errors 包
+```
+
+### 工具调用只有一条路
+
+渐进披露、披露门、多守卫合成、失败分类、程序内调用——**全部接成同一条判定环**。
+包括 `ptc` 里模型自己写的 `host.<tool>()`，也一样过。少接一段，那个位置就成了
+整条链上唯一绕过所有门禁的路径。
+
+```
+普通工具调用 ─┐
+             ├─→ invoke.Stage 链 ─→ guardset(并求值·合成拒绝) ─→ tooldisclose(披露门)
+ptc 程序内   ─┘                            └─→ policy(审计门) ─→ dispatch(派发拓扑)
+```
+
+`guardset` 补的是「链在第一个拒绝处就收口、模型一次只听得到一个理由」那一面：
+一组**相互独立**的判定一并求值，多条拒绝合成一条，取「全部可重试才算可重试」的
+保守侧，并点出该先处理哪一条。
+
+### 崩了能接着跑，而且不会「两条分支都赢了」
+
+`checkpoint` 把恢复判定做成纯函数而不是留给宿主临场决定——临场决定必然选最坏的
+那个（要么盲目全量重跑、要么盲目跳过）。三条硬规则：**空洞不采信**（只信连续完成的
+前缀，失序时宁可多跑几步）、**终态不自动重开**（拒绝替宿主决定）、**序号单调闸**。
+
+`commitgate` 补的是另一个洞：`statemachine` 是纯谓词，只答「这次迁移合不合法」，
+不答「有没有人已经提交过了」；`SeqGate` 能排序记录，排不出「两条并发分支都以为自己
+赢了」。终态独占权单独一道闸，且 **Commit / Release 必须成对**。
+
+### 上下文是有限预算，不是无限历史
+
+三件套分工泾渭分明：**`budget`** 管输入侧分段计量与压实（只给总数无法区分
+「工具面膨胀」与「历史膨胀」，而两者处置完全不同）、**`offload`** 管二进制本体躺在
+消息里（两阶段：首次只标记不替换，否则模型会引用一个自己从没看过的东西）、
+**`spill`** 管输出侧截断与分页取回。
+
+### 失败是数据表，不是散落的 if
+
+`toolfail` 把「类别 → 可重试性 / 退避 / 需人工 / 重发安全 / 模型指引」做成数据表。
+其中**重发安全与重试价值是两个正交维度**——超时值得重试，但服务端可能已执行，
+原样重发就是重复施加副作用。不可归类一律不可重试（fail-closed）。
+
+### N 轮 ReAct 往返塌缩成 1 轮
+
+`ptc` 让模型写程序、进程内 goja VM 执行、程序内经 bindings 调宿主工具，
+只把归并后的小结果带回上下文：**原始数据不过模型面**。三重预算（墙钟 / 调用数 /
+字节数）替代 OS 沙盘，纯 Go 零 CGO，无 Node 分发面。
+
+### 工程底座
+
+| 指标 | 实测 |
+|---|---|
+| 生产代码 | 11,491 行 / 66 文件（不含 `_test.go`） |
+| 测试 | 84 个测试文件 |
+| 覆盖率 | **80.4%**（门槛 60%，真阈值不是摆设） |
+| 结构阈值 | `max_file_lines: 400`，`enforce: true` |
+| 门禁 | 7 条正则规则 + 2 条 `go/ast` 规则 + 22 包依赖方向 + README 包表一致性 |
+| 例外登记 | **0** |
 
 ## 头号红线：不得长出领域知识
 
@@ -169,15 +245,24 @@ goroutine 怎么起、回调怎么声明、errors 怎么包），没有一条查
 
 ## 快速开始
 
+**要接入本仓**：直接看 **[docs/USAGE.md](docs/USAGE.md)**，那是按「宿主接入顺序」
+组织的完整指南——九组能力逐个讲清「职责 → 最小集成片段 → 关键符号 → 坑」，
+末尾有一张按症状索引的坑速查表。
+
+**要改本仓**：
+
 ```bash
 make build          # 编译 archcheck
 make test           # 全量单测
-make check          # fmt + vet + test + cover-gate + architecture-check
+make check          # fmt + vet + lint + test + cover-gate + architecture-check + docsync + 仓库卫生
 make architecture-check --report   # 看全量违规清单（默认前 10 条）
 ```
 
 > macOS：本机 go build/test 一律带 `CGO_ENABLED=0`（新 SDK 27.0 与 CLT linker
 > 不兼容 + 许可未接受），Makefile 已内置。
+>
+> `make check` 需要 `golangci-lint`（CI 钉 v2.14.0）；未安装时该目标**明确报错退出**，
+> 不静默跳过——没人跑的门禁等于没有门禁。
 
 ## 本地多仓并行开发
 
@@ -217,22 +302,36 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 ## 宿主接入
 
-```go
-// go.mod：本仓自 v0.1.0 起已发布，零 replace，直接版本化引入
-require github.com/yi-nology/agent-harness v0.1.0
+```bash
+go get github.com/yi-nology/agent-harness@v0.2.0
 ```
 
 ```go
-import "github.com/yi-nology/agent-harness/protocol"
+require github.com/yi-nology/agent-harness v0.2.0   // 零 replace，直接版本化引入
+```
+
+> 升级前用 `git ls-remote --tags origin` 核候选版本真的存在——
+> `go list -m -versions` 报的是 proxy 的缓存目录，不是远端现实。
+> 当前已发布 tag 以远端为准（写稿时为 v0.2.0）。
+
+```go
+import "github.com/yi-nology/agent-harness/dispatch"
 
 // 派发守卫：宿主提供拓扑，harness 提供机制
 type myEdgeSource struct{ reg *myRegistry }
-func (s myEdgeSource) Slugs() []string              { return s.reg.Slugs() }
+
+func (s myEdgeSource) Slugs() []string                   { return s.reg.Slugs() }
 func (s myEdgeSource) DispatchAllow(slug string) []string { return s.reg.Allow(slug) }
 
-g := hdispatch.NewGuard(myEdgeSource{reg: reg}, maxDepth)
-if err := g.Assert(caller, callee, depth); err != nil { /* 结构化 *DenyError */ }
+g := dispatch.NewGuard(myEdgeSource{reg: reg}, maxDepth) // 矩阵含环会在构造期 panic
+if err := g.Assert(caller, callee, depth); err != nil { /* 结构化 *dispatch.DenyError */ }
 ```
+
+> ⚠️ 上面只是九组能力之一的片段。**完整接入路线图见 [docs/USAGE.md](docs/USAGE.md)**：
+> 契约面（`contract` + `statemachine`）、工具判定环（`tooldisclose` + `guardset` +
+> `toolfail`）、报告协议（`protocol`）、续跑契约（`checkpoint` + `commitgate`）、
+> 上下文三件套（`budget` + `spill` + `offload`）、实时事件、流式与退出、
+> 安全面（`netguard` + `pii`）、程序化编排（`ptc`）、门面三件。
 
 宿主侧的安全不变量（如「全拓扑只有一条边能到达执行器」）的**断言测试应留在宿主仓**——
 那是产品级承诺，不是内核机制属性。`dispatch/guard_test.go` 用合成拓扑测机制，
