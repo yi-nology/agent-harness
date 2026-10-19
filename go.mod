@@ -16,7 +16,7 @@ require (
 	github.com/dop251/goja v0.0.0-20261010130053-73dc7edc278f
 	github.com/oagentkit/agent v0.7.0
 	github.com/oagentkit/guardx v0.4.0
-	github.com/oagentkit/llm v0.8.0
+	github.com/oagentkit/llm v0.9.0
 	github.com/oagentkit/obs v0.5.0
 	github.com/oagentkit/runtime v0.6.0
 	github.com/oagentkit/textx v0.4.0

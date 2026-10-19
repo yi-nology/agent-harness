@@ -32,7 +32,7 @@
 package tools
 
 import (
-	_ "github.com/oagentkit/llm/llm"
+	_ "github.com/oagentkit/llm"
 	_ "github.com/oagentkit/obs/obsx"
 	_ "github.com/oagentkit/textx/textutil"
 	_ "github.com/oekit/core/version"
