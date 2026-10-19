@@ -303,7 +303,7 @@ func TestExposedMatchCarriesFullTool(t *testing.T) {
 	if len(ms) != 1 {
 		t.Fatalf("应恰有一项命中，实得 %v", names(ms))
 	}
-	if ms[0].Tool.Schema.IsDegenerate() {
+	if ms[0].Schema.IsDegenerate() {
 		t.Fatal("命中项应带完整 schema")
 	}
 	if !strings.Contains(ms[0].Description, "按标识查条目") {

@@ -161,7 +161,7 @@ func ReadPage(root, sessionID, name string, off int64, limit int) (Page, error) 
 	if err != nil {
 		return Page{}, errors.Wrap(err, "存档不存在或不可读")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil {
 		return Page{}, errors.Wrap(err, "存档状态读取失败")

@@ -101,14 +101,12 @@ func main() {
 	for _, ex := range pol.Exceptions {
 		exKey[fmt.Sprintf("%s|%s|%d", ex.Rule, ex.Path, ex.Line)] = ex
 	}
-	var stillBlocked []violation
 	for _, v := range all {
 		if _, ok := exKey[fmt.Sprintf("%s|%s|%d", v.rule, v.path, v.line)]; ok {
 			excused++
 			continue
 		}
 		if isBlocking(v) {
-			stillBlocked = append(stillBlocked, v)
 			blocking++
 		} else {
 			warnings++

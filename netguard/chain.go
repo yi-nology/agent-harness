@@ -80,7 +80,7 @@ func ResolveLocation(current, location string) (string, error) {
 	}
 	ref, err := url.Parse(location)
 	if err != nil {
-		return "", fmt.Errorf("Location 非法: %w", err)
+		return "", fmt.Errorf("跳转 Location 非法: %w", err)
 	}
 	return cur.ResolveReference(ref).String(), nil
 }

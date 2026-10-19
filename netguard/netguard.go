@@ -16,6 +16,22 @@
 // 名字层（见文件下半段）：IP 策略只能看见「解析出来的地址」，而解析本身就是攻击面。
 // 故在解析之前先按名字拒一遍——省一次解析，且判定不依赖 DNS 结果。
 //
+// # 与上游 urlguard 的分工（oekit/pkg v0.15.0 起有此包）
+//
+// IP 策略**继续单源 egress**，不因 urlguard 出现而改判：逐条比过两处清单，urlguard 的
+// blockedCIDRs 是向 egress 的 ipv4ExplicitBlocks **看齐的收敛版**（少了 240.0.0.0/4
+// 保留段），换过去是放松防线而不是收紧。
+//
+// 但**域名后缀层如今有两份**：本包是 .local/.localhost/.internal/.lan，urlguard 是
+// localhost/internal/local/localdomain——`.lan` 本包有它没有、`.localdomain` 它有
+// 本包没有。两份各自演化就是静默漂移，所以增删后缀前先比对上面两份：确属缺口就改
+// 本包这处名单，**不要把 urlguard 引进来当第二份权威**。
+//
+// urlguard 的 `DialFunc(next)` 恰好能闭合上面「已知局限」记的 rebinding 窗口（预检
+// 每个解析 IP + 建连后核对真实 RemoteAddr）。但它是 transport 包装，而本包是刻意的
+// 纯判定件、不发起任何 I/O——宿主在 DialContext 上接不接是**接线决策**，不是本包加一个
+// 函数的能事，故此处只记关系、不代做。
+//
 // # 本包不在工具调用的判定环上，这是有意的
 //
 // 本包判的是「这个 URL 能不能发出去」；工具调用的判定环（oagentkit/toolgate 的

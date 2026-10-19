@@ -304,13 +304,6 @@ var (
 // IsConfidenceValid 合议触发门用（scheduler 层过滤无效报告）。
 func IsConfidenceValid(c string) bool { return confidenceAll[c] }
 
-// decisionProse 散文判据：小写化后仍含 [a-z0-9_-] 之外字符（空格/中文/标点）即非枚举词。
-func decisionProse(s string) bool {
-	return strings.IndexFunc(s, func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '-'
-	}) >= 0
-}
-
 // rawRequiresApproval 从归一化前的 recommendation 原始 map 判定 requires_approval 真值
 // （bool / 字符串 "true" 双形态；结构缺失或不可判 → false）。decision 归一在字段游走期
 // 执行，map 迭代序不定，兄弟字段必须自带解析、不依赖先后的归一结果。
