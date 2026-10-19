@@ -18,15 +18,22 @@
 //
 // # 与上游 urlguard 的分工（oekit/pkg v0.15.0 起有此包）
 //
-// IP 策略**继续单源 egress**，不因 urlguard 出现而改判：逐条比过两处清单，urlguard 的
-// blockedCIDRs 是向 egress 的 ipv4ExplicitBlocks **看齐的收敛版**（少了 240.0.0.0/4
-// 保留段），换过去是放松防线而不是收紧。
+// IP 策略**继续单源 egress**，不因 urlguard 出现而改判。但要说清理由，因为两处
+// 清单**不是包含关系**——一度写成「urlguard 是 egress 的收敛版」是错的，已更正：
+// egress 靠 `netip` 谓词覆盖回环/私网/链路本地/组播/未指定，只把 CGNAT、
+// 192.0.0/24、三个 TEST-NET、198.18/15、240/4 写进显式表；urlguard 则整表列举，
+// 多出 **`0.0.0.0/8`**。
 //
-// 域名后缀层**曾有两份且互相漂移**（`.lan` 本包有它没有、`.localdomain` 它有本包没有），
-// 2026-10-19 已把 `.localdomain` 补进下方名单，使本包成为 urlguard 的严格超集——两份
-// 不再各说各话。此后增删后缀仍须先比对：urlguard 那边是收敛方向（不含 `.lan`，
-// 因为它是局域网约定域而非 RFC 保留段），本包这处是权威，**不要把 urlguard 引进来
-// 当第二份权威**。
+// 这不是「谁更全」的问题，而是 egress 有一处**实证缺口**：实测
+// `egress.CheckHostWith("0.1.2.3")` 放行、`urlguard` 拒绝。根因是
+// `netip.Addr.IsUnspecified()` 只认全零这一个地址，而 0.0.0.0/8 不在显式表里，
+// 于是 RFC 1122 的 "this network" 段除 0.0.0.0 外全部漏判——是可用的 SSRF 路径。
+// 已向 guardx 提 issue（修复在它那边，不在本仓私补一份网段表）。
+//
+// 域名后缀层曾有两份且互相漂移（`.lan` 本包有 urlguard 无、`.localdomain` urlguard
+// 有本包无），2026-10-19 已把 `.localdomain` 补进下方名单，使本包成为 urlguard 的
+// 严格超集。此后增删后缀仍须先比对：urlguard 那边不含 `.lan`（它是局域网约定域
+// 而非 RFC 保留段），本包这处是权威，**不要把 urlguard 引进来当第二份权威**。
 //
 // urlguard 的 `DialFunc(next)` 恰好能闭合上面「已知局限」记的 rebinding 窗口（预检
 // 每个解析 IP + 建连后核对真实 RemoteAddr）。但它是 transport 包装，而本包是刻意的
