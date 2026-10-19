@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/yi-nology/agent-harness/toolname"
 )
 
 func toolWith(name string, required []string, props ...string) Tool {
@@ -136,7 +137,7 @@ func TestSignatureOfOutputIsParsable(t *testing.T) {
 	body := got[open+1 : len(got)-1]
 	for _, part := range strings.Split(body, ",") {
 		part = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(part), "?"))
-		if !isJSIdent(part) {
+		if !toolname.IsJSIdent(part) {
 			t.Fatalf("派生出的形参 %q 不是合法标识符", part)
 		}
 	}

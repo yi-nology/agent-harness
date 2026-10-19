@@ -33,15 +33,21 @@
 //
 // 与 SeqGate 同一处陷阱：**落库失败时必须 Release**，否则该环节的闸被永久占住，
 // 这个环节从此再也无法提交终态——不是「多花一个序号」，是彻底卡死。
-// 正确顺序：
 //
-//	if err := g.Commit(c); err != nil {   // 抢终态独占权
+// 正确顺序（用 Acquire + ReleaseLease——凭唯一令牌释放，承诺无条件成立）：
+//
+//	lease, err := g.Acquire(c)              // 抢终态独占权
+//	if err != nil {
 //	    return err                          // 抢不到就别干后面的活
 //	}
 //	if err := store.Save(ctx, snap); err != nil {
-//	    g.Release(c.Ref)                    // 落库失败必须回滚
+//	    g.ReleaseLease(lease)               // 落库失败必须回滚
 //	    return err
 //	}
+//
+// 旧接口 Commit + Release(c Commit) 仍在，但它靠 (status, branch, seq) 认人，
+// 而那三元组不唯一（并行分支同名、重试同一份快照时逐字相同）——迟到/重复的
+// Release 会把别人的闸放掉。分支可能同名或会重试的场景请用上面的凭证路径。
 //
 // # 终态判定由宿主注入
 //
@@ -87,6 +93,22 @@ type record struct {
 	status string
 	branch string
 	seq    uint64
+	// token 本次占用的唯一令牌，由 Acquire 铸造。ReleaseLease 凭它精确释放。
+	//
+	// 为什么需要它：(status, branch, seq) 三元组**不是唯一的占用身份**——
+	// 并行分支常常同名（Branch 的注释自己写明是「分支名 / agent 名」），
+	// 重试同一份快照时三元组逐字相同。于是「本次 Release 是不是在放自己占的那一次」
+	// 用三元组判定**判不准**，迟到/重复的 Release 会把别人的闸放掉。
+	token uint64
+}
+
+// Lease 一次终态独占的凭证。
+//
+// 只有持有它的那次占用能被精确释放——这是「迟到的 Release 不得放掉后来者的闸」
+// 这条承诺唯一能兑现的方式。
+type Lease struct {
+	Ref   Ref
+	Token uint64
 }
 
 // Guard 终态独占提交闸。并发安全。
@@ -96,6 +118,8 @@ type Guard struct {
 	mu sync.Mutex
 	// done 已终态提交的环节。
 	done map[Ref]record
+	// tokenSeq 占用令牌的自增序列（单调，永不回卷）。
+	tokenSeq uint64
 	// isTerminal 由宿主注入的状态词表判定；nil 时按「全部都是终态」处理，
 	// 这是更保守的一侧（宁可多拦，不可在不知道词表时漏拦）。
 	isTerminal func(status string) bool
@@ -132,9 +156,33 @@ func (g *Guard) Seed(c Commit) {
 // 判为重复时返回 *AlreadyCommittedError，它带**先前是谁提交的**——
 // 「两个分支都以为自己赢了」之所以难查，正是因为日志里只有两次提交、
 // 没有「第二次本该被谁挡下」。
+//
+// # 与 Acquire 的取舍
+//
+// 本方法不返回占用凭证，因此**无法被精确释放**：调用方要交还闸，只能用
+// Release(c Commit)——而 Release 靠 (status, branch, seq) 认人，那三元组
+// **不唯一**（并行分支同名、重试同一份快照时逐字相同），于是迟到的 Release
+// 可能把别人的闸放掉。
+//
+// 需要「落库失败必须回滚」且分支可能同名/重试的场景，请用
+// Acquire + ReleaseLease（凭唯一令牌释放，承诺无条件成立）。
 func (g *Guard) Commit(c Commit) error {
+	_, err := g.Acquire(c)
+	return err
+}
+
+// Acquire 抢终态独占权并返回**占用凭证**。成功时持凭证者独占该环节；
+// 落库失败时用 ReleaseLease 精确交还——只有持有该凭证的那一次占用会被放掉，
+// 迟到的/重复的 ReleaseLease 对别人的闸无效。
+//
+// 这才兑现了包头承诺：「Release 只交还自己占的那一次，否则一次迟到的 Release
+// 会把后来者的独占权也一起放掉」。旧接口用 (status, branch, seq) 认人，
+// 而那三元组不唯一——同名并行分支、或重试同一份快照时，三元组逐字相同，
+// 于是输家的迟到 Release 会删掉赢家的记录，闸对下一次 Commit 敞开，
+// 同一环节的终态被提交两次（实测 8 路并发提交出现 4 个赢家）。
+func (g *Guard) Acquire(c Commit) (Lease, error) {
 	if c.Ref.RunID == "" || c.Ref.Step == "" {
-		return errors.Wrap(ErrEmptyRef, "提交缺环节引用", "run_id", c.Ref.RunID, "step", c.Ref.Step)
+		return Lease{}, errors.Wrap(ErrEmptyRef, "提交缺环节引用", "run_id", c.Ref.RunID, "step", c.Ref.Step)
 	}
 
 	g.mu.Lock()
@@ -145,10 +193,10 @@ func (g *Guard) Commit(c Commit) error {
 	// 每次提交都走「非终态直接放行」分支，本包形同不存在。
 	terminal := g.isTerminal == nil || g.isTerminal(c.Status)
 	if !terminal {
-		return nil
+		return Lease{}, nil
 	}
 	if prev, ok := g.done[c.Ref]; ok {
-		return &AlreadyCommittedError{
+		return Lease{}, &AlreadyCommittedError{
 			Ref:       c.Ref,
 			Prev:      prev,
 			PrevSeq:   prev.seq,
@@ -158,8 +206,14 @@ func (g *Guard) Commit(c Commit) error {
 			NewBranch: c.Branch,
 		}
 	}
-	g.done[c.Ref] = record{status: c.Status, branch: c.Branch, seq: c.Seq}
-	return nil
+	g.tokenSeq++
+	g.done[c.Ref] = record{
+		status: c.Status,
+		branch: c.Branch,
+		seq:    c.Seq,
+		token:  g.tokenSeq,
+	}
+	return Lease{Ref: c.Ref, Token: g.tokenSeq}, nil
 }
 
 // AlreadyCommittedError 终态重复提交。带先前提交者与先前状态。
@@ -185,8 +239,39 @@ func (e *AlreadyCommittedError) Unwrap() error { return ErrAlreadyCommitted }
 
 // Release 交还终态独占权。**落库失败时必须调用**，否则该环节的闸被永久占住。
 //
-// 只在「本次 Commit 确实占住了闸且尚未被他人占据」时交还；已被别人占用时
-// 不动——否则一次迟到的 Release 会把后来者的独占权也一起放掉。
+// # 这个接口认不出「自己占的那一次」
+//
+// 它靠 (status, branch, seq) 三元组比对——而那三元组**不唯一**：
+//
+//   - Branch 的注释自己写明是「分支名 / agent 名」，并行分支常常同名；
+//   - 「落库失败 → Release → 重试同一份快照」这条推荐路径里，重试的三元组
+//     与上一轮**逐字相同**。
+//
+// 于是两种真实的偷放都会发生：
+//
+//   - **输家的迟到 Release**：同名分支的第二次提交被拒后走错误处理调 Release，
+//     三元组与赢家相同 → 把**赢家的闸删掉**；
+//   - **ABA**：同三元组被重新占用后，上一轮迟到的 Release 放掉新持有者的闸。
+//
+// 实测 8 路同名并发提交出现 4 个赢家——本包存在的理由（防「两条并行分支都赢了」）
+// 被绕过，且失效是静默的：Commit 返回 nil，宿主无从察觉。
+//
+// 故本接口只释放「三元组逐字相同」的占用，且**状态也要相同**——
+// 这比旧实现严格（旧的只比 branch 与 seq），能挡住「不同状态的输家偷放」。
+// 但它挡不住「三元组完全相同」的两次占用：那种情形调用方**根本无法区分**。
+//
+// # 正确做法
+//
+// 用 Acquire + ReleaseLease 凭唯一令牌释放，那条路径的承诺无条件成立：
+//
+//	lease, err := g.Acquire(c)
+//	if err != nil {
+//	    return err
+//	}
+//	if err := store.Save(ctx, snap); err != nil {
+//	    g.ReleaseLease(lease) // 只有这一次占用会被放掉
+//	    return err
+//	}
 func (g *Guard) Release(c Commit) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -194,11 +279,34 @@ func (g *Guard) Release(c Commit) {
 	if !ok {
 		return
 	}
-	// 只交还自己占的那一次：分支与序号都对得上才算。
-	if prev.branch != c.Branch || prev.seq != c.Seq {
+	// 只交还自己占的那一次：状态、分支与序号都对得上才算。
+	if prev.status != c.Status || prev.branch != c.Branch || prev.seq != c.Seq {
 		return
 	}
 	delete(g.done, c.Ref)
+}
+
+// ReleaseLease 交还终态独占权，**凭占用凭证精确释放**。
+//
+// 只有令牌对得上才会放掉闸：迟到的、重复的、别人的 ReleaseLease 一律无效。
+// 这是「一次迟到的 Release 不得把后来者的独占权一起放掉」唯一能兑现的形式。
+//
+// 凭证对不上时静默返回——与 Release 同口径（交还闸不是错误路径，
+// 闸被回灌/已释放时都属正常）。
+func (g *Guard) ReleaseLease(l Lease) {
+	if l.Token == 0 {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	prev, ok := g.done[l.Ref]
+	if !ok {
+		return
+	}
+	if prev.token != l.Token {
+		return // 不是这次占用：不动后来者的闸
+	}
+	delete(g.done, l.Ref)
 }
 
 // Status 查该环节当前已提交的终态。第二个返回值为是否已提交。

@@ -9,12 +9,12 @@ package ptc
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/dop251/goja"
 	"github.com/oagentkit/toolgate/invoke"
 	"github.com/oekit/pkg/errors"
+	"github.com/yi-nology/agent-harness/toolname"
 )
 
 // mountBindings 把全部绑定挂到 vm 的 host 对象上，并挂程序内发现入口。
@@ -92,7 +92,7 @@ func mountBindings(
 		// 撞名已在装配期由 findBindingCollision 拒掉，这里不可能再撞——
 		// 但仍不丢弃 Set 的错误：goja 的 Set 在只读属性等情形下会返回 error，
 		// `_ =` 扔掉它就等于让「绑定没挂上」这件事没有任何信号。
-		name := jsIdent(b.Name)
+		name := toolname.Normalize(b.Name)
 		if name == "" {
 			continue
 		}
@@ -130,7 +130,7 @@ func mountBindings(
 func findBindingCollision(bindings []Binding) (ident, first, dup string, ok bool) {
 	seen := make(map[string]string, len(bindings))
 	for _, b := range bindings {
-		id := jsIdent(b.Name)
+		id := toolname.Normalize(b.Name)
 		if id == "" {
 			continue
 		}
@@ -140,29 +140,6 @@ func findBindingCollision(bindings []Binding) (ident, first, dup string, ok bool
 		seen[id] = b.Name
 	}
 	return "", "", "", false
-}
-
-func jsIdent(name string) string {
-	var b strings.Builder
-	started := false
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '_', r == '$':
-			b.WriteRune(r)
-			started = true
-		case r >= '0' && r <= '9':
-			if !started {
-				b.WriteByte('_')
-			}
-			b.WriteRune(r)
-			started = true
-		default:
-			if started {
-				b.WriteByte('_')
-			}
-		}
-	}
-	return b.String()
 }
 
 // CallRecord 的 Status 取值。

@@ -2,9 +2,10 @@ package ptc
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // errHeavy 供「报错但带大载荷」的工具返回。

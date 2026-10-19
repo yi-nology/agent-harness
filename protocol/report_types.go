@@ -184,9 +184,25 @@ func (v *Verdicts) UnmarshalJSON(data []byte) error {
 	}
 	out := make(Verdicts, 0, len(raw))
 	for _, it := range raw {
-		if it.Agent == "" || !stanceAll[it.Stance] {
+		if it.Agent == "" {
 			continue
 		}
+		// stance 归一：大小写与空白收敛到白名单形态。
+		//
+		// 旧实现用 `!stanceAll[it.Stance]` 精确匹配，于是模型写 "Adopt" / "ADOPT"
+		// 时条目被**静默丢弃**——裁决确实产生了（模型写了 agent、stance、reason），
+		// 系统却当它没写过。合议记录少一条，而**没有任何信号**（不是 warn、不是
+		// 报错，是看不见的丢）。
+		//
+		// 静默丢比整份拒更贵：整份拒至少留痕（宿主降级读 markdown 主体），
+		// 而这里连留痕都没有——事后无法区分「模型没给裁决」与「裁决被大小写吃掉」。
+		// 与同包的 decision / action / confidence 归一是同一类错（写法差异不该
+		// 改变语义），那里已各修过一次。
+		st := strings.ToLower(strings.TrimSpace(it.Stance))
+		if !stanceAll[st] {
+			continue
+		}
+		it.Stance = st
 		out = append(out, it)
 	}
 	*v = out

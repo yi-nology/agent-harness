@@ -150,21 +150,6 @@ func TestRunBindingArgsAndNames(t *testing.T) {
 	}
 }
 
-func TestJsIdent(t *testing.T) {
-	cases := map[string]string{
-		"read_spill":     "read_spill",
-		"get-logs.host1": "get_logs_host1",
-		"9lives":         "_9lives",
-		"-x-":            "x_",
-		"":               "",
-	}
-	for in, want := range cases {
-		if got := jsIdent(in); got != want {
-			t.Fatalf("jsIdent(%q)=%q want %q", in, got, want)
-		}
-	}
-}
-
 // ── P2（批三百零七）─────────────────────────────────────────────────────────
 
 // 阻塞绑定被墙钟断掉：模拟变更类工具审批等待（<-ctx.Done() 永不返回的绑定）——

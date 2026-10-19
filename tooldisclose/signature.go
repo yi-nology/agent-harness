@@ -39,6 +39,7 @@ import (
 	"strings"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/yi-nology/agent-harness/toolname"
 )
 
 // ErrSchemaNotDerivable 该工具的 schema 派不出合法的调用形态。errors.Is 判定。
@@ -48,10 +49,35 @@ var ErrSchemaNotDerivable = errors.New("工具 schema 派不出合法的位置�
 //
 // 返回的字符串直接可作为 ptc.Binding.Signature 使用；两者由本函数保证同一口径，
 // 不需要调用方再对一次。
+//
+// # 函数名是**净化后**的名字，不是目录里的原名
+//
+// 程序里真正挂上去的是净化后的名字：ptc 把绑定挂在 `host.<净化名>` 上，
+// 而净化规则（`toolname.Normalize`）会改掉名字的形状——`get-logs` 挂上去
+// 叫 `host.get_logs`。所以形态串里的函数名也必须是净化后的那个。
+//
+// 旧实现照抄目录里的原名，于是对任何名字带非法字符的工具（`get-logs`、
+// `restart-service` 这类带横线的名字极常见）派出的形态**在 ptc 侧必被拒**：
+// ptc 校验「形态里的函数名 == 净化后的绑定名」，而这里是原名。
+//
+// 而本函数的文档却写着「直接可用、不需要调用方再对一次」——**文档与代码
+// 自相矛盾**，症状是「工具明明在目录里，程序就是调不通」，排查时极容易
+// 先怀疑模型。同一份文档的上一版甚至把这条矛盾**用测试钉住了**（钉的是
+// 「会被拒」），于是两边的错一起被固化成了「预期行为」。
+//
+// 现在两侧共用同一条规则（`toolname` 包），派生态与消费端**不可能**再漂移。
 func SignatureOf(t Tool) (string, error) {
 	name := t.Name
 	if name == "" {
 		return "", errors.Wrap(ErrSchemaNotDerivable, "工具名为空")
+	}
+	// 函数名必须是净化后的合法标识符：它是模型在程序里实际调用的那个名字。
+	// 净化不出合法标识符（全非法字符）时报错而不是产出一个空壳形态——
+	// 空壳会让程序里 `host.<空名>` 根本不存在，症状是「调用了一个不存在
+	// 的函数」，远不如「这个名字用不了」直观。
+	ident := toolname.Normalize(name)
+	if ident == "" {
+		return "", errors.Wrap(ErrSchemaNotDerivable, "工具名规整不出合法标识符", "tool", name)
 	}
 	// 退化占位：schema 尚未取回。此时派生空签名会让程序照跑、宿主收不到任何参数，
 	// 表现为「工具调了但什么都没传」——比当场报错难查得多。
@@ -75,7 +101,7 @@ func SignatureOf(t Tool) (string, error) {
 			return "", errors.Wrap(ErrSchemaNotDerivable,
 				"Required 点名的参数不在 Properties 里（schema 不自洽）", "tool", name, "param", p)
 		}
-		if !isJSIdent(p) {
+		if !toolname.IsJSIdent(p) {
 			return "", errors.Wrap(ErrSchemaNotDerivable,
 				"参数名不是合法 JS 标识符，无法作为位置形参（改名会改掉 JSON 键名）",
 				"tool", name, "param", p)
@@ -88,7 +114,7 @@ func SignatureOf(t Tool) (string, error) {
 		if seen[p] {
 			continue
 		}
-		if !isJSIdent(p) {
+		if !toolname.IsJSIdent(p) {
 			return "", errors.Wrap(ErrSchemaNotDerivable,
 				"参数名不是合法 JS 标识符，无法作为位置形参（改名会改掉 JSON 键名）",
 				"tool", name, "param", p)
@@ -104,25 +130,5 @@ func SignatureOf(t Tool) (string, error) {
 	for _, p := range optional {
 		parts = append(parts, p+"?")
 	}
-	return name + "(" + strings.Join(parts, ", ") + ")", nil
-}
-
-// isJSIdent 判定能否作为 JS 标识符。规则与 ptc 侧一致（那里是拒绝方，这里是拒绝方
-// 先行的一道）——两处口径若不一致，会出现「这里派生得出、那边解析不了」的夹缝。
-func isJSIdent(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '_', r == '$':
-		case r >= '0' && r <= '9':
-			if i == 0 {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
+	return ident + "(" + strings.Join(parts, ", ") + ")", nil
 }

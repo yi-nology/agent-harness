@@ -189,67 +189,14 @@ func normalizeReportMap(m map[string]any) {
 			normalizeRiskTier(m, k, v)
 		case "evidence":
 			normalizeEvidenceTools(m, k, v)
+		case "action":
+			normalizeAction(m, k, v)
+		case "confidence":
+			normalizeConfidence(m, k, v)
 		}
 	}
 	normalizeNeedsFollowupScalar(m)
 	fixRecommendationContradiction(m)
-}
-
-// normalizeNeedsFollowupScalar needs_followup 标量形态是布尔（无目标语义）→
-// 空数组（jsonrepair ListKeys 通道产出 ["true"]/["false"] 单元素，在此收敛）。
-func normalizeNeedsFollowupScalar(m map[string]any) {
-	if arr, ok := m["needs_followup"].([]any); ok && len(arr) == 1 {
-		if s, isStr := arr[0].(string); isStr && (s == "true" || s == "false") {
-			m["needs_followup"] = []any{}
-		}
-	}
-}
-
-// normalizeDecision decision 归一：字符串 → 小写化；白名单（pending_approval/approved/
-// rejected）保留；**其余任意值一律归空串（无决策）**。对象/数组形态（模型自造结构）→
-// 删除键。2026-09-25 两轮 215 实弹（target_scope_mismatch_no_action/redirect）证明
-// 逐词收录同义族是打地鼠——真模型持续自造诚实信号词（目标不匹配/转出/无判读对象…），
-// 每个漏网词都让整份专项报告被拦、巡检聚合缺域。decision 本无治理语义（真正闸门在
-// action+requires_approval，09-10 已裁定），未知值收敛为无决策零成本；Validate 的
-// 白名单检查保留作直构报告后备防线。
-func normalizeDecision(m map[string]any, k string, v any) {
-	switch v.(type) {
-	case map[string]any, []any:
-		delete(m, k)
-	default:
-		if s, ok := jsonrepair.CoerceString(v); ok {
-			sd := strings.ToLower(strings.TrimSpace(s))
-			switch {
-			case decisionAll[sd]:
-				m[k] = sd
-			case sd == "pending": // 常见缩写（实弹：模型输出 "pending"）→ 规范枚举
-				m[k] = DecisionPending
-			default:
-				// 同义"无决策"词（hold/info/platform_mismatch…）与散文化表述、未知枚举形
-				// ASCII 词同待遇：一律无决策（历史词族清单见 2026-09-09/10 实弹记录）。
-				m[k] = ""
-			}
-			// 实弹 2026-09-10（macOS 只读检查）：模型把 pending_approval 当"待处理"用，
-			// 而报告无审批语义（requires_approval 缺失）→ 撞 Validate 一致性红线，
-			// 整份诚实的检查报告被拦。decision 本无治理语义（真正闸门在
-			// action+requires_approval）：pending_approval 而无 requires_approval
-			// 真值时归一为无决策，与自造枚举同待遇。Validate 的红线检查保留作
-			// 直构报告的后备防线。
-			if m[k] == DecisionPending && !rawRequiresApproval(m["recommendation"]) {
-				m[k] = ""
-			}
-		}
-	}
-}
-
-// normalizeScope scope 只认 in|out：枚举保留；其余任意形态（主机名/对象/数组）→ in
-// （模型给出了检测对象）。
-func normalizeScope(m map[string]any, k string, v any) {
-	if s, ok := v.(string); ok && (s == "in" || s == "out") {
-		m[k] = s
-	} else {
-		m[k] = "in"
-	}
 }
 
 // normalizeCharts charts 非数组形态：单对象 → 包一层数组；字符串/数字等无结构数据 →
@@ -322,11 +269,17 @@ func normalizeEvidenceTools(m map[string]any, k string, v any) {
 // requires_approval=true（实弹审计 Critical）：只改 action 不改审批位时，approval=false
 // 的报告被 Validate 判「可执行但未要求审批」直接整份拒掉（"必拒"而非注释宣称的
 // "走审批"），而 approval=true 的查看类步骤会被提审。
+//
+// 触发条件是「action 不是执行类动作」：**缺失 / 空串 / none** 三者同待遇。
+// 旧实现只认 `a == "none"` 精确比较，于是 action 写成 " "（归一后为空串）这类
+// 形态不触发修复——步骤在、审批位没置上，正是这条特判要杜绝的那件事。
 func fixRecommendationContradiction(sub map[string]any) {
 	if _, hasSteps := sub["steps"]; hasSteps {
 		if arr, isArr := sub["steps"].([]any); isArr && len(arr) > 0 {
-			if a, hasAction := sub["action"]; !hasAction || a == "none" {
-				sub["action"] = "tune"
+			a, hasAction := sub["action"]
+			asStr, isStr := a.(string)
+			if !hasAction || !isStr || asStr == "" || asStr == ActionNone {
+				sub["action"] = ActionTune
 				sub["requires_approval"] = true
 			}
 		}

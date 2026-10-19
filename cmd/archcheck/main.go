@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -74,6 +75,10 @@ func main() {
 		all = append(all, vs...)
 	}
 
+	// policy 自校验：门禁自己也得能被检查（规则没有执行体、id 重复、
+	// 阈值判定面漏包、例外指向不存在的规则……）。详见 selfcheck.go。
+	all = append(all, selfCheckViolations(root, pol)...)
+
 	// severity 分流：error 违规阻断，warn 仅报告。
 	sevOf := map[string]string{}
 	for _, r := range pol.Rules {
@@ -93,18 +98,35 @@ func main() {
 	if pol.DepDir.on() {
 		sevOf[depRuleID] = sevOrError(pol.DepDir.Severity)
 	}
+	// 自校验恒为 error：policy 结构有问题时，门禁必须响亮失败，
+	// 而不是「其他规则都绿就当通过」——那正是它要防的那种静默失效。
+	sevOf[selfCheckRuleID] = "error"
 	isBlocking := func(v violation) bool { return sevOf[v.rule] != "warn" }
 
 	var blocking, warnings, excused int
 	// exceptions 精确豁免：rule + path + line 三元组命中即放行（不做前缀模糊豁免）。
+	//
+	// **已到期的例外不再豁免**：policy 要求的 `until` 字段到此才真正生效。
+	// 旧实现解析了 until 就再没人看过它，于是「写个日期」这个动作没有任何
+	// 约束力——一条该在 2026 年清偿的债可以无限期豁免下去（详见 selfcheck.go）。
+	now := time.Now()
 	exKey := map[string]policyException{}
+	var expired []string
 	for _, ex := range pol.Exceptions {
-		exKey[fmt.Sprintf("%s|%s|%d", ex.Rule, ex.Path, ex.Line)] = ex
+		key := fmt.Sprintf("%s|%s|%d", ex.Rule, ex.Path, ex.Line)
+		exKey[key] = ex
+		if ok, why := exceptionExpiry(ex, now); ok {
+			expired = append(expired, fmt.Sprintf("%s:%d [%s] %s —— %s",
+				ex.Path, ex.Line, ex.Rule, ex.Violation, why))
+		}
 	}
 	for _, v := range all {
-		if _, ok := exKey[fmt.Sprintf("%s|%s|%d", v.rule, v.path, v.line)]; ok {
-			excused++
-			continue
+		if ex, ok := exKey[fmt.Sprintf("%s|%s|%d", v.rule, v.path, v.line)]; ok {
+			if isExpired, _ := exceptionExpiry(ex, now); !isExpired {
+				excused++
+				continue
+			}
+			// 已过期：不再豁免，该违规照常计入阻断集（债到期即重新欠账）。
 		}
 		if isBlocking(v) {
 			blocking++
@@ -116,6 +138,8 @@ func main() {
 	if len(all) > 0 {
 		if blocking > 0 {
 			fmt.Fprintf(os.Stderr, "架构门禁失败：%d 处阻断级违反", blocking)
+		} else if warnings == 0 && excused > 0 {
+			fmt.Fprintf(os.Stderr, "架构门禁：%d 处命中已登记例外，无未豁免的违反", excused)
 		} else {
 			fmt.Fprintf(os.Stderr, "架构门禁：%d 处告警级（不阻断）", warnings)
 		}
@@ -128,8 +152,10 @@ func main() {
 		fmt.Fprintln(os.Stderr)
 		byRule := map[string][]violation{}
 		for _, v := range all {
-			if _, ok := exKey[fmt.Sprintf("%s|%s|%d", v.rule, v.path, v.line)]; ok {
-				continue
+			if ex, ok := exKey[fmt.Sprintf("%s|%s|%d", v.rule, v.path, v.line)]; ok {
+				if isExpired, _ := exceptionExpiry(ex, now); !isExpired {
+					continue
+				}
 			}
 			byRule[v.rule] = append(byRule[v.rule], v)
 		}
@@ -157,6 +183,10 @@ func main() {
 		// 依赖方向同理：规则来自 modules 段的 requires 矩阵，不在 rules 段里。
 		printRuleViolations(depRuleID, sevOf[depRuleID],
 			depDirDesc(pol.DepDir), byRule[depRuleID], report)
+		// policy 自校验：门禁自身的问题单独回显（否则会被当成某条业务规则的现象）。
+		printRuleViolations(selfCheckRuleID, sevOf[selfCheckRuleID],
+			"policy 自身一致性：规则须有执行体、id 唯一、阈值判定面须覆盖全部登记包、例外须写 until 与拆除条件",
+			byRule[selfCheckRuleID], report)
 		// 已登记例外回显：债是显式的，不静默。
 		var shown int
 		for _, ex := range pol.Exceptions {
@@ -170,6 +200,13 @@ func main() {
 			shown++
 		}
 		if shown > 0 {
+			fmt.Fprintln(os.Stderr)
+		}
+		// 已到期例外：明确回显「它不再豁免」，不静默失效。
+		for _, e := range expired {
+			fmt.Fprintf(os.Stderr, "\n  ⚠ 例外已到期，不再豁免：%s", e)
+		}
+		if len(expired) > 0 {
 			fmt.Fprintln(os.Stderr)
 		}
 		if blocking > 0 {

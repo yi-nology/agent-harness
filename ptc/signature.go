@@ -27,6 +27,7 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/oekit/pkg/errors"
+	"github.com/yi-nology/agent-harness/toolname"
 )
 
 // ErrInvalidSignature 形态串非法（装配期缺陷，非程序问题）。
@@ -57,7 +58,7 @@ func parseSignature(sig string) (parsedSignature, error) {
 		return parsedSignature{}, errors.Wrap(ErrInvalidSignature, "调用形态应为 name(a, b) 形态", "sig", sig)
 	}
 	ps := parsedSignature{name: strings.TrimSpace(s[:open])}
-	if !isJSIdent(ps.name) {
+	if !toolname.IsJSIdent(ps.name) {
 		return parsedSignature{}, errors.Wrap(ErrInvalidSignature, "函数名不是合法 JS 标识符", "sig", sig)
 	}
 	inner := strings.TrimSpace(s[open+1 : len(s)-1])
@@ -70,7 +71,7 @@ func parseSignature(sig string) (parsedSignature, error) {
 		if optional {
 			p = strings.TrimSpace(strings.TrimSuffix(p, "?"))
 		}
-		if !isJSIdent(p) {
+		if !toolname.IsJSIdent(p) {
 			return parsedSignature{}, errors.Wrap(ErrInvalidSignature, "形参名不是合法 JS 标识符", "param", p)
 		}
 		for _, seen := range ps.params {
@@ -104,28 +105,10 @@ func parseSignature(sig string) (parsedSignature, error) {
 	return ps, nil
 }
 
-func isJSIdent(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '_', r == '$':
-		case r >= '0' && r <= '9':
-			if i == 0 {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 // wrapperSource 生成形参打包 + 元数校验的包装函数。
 //
 // 用「编译一小段常量形状的 JS 再执行」的方式，而不是把生成文本拼进主程序：
-// 参数名来自宿主但已过 isJSIdent，且**从不**与被编译的主程序源码拼接——
+// 参数名来自宿主但已过 toolname.IsJSIdent，且**从不**与被编译的主程序源码拼接——
 // 这里唯一被编译的是本包自己拼出的固定形状。
 //
 // 元数校验放在 JS 侧：报错直接指向形参名与实参个数；交给宿主的话，宿主看到的是
@@ -171,7 +154,7 @@ func wrapperSource(ps parsedSignature) string {
 
 // compileWrapper 编译并执行包装函数，返回挂到 host 上的 JS 函数值。
 //
-// 编译的源码只由本包生成（形参名已过 isJSIdent），宿主文本不参与拼接。
+// 编译的源码只由本包生成（形参名已过 toolname.IsJSIdent），宿主文本不参与拼接。
 func compileWrapper(vm *goja.Runtime, src string, raw goja.Value, name string, lo, hi int) (goja.Value, error) {
 	fn, err := goja.Compile("", src, false)
 	if err != nil {

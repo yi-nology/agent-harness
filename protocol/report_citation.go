@@ -13,6 +13,20 @@ import (
 // AssignEvidenceIDs 为报告内缺编号的证据确定性挂号：`<AgentName>#E<序号>`。
 // AgentName 为空（引擎合成报告）时退化 `report#E<n>`。已有编号不覆盖——LLM 自报编号
 // 与引擎挂号同规则时天然一致；聚合/合并只追加不重排，编号全程稳定。
+//
+// # 自动挂号必须避开已被占用的编号
+//
+// 旧实现用「数组下标 + 1」当编号，于是撞号是必然的：
+//
+//	evidence[0] 无编号          → 自动编成 "probe#E1"
+//	evidence[1] 模型自报 "probe#E1"（非空，不覆盖）
+//
+// 结果两条证据同号。而同号让「引用证据说理」**失去指向**：verdict 引用
+// "probe#E1" 时，消费方无从知道说的是哪一条；CheckEvidenceRefs 看到该编号
+// 存在，也就不会报缺失——**歧义是静默的**，比缺失更难查。
+//
+// 故挂号前先收齐已被占用的编号（模型自报的一律优先，不覆盖），自动编号从
+// 第一个未被占用的序号起取。
 func AssignEvidenceIDs(r *Report) {
 	if r == nil {
 		return
@@ -21,11 +35,27 @@ func AssignEvidenceIDs(r *Report) {
 	if owner == "" {
 		owner = "report"
 	}
+	used := make(map[string]bool, len(r.Evidence))
+	for i := range r.Evidence {
+		if id := strings.TrimSpace(r.Evidence[i].ID); id != "" {
+			used[id] = true
+		}
+	}
+	next := 1
 	for i := range r.Evidence {
 		if strings.TrimSpace(r.Evidence[i].ID) != "" {
 			continue
 		}
-		r.Evidence[i].ID = fmt.Sprintf("%s#E%d", owner, i+1)
+		for {
+			candidate := fmt.Sprintf("%s#E%d", owner, next)
+			next++
+			if used[candidate] {
+				continue
+			}
+			used[candidate] = true
+			r.Evidence[i].ID = candidate
+			break
+		}
 	}
 }
 

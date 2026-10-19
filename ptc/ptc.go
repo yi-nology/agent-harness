@@ -45,6 +45,7 @@ import (
 	"github.com/oagentkit/toolgate/invoke"
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
+	"github.com/yi-nology/agent-harness/toolname"
 )
 
 // 三预算缺省（conf ptc.* 覆盖；run_program 构造时注入）。
@@ -162,12 +163,12 @@ type Result struct {
 	stageErr error
 }
 
-// findBindingCollision 找绑定面的标识符冲突：工具名经 jsIdent 净化后可能撞名。
+// findBindingCollision 找绑定面的标识符冲突：工具名经 toolname.Normalize 净化后可能撞名。
 //
 // # 为什么必须撞名即拒，而不是「后绑覆盖前绑」
 //
-// jsIdent 把 `-` `.` 等非标识符字符一律映射成 `_`，于是 `get-logs` 与 `get_logs`
-// 净化后同为 `get_logs`。若放任覆盖，程序里 `host.get_logs()` 拿到的是**另一个工具**：
+// 工具名经 toolname.Normalize 净化（`-` `.` 等非标识符字符一律映射成 `_`），
+// 于是 `get-logs` 与 `get_logs` 净化后同为 `get_logs`。若放任覆盖，程序里 `host.get_logs()` 拿到的是**另一个工具**：
 // 不是「那个工具调不到」，是**顶替**——模型以为调了 A，实际执行的是 B 的副作用，
 // 无报错、无日志、CallLog 里还照常记着 B 的账。
 //
@@ -234,7 +235,7 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 		// 形态里的函数名必须等于绑定名净化后的标识符。不一致就静默取其中一个的话，
 		// 宿主改了形态却没改绑定名（或反之）时，模型调用的名字和实际挂载的名字会
 		// 对不上，而两侧都不报错——「怎么调都不对」是最难查的一类故障。
-		if id := jsIdent(b.Name); ps.name != id {
+		if id := toolname.Normalize(b.Name); ps.name != id {
 			res.Error = fmt.Sprintf("绑定 %q 的调用形态函数名 %q 与其在 host 下的名字 %q 不一致",
 				b.Name, ps.name, id)
 			res.ErrorKind = "binding_signature"
@@ -373,6 +374,3 @@ func normalizeValue(v goja.Value) any {
 	}
 	return v.Export()
 }
-
-// jsIdent 工具名→合法 JS 标识符（宿主对象方法名）：非法字符归 _，前导非法字符跳过
-// （-x-→x_），数字开头补 _（9lives→_9lives）；首字符未起前不写 _（防 -x-→_x_）。

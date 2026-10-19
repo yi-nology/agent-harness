@@ -76,11 +76,20 @@ func TestDerivedSignatureRunsInPTC(t *testing.T) {
 	}
 }
 
-// TestDerivedSignatureMatchesBoundName 派生出的函数名必须与绑定名一致。
+// TestDerivedSignatureIsAccepted 派生出的形态必须**被 ptc 接受**。
 //
-// 两处任一不一致都会在装配期被拒——但那条错误指向「调用形态」，而真正的病因是
-// 工具名里的非法字符在净化后变了形状。钉这条能让人一眼看出是哪边的问题。
-func TestDerivedSignatureMatchesBoundName(t *testing.T) {
+// # 这条曾经钉住的是错的行为
+//
+// 旧实现里 tooldisclose.SignatureOf 照抄目录里的原名，而 ptc 挂载的是净化后的
+// 名字，于是「派生 → 装配」对任何名字带非法字符的工具（`get-logs` 这类带横线
+// 的名字极常见）**必被拒**。而 tooldisclose 的文档写着「返回的字符串直接可作为
+// ptc.Binding.Signature 使用，不需要调用方再对一次」——文档与代码自相矛盾。
+//
+// 旧版用例把「会被拒」当成了预期行为（`TestDerivedSignatureMatchesBoundName`），
+// 于是**两边的错一起被固化成「预期」**：一边说直接可用，一边测它被拒。
+//
+// 现在两侧共用同一条规则（toolname 包），派生态与消费端不可能再漂移。
+func TestDerivedSignatureIsAccepted(t *testing.T) {
 	tl := tooldisclose.Tool{
 		Name:   "get-logs",
 		Schema: tooldisclose.Schema{Type: "object", Required: []string{"h"}, Properties: map[string]tooldisclose.Param{"h": {}}},
@@ -89,12 +98,39 @@ func TestDerivedSignatureMatchesBoundName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := ptc.Run(context.Background(), `return 1`, []ptc.Binding{{
+	// 形态里的函数名必须是净化后的那个（程序里挂的就是它）。
+	if sig != "get_logs(h)" {
+		t.Fatalf("派生形态的函数名应为净化后的名字，实得 %q", sig)
+	}
+
+	var got string
+	r := ptc.Run(context.Background(), `return host.get_logs("h1")`, []ptc.Binding{{
 		Name: tl.Name, Signature: sig,
+		Call: func(_ context.Context, argsJSON string) (string, error) {
+			got = argsJSON
+			return "x", nil
+		},
+	}}, ptc.Options{})
+	if !r.OK {
+		t.Fatalf("派生形态应被 ptc 接受，实得 kind=%q err=%q", r.ErrorKind, r.Error)
+	}
+	if got != `{"h":"h1"}` {
+		t.Fatalf("形参应按位置打包成 JSON，实得 %q", got)
+	}
+}
+
+// TestMismatchedSignatureRejected 真正对不上的形态仍必须被拒。
+//
+// 派生路径修好后，装配期这道校验**不能跟着失效**——它拦的是宿主手写形态时
+// 把函数名写错（挂上去的名字与形态里的名字不是同一个），那会让模型照着形态
+// 调用一个不存在的函数。
+func TestMismatchedSignatureRejected(t *testing.T) {
+	r := ptc.Run(context.Background(), `return 1`, []ptc.Binding{{
+		Name: "get_logs", Signature: "other_name(h)",
 		Call: func(context.Context, string) (string, error) { return "x", nil },
 	}}, ptc.Options{})
 	if r.OK || r.ErrorKind != "binding_signature" {
-		t.Fatalf("派生态函数名与净化后的绑定名不一致时应被拒，实得 OK=%v kind=%q", r.OK, r.ErrorKind)
+		t.Fatalf("函数名与绑定名不一致的形态必须被拒，实得 OK=%v kind=%q", r.OK, r.ErrorKind)
 	}
 }
 

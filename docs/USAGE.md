@@ -410,7 +410,7 @@ func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
 | `NewGate` / `Gate.Check` | 三种结局见上表 |
 | `Retryable` / `Guidance` | `func Retryable(err error) bool` / `func Guidance(err error) string` |
 | `Stage` / `StageName` | `func Stage(cat *Catalog) invoke.Stage` / `const StageName = "tool_disclosure"` |
-| `SignatureOf` / `ErrSchemaNotDerivable` | 从 schema 派生调用形态，如 `get_logs(host, count?)` |
+| `SignatureOf` / `ErrSchemaNotDerivable` | 从 schema 派生调用形态，如 `get_logs(host, count?)`（函数名是**净化后**的，见下） |
 | `guardset.New` / `Set.Evaluate` / `Outcome.Guidance` | 一并求值 + 合成拒绝 |
 
 **坑**
@@ -424,6 +424,11 @@ func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
 - **`SignatureOf` 派生不出来就报错，不硬凑**。退化占位 schema（Properties 为 nil）、
   参数名非合法 JS 标识符、`Required` 点名了不存在的参数，三种都返回 `ErrSchemaNotDerivable`。
   宁可装配失败，也不让「看起来能用、实际不对」的东西进模型面前。
+- **`SignatureOf` 里的函数名是净化后的名字，不是目录里的原名**。
+  程序里真正挂上去的是 `host.<净化名>`（`get-logs` 挂上去叫 `host.get_logs`），
+  所以形态串里的函数名也必须是净化后的那个，否则 ptc 装配期直接拒
+  （`binding_signature`）。两侧共用 `toolname` 包（`Normalize`/`IsJSIdent`），
+  规则只有一份，不会漂移。**别自己手写形态串**——手写就要照净化后的名字写。
 - **`Stage(nil)` 按「不在目录内」处理**（fail-closed）。
 - **`guardset` 合成取保守侧：全部可重试才算可重试**。只要有一条拒绝不可恢复，
   重试整个调用就绝无可能成功；取「任一」会把永久性拒绝洗白成可重试。
@@ -514,6 +519,8 @@ func runProgram(ctx context.Context, stages []invoke.Stage) ptc.Result {
 	bindings := []ptc.Binding{
 		{
 			// 带 Signature：模型按位置传参，ptc 负责打包成 JSON 再交给 Call
+			// 形态里的函数名必须是**净化后**的名字（= 绑定名经 toolname.Normalize），
+			// 否则装配期被拒（binding_signature）。最好用 tooldisclose.SignatureOf 派生。
 			Name:      "get_logs",
 			Signature: "get_logs(host, count?)", // 可选形参以尾部 ? 标记
 			Call: func(ctx context.Context, argsJSON string) (string, error) {
@@ -893,11 +900,12 @@ func newCommitGate() *commitgate.Guard {
 func commitStep(g *commitgate.Guard, ref commitgate.Ref,
 	status, branch string, seq uint64, save func() error) error {
 	c := commitgate.Commit{Ref: ref, Status: status, Branch: branch, Seq: seq}
-	if err := g.Commit(c); err != nil {
+	lease, err := g.Acquire(c) // ★ 抢终态独占权（拿凭证）
+	if err != nil {
 		return err // 抢不到就别干后面的活
 	}
 	if err := save(); err != nil {
-		g.Release(c) // ★ 落库失败必须回滚，否则该环节闸被永久占住
+		g.ReleaseLease(lease) // ★ 落库失败必须回滚，否则该环节闸被永久占住
 		return err
 	}
 	return nil
@@ -912,8 +920,15 @@ func commitStep(g *commitgate.Guard, ref commitgate.Ref,
   只按环节名去重会把第二次运行整个判成重复提交。
 - **`isTerminal == nil` 时按「全部都是终态」处理**——保守侧，宁可多拦。
   反过来说：宿主漏注入会让闸被架空。
-- **`Release` 只交还自己占的那一次**：分支与序号都对得上才删，
-  否则一次迟到的 Release 会把后来者的独占权一起放掉。
+- **回滚要用凭证（`Acquire` + `ReleaseLease`），不要用旧的 `Release(c)`**。
+  旧接口靠 (状态, 分支, 序号) 三元组认人，而那三元组**不唯一**：
+  并行分支常常同名（`Branch` 写的是 agent 名），「落库失败 → 回滚 → 重试同一份快照」
+  时三元组又与上一轮逐字相同。于是**迟到的 `Release` 会把别人的闸放掉**——
+  实测 8 路同名并发提交出现 4 个赢家，同一环节的终态被提交两次，
+  且失效是静默的（`Commit` 返回 nil，宿主无从察觉）。
+  凭证路径把「身份」从内容换成令牌，那条承诺才无条件成立。
+  旧接口仍在（同一分支、同一序号不会同时存在的场景可直接用），
+  但它已加严：状态也必须相同才算数。
 - **零值不可用**，请用 `NewGuard`。
 - **`Seed` 重启后回灌**：`Seed` 幂等，且已有记录不被更旧的覆盖。
 - 与 `checkpoint` 互补不替代：一个环节推进**先过本闸拿终态独占权，

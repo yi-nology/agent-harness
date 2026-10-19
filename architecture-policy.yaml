@@ -130,7 +130,7 @@ modules:
 
   - id: tooldisclose
     roots: [tooldisclose]
-    requires: []
+    requires: [toolname] # 派生调用形态时的函数名规整，与 ptc 共用同一套规则
     owner: harness
     managed: true
     notes: |
@@ -158,7 +158,7 @@ modules:
   # 从未被执行过，连漂移都没人发现（执行体见 cmd/archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
-    requires: []
+    requires: [toolname] # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包
     owner: harness
     managed: true
     notes: 程序化工具编排沙箱（goja VM，三重预算替代 OS 沙盘）
@@ -225,6 +225,27 @@ modules:
       模型一次只听得到一个理由）。
       不重复实现链：顺序执行、留痕、panic 兜底全部沿用 invoke.Chain。
 
+  # 2026-10-19 新增：工具名→JS 标识符的规整规则，收成单一真相。
+  #
+  # 为什么值得单开一个包：这条规则有两个消费者——生产侧（tooldisclose 从目录
+  # 派生给模型看的调用形态）与消费侧（ptc 把绑定挂到 host.<净化名> 上并校验
+  # 形态里的函数名）。两侧必须**逐字一致**，否则就是「生产侧派得出、消费侧
+  # 认不出」的夹缝。
+  #
+  # 它曾经两边各写一份（规范名写成两份、净化规则又各写一份），于是漂移开了：
+  # 生产侧照抄目录原名、消费侧按净化名挂载，契约在文档里写着「直接可用」，
+  # 代码里却拒——而旧版测试还把「会被拒」钉成了预期行为，两边的错一起被固化。
+  - id: toolname
+    roots: [toolname]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      工具名→程序内可用的 JS 标识符：一条单一真相。
+      IsJSIdent（能不能直接用）+ Normalize（不能的话用哪个）。
+      规整不保证唯一（get-logs 与 get_logs 同名）——撞不撞由调用方判
+      （ptc 在装配期拒，因为顶替意味着副作用错位）。
+
 # ── 可执行规则 ──
 rules:
   # 规则一（拆分后的头号红线）：harness 不得出现领域词。
@@ -283,7 +304,13 @@ rules:
     include: ["*.go"]
     ignore_test: false
     scope_exclude: [cmd]
-    forbid_import_regex: 'git\.enjoye\.top/enjoydream/bianque/|github\.com/yi-nology/bianque/'
+    # 匹配对象是 **import 路径**（不含引号），不是源码行——实现走 go/ast，
+    # 单行/块/别名/空白导入一视同仁（见 cmd/archcheck/imports.go）。
+    #
+    # 路径末尾用 `(/|$)` 而不是裸 `/`：宿主仓的**根包** import 路径没有结尾斜杠
+    # （github.com/yi-nology/bianque），只写 `/` 会漏掉它——而那恰恰是最可能被
+    # 直接引用的那个包。漏掉的形态是门禁变绿，不是变红。
+    forbid_import_regex: 'git\.enjoye\.top/enjoydream/bianque(/|$)|github\.com/yi-nology/bianque(/|$)'
 
   # 规则三：harness 包不得依赖宿主的运行时原语库。
   # 2026-10-18 起**不再允许门面 agentkit**（上游私有旧门面仓）：
@@ -297,7 +324,7 @@ rules:
     include: ["*.go"]
     ignore_test: true
     scope_exclude: [cmd]
-    forbid_import_regex: 'git\.enjoye\.top/enjoydream/(bianque|ekit|agentkit)/|github\.com/yi-nology/(bianque|ekit|agentkit)/'
+    forbid_import_regex: 'git\.enjoye\.top/enjoydream/(bianque|ekit|agentkit)(/|$)|github\.com/yi-nology/(bianque|ekit|agentkit)(/|$)'
 
   # ── oekit 家规（矩阵一致性）──
   #
@@ -312,12 +339,17 @@ rules:
 
   # 规则四：禁止裸 go func，走 concurrency/async 的 GoSafe（panic 被 recover）。
   - id: harness-no-bare-goroutine
-    desc: 生产代码禁止裸 go func（panic 无法被外层 recover，会杀进程）；须走 concurrency/async 的 GoSafe
+    desc: 生产代码禁止裸 goroutine 启动（panic 无法被外层 recover，会杀进程）；须走 concurrency/async 的 GoSafe
     severity: error
     scope: [.]
     include: ["*.go"]
     ignore_test: true   # 测试需要真 goroutine 来验证阻塞/超时语义，不适用
-    forbid_regex: '^\s*go\s+func\('
+    # 两种形态都要拦：`go func(){...}()` 与 `go someFunc()`。
+    #
+    # 旧写法只拦 `go func(`，漏了 `go someFunc()`——而后者的 panic 同样
+    # **无法被外层 recover 捕获**（panic 发生在被调函数内部，裸 goroutine 没有
+    # 任何 recover 边界），风险与前者完全相同。漏掉的形态是门禁变绿。
+    forbid_regex: '^\s*go\s+(func\(|[A-Za-z_]\w*\()'
 
   # 规则五：SDK 包不得把 printf 风格日志回调焊进公开 API。
   # 留痕一律走 logx.Delegating 懒解析——宿主用 logx.SetDefault 换后端，
@@ -329,7 +361,12 @@ rules:
     include: ["*.go"]
     ignore_test: false
     scope_exclude: [cmd]
-    forbid_regex: '\b(logf|logFunc|logFn|logger)\s+func\(string'
+    # 匹配「名为 logf/logFunc/logFn/logger 的参数，其类型是 func(...) 且**首参为 string**」。
+    #
+    # 首参允许带参数名（`func(format string, args ...any)`）——那才是 printf
+    # 回调的常见写法。旧写法 `func\(string` 只认「首参无名的裸 string」，
+    # 于是最常见的那种形态（带参数名的 format string）反而漏检。
+    forbid_regex: '\b(logf|logFunc|logFn|logger)\s+func\(\s*(?:[A-Za-z_]\w*\s+)?string\b'
 
   # 规则六：类型同一性红线——一个进程只允许一套 errors 包。
   # **2026-10-18 已清偿**：oekit/pkg ≥ v0.12.0 起 New/As/Is/Unwrap 与 stdlib 同型透传
@@ -337,10 +374,14 @@ rules:
   # 单 import 即可，双 import 的老理由已消失，全仓 24 个文件已切换完成。
   #
   # 因此本规则从「只拦第二套」**收紧为「只允许 oekit/pkg/errors 一套」**：
-  #   - `^\s*"errors"$`            → 禁 stdlib。双 import 是类型同一性红线的温床，
-  #                                  混用时 BizError 的 As 判定会静默失效（404 变 500）。
-  #   - `"github\.com/pkg/errors"`  → 禁同名不同型的第三方包。
-  # 匹配按整行（archcheck 跳过 // 注释行），故只命中 import 行，不会误伤正文里的 "errors" 字样。
+  #   - `^errors$`                   → 禁 stdlib（按**路径**精确匹配，不是子串，
+  #                                    否则 github.com/x/errors 之类会被误伤）
+  #   - `^github\.com/pkg/errors$`   → 禁同名不同型的第三方包
+  # 匹配对象是 import 路径（实现走 go/ast），故单行/块/别名/空白导入一视同仁。
+  #
+  # 旧实现用 `^\s*"errors"$` 逐行匹配源码文本，只认「整行就是一个裸路径」，
+  # 于是 `import "errors"`（单行）、`import e "errors"`（别名）全部漏检——
+  # 而本仓大量使用单行 import，这条规则对相当一部分文件从来没生效过。
   - id: harness-single-errors-package
     desc: 全仓只允许 oekit/pkg/errors 一套 errors 包（禁 stdlib errors 与 github.com/pkg/errors）
     severity: error
@@ -348,7 +389,7 @@ rules:
     include: ["*.go"]
     ignore_test: false
     scope_exclude: [cmd]
-    forbid_import_regex: '^\s*"errors"$|"github\.com/pkg/errors"'
+    forbid_import_regex: '^errors$|^github\.com/pkg/errors$'
 
 # ── 门面包不可变 ──
 #
@@ -437,7 +478,14 @@ thresholds:
   # 任何一次改动要在多大的影响面上评估，全凭这个数。宿主仓实测出现单类型 175 个方法
   # 的实例，故此判据比行数更能提前报警。
   max_methods_per_type: 25
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, cmd]
+  # scan_roots 必须**覆盖 modules 段的全部 roots**——漏一个包，该包对上面两条
+  # 阈值就完全隐形（可以长到任意行数、挂任意多方法而不报）。
+  #
+  # 2026-10-19 补齐：guardset 早已登记在 modules 段（依赖方向门禁管着它），
+  # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
+  # 从来不生效——两条都只差一个字面量，谁也不会发现。
+  # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, cmd]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

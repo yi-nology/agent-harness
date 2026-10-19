@@ -15,7 +15,7 @@ func okBind(name, ret string) Binding {
 //
 // # 这条防的是「顶替」而不是「不可达」
 //
-// jsIdent 把 `-` `.` 等非标识符字符一律映射成 `_`，于是 `get-logs` 与 `get_logs`
+// toolname.Normalize 把 `-` `.` 等非标识符字符一律映射成 `_`，于是 `get-logs` 与 `get_logs`
 // 净化后同为 `get_logs`。若放任后绑覆盖前绑，程序里 `host.get_logs()` 拿到的是
 // **另一个工具**：不是那个工具调不到，是**另一个工具替它执行了副作用**——
 // 无报错、无日志，CallLog 里还照常记着被顶者的账。

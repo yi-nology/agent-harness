@@ -26,10 +26,24 @@
 // 调用方据此在观察到 Generation 变化时留痕——**可观测性是这层的兜底**，
 // 因为策略生效与否最终只能由它是否被记录来证明。
 //
-// 但代次只是**信号**，不是**响应**：调用方必须自己起轮询去比对，而两次比对之间
-// 若换了两次，代次只能说明「变了」，说不出「变成了什么」。subscribe.go 把这
-// 半句接上——变更发生的那一刻由写侧直接把新快照推给订阅者。两者不是二选一：
-// 代次回答「换过没有」（可追溯到日志），订阅回答「换成了什么」（当场生效）。
+// 但代次只说「变了」，说不出「变成了什么」：两次比对之间若换了两次，
+// 代次只能说明换过。subscribe.go 把这半句接上——变更发生的那一刻由写侧
+// 直接把新快照推给订阅者。两者不是二选一：代次回答「换过没有」（可追溯到
+// 日志），订阅回答「换成了什么」（当场生效）。
+//
+// # 代次只有一个真相
+//
+// 代次只存在于策略指针内部（Policy.gen），PolicyGeneration() 是它的投影，
+// **没有第二个全局计数器**。这不是洁癖：两份记账在并发下必然漂移——
+// 旧实现是「next := policyGen.Load() + 1; curPolicy.Store(p); policyGen.Store(next)」
+// 三步，policyGen 来自一次非原子的读-改-写，于是并发写者会读到同一个旧代次、
+// 各自算出同一个 next，两次交换拿到**同一个代次**（实测 64 次并发交换只推进
+// 了 54 代）。代次一重复，「换过没有」就给不出答案：轮询方看到 6 → 6，
+// 以为没换过，而策略确实换了一次。
+//
+// 交换因此走 CAS 循环（swapPolicy）：代次从**观察到的**旧策略推导，CAS 保证
+// 同一时刻只有一个写者胜出，代次天然唯一、单调、不回卷。语义与同族的
+// pii.updatePolicy 一致——那边早就是 CAS，本包是后改的。
 //
 // # 只能整份换，不能半份换
 //
@@ -92,9 +106,6 @@ func (p *Policy) BlocksSuffix(h string) (string, bool) {
 // 的全部机制，也是与旧版两个指针的根本差别。
 var curPolicy atomic.Pointer[Policy]
 
-// policyGen 当前策略代次。与 curPolicy 同步递增，供可观测性使用。
-var policyGen atomic.Uint64
-
 // CurrentPolicy 取当前生效策略的快照。
 //
 // 返回的指针在整个进程生命周期内**只读**（没有任何写侧会 mutate 它），因此可以
@@ -112,7 +123,16 @@ func CurrentPolicy() *Policy {
 // 代次**单调且不回卷**——清空策略也不归零。若清空会回卷，那么
 // 「换上一份 → 清空 → 再换上一份」与「什么都没换」在代次上不可区分，
 // 可观测性就白做了。
-func PolicyGeneration() uint64 { return policyGen.Load() }
+//
+// 代次只有一个真相：策略指针内部的 gen。**不再有独立的全局计数器**——
+// 两者并存时它们会短暂不一致，而「快照代次 == 全局代次」这条承诺
+// 恰恰是调用方据以判断「我读的这段时间里换过没有」的依据。
+func PolicyGeneration() uint64 {
+	if p := curPolicy.Load(); p != nil {
+		return p.gen
+	}
+	return 0
+}
 
 // ErrInvalidBlockedSuffix 扩展后缀非法（注入期拒绝）。errors.Is 判定。
 var ErrInvalidBlockedSuffix = errors.New("扩展拦截后缀非法")
@@ -149,42 +169,95 @@ var ErrInvalidBlockedSuffix = errors.New("扩展拦截后缀非法")
 // 一个 `=` 赋值就能把元数据名拦截悄悄摘掉，而这种改动没有任何编译期或运行期信号。
 // 本函数只能增补扩展位，不能削减内置默认。
 func SetPolicy(hostnames, suffixes []string) error {
-	normNames := make(map[string]struct{}, len(hostnames))
-	for _, n := range hostnames {
+	normNames := normalizeHostnames(hostnames)
+	normSuffixes, err := normalizeSuffixes(suffixes)
+	if err != nil {
+		return err
+	}
+
+	// 校验全过才交换：否则旧策略原样保留。
+	//
+	// 交换走 CAS 循环：代次从**观察到的**旧策略推导，CAS 保证同一时刻只有
+	// 一个写者胜出，于是代次天然唯一、单调、不回卷。
+	//
+	// 旧实现是「next := policyGen.Load() + 1; curPolicy.Store(p); policyGen.Store(next)」
+	// 三步——两个独立变量记同一件事，且代次来自一个**非原子的读-改-写**。
+	// 并发写者于是会读到同一个旧代次，各自算出同一个 next：两次交换拿到
+	// **同一个代次**。实测 64 次并发交换只推进了 54 代——代次一旦重复，
+	// 轮询方看到 6 → 6 就以为「没换过」，而策略确实换了一次。
+	// 那正是本包要防的那类失效：「换过没有」给不出答案。
+	// 附带还破坏了两条承诺：代次可能回退（非原子读改写的交错写），
+	// 且 curPolicy.gen 与 policyGen 之间存在窗口，读者能同时看到
+	// 「快照 gen=6、全局 gen=5」这种自相矛盾的一对。
+	//
+	// 语义与同族的 pii.updatePolicy 一致——那边早就是 CAS，本包是后改的。
+	return swapPolicy(func(*Policy) *Policy {
+		return &Policy{
+			hostnames: normNames,
+			suffixes:  normSuffixes,
+		}
+	})
+}
+
+// normalizeHostnames 归一化精确主机名名单（去空白 + 小写 + 去尾点），空项丢弃。
+func normalizeHostnames(names []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(names))
+	for _, n := range names {
 		if n = normalizeHost(strings.TrimSpace(n)); n != "" {
-			normNames[n] = struct{}{}
+			out[n] = struct{}{}
 		}
 	}
-	normSuffixes := make([]string, 0, len(suffixes))
+	return out
+}
+
+// normalizeSuffixes 归一化扩展后缀名单，并执行注入期校验（任一项非法即整批拒绝）。
+//
+// 拒绝规则见 SetPolicy 的「后缀的拒绝规则」一节：大小写/空白归一，无前导点
+// 拒绝，归一化后永不匹配的拒绝——「名单不命中」是这个拦截面最坏的失效模式。
+func normalizeSuffixes(suffixes []string) ([]string, error) {
+	out := make([]string, 0, len(suffixes))
 	for _, s := range suffixes {
 		s = strings.ToLower(strings.TrimSpace(s))
 		switch {
 		case s == "":
-			return errors.Wrap(ErrInvalidBlockedSuffix, "扩展拦截后缀为空")
+			return nil, errors.Wrap(ErrInvalidBlockedSuffix, "扩展拦截后缀为空")
 		case !strings.HasPrefix(s, "."):
-			return errors.Wrap(ErrInvalidBlockedSuffix,
+			return nil, errors.Wrap(ErrInvalidBlockedSuffix,
 				"扩展拦截后缀必须带前导点（无点会把顶级域整片拒掉）", "suffix", s)
 		case s == "." || strings.HasSuffix(s, "."):
-			return errors.Wrap(ErrInvalidBlockedSuffix,
+			return nil, errors.Wrap(ErrInvalidBlockedSuffix,
 				"扩展拦截后缀归一化后永不匹配（尾点已去）", "suffix", s)
 		}
-		normSuffixes = append(normSuffixes, s)
+		out = append(out, s)
 	}
+	return out, nil
+}
 
-	// 校验全过才交换：否则旧策略原样保留。
-	// 代次在交换成功后递增，读者据此判断「期间换过策略」。
-	next := policyGen.Load() + 1
-	p := &Policy{
-		gen:       next,
-		hostnames: normNames,
-		suffixes:  normSuffixes,
+// swapPolicy 以 CAS 循环整份换策略；CAS 失败（有别的写者抢先）则重来一次。
+//
+// mutate 从当前策略算出下一份；它只在 CAS 真正落地时产出结果，故
+// 「基于最新值修改」这条读改写链是原子的，不会丢更新。
+// 代次由本函数统一赋予（从观察到的旧策略 +1），调用方不得自己填。
+func swapPolicy(mutate func(old *Policy) *Policy) error {
+	for {
+		old := curPolicy.Load()
+		next := mutate(old)
+		next.gen = policyGenOf(old) + 1
+		if curPolicy.CompareAndSwap(old, next) {
+			// 交换已落地，此刻起通知才是「如实」。通知在锁外、且订阅者 panic 被 recover：
+			// 一次成功的交换不因某个订阅者抛异常而被说成失败（见 subscribe.go 头注）。
+			notifyPolicy(next)
+			return nil
+		}
 	}
-	curPolicy.Store(p)
-	policyGen.Store(next)
-	// 交换已落地，此刻起通知才是「如实」。通知在锁外、且订阅者 panic 被 recover：
-	// 一次成功的交换不因某个订阅者抛异常而被说成失败（见 subscribe.go 头注）。
-	notifyPolicy(p)
-	return nil
+}
+
+// policyGenOf 取一份策略的代次（nil 视为 0，即「从未换过」）。
+func policyGenOf(p *Policy) uint64 {
+	if p == nil {
+		return 0
+	}
+	return p.gen
 }
 
 // SetExtraBlockedHostnames 注册/清空扩展精确主机名名单（不传即清空）。
@@ -197,9 +270,19 @@ func SetPolicy(hostnames, suffixes []string) error {
 //
 // 本函数只改扩展名单、保留当前后缀，整体仍是一次原子交换；需要同时改两项请用
 // SetPolicy（两次调用之间存在撕裂窗口，且后一次校验失败不会回滚前一次）。
+//
+// 保留后缀的读发生在 CAS 重试循环**内部**：并发写者若同时改了后缀，
+// 本函数基于最新值重算，不会用陈旧副本把它覆盖回去。旧实现是
+// 「先 CurrentPolicy() 读出来、再 SetPolicy 写回」，两步之间有窗口，
+// 并发下会静默丢掉对方的改动。
 func SetExtraBlockedHostnames(names ...string) {
-	p := CurrentPolicy()
-	_ = SetPolicy(names, p.suffixes)
+	normNames := normalizeHostnames(names)
+	_ = swapPolicy(func(old *Policy) *Policy {
+		return &Policy{
+			hostnames: normNames,
+			suffixes:  suffixesOf(old),
+		}
+	})
 }
 
 // SetExtraBlockedHostSuffixes 注册/清空扩展后缀名单（不传即清空）。
@@ -208,11 +291,39 @@ func SetExtraBlockedHostnames(names ...string) {
 // 半套名单比旧名单更难推理。校验规则与理由见 SetPolicy。
 //
 // 本函数只改后缀、保留当前主机名，整体仍是一次原子交换；需要同时改两项请用 SetPolicy。
+// 保留主机名的读同样在 CAS 重试循环内部（并发下不丢更新），理由见
+// SetExtraBlockedHostnames。
 func SetExtraBlockedHostSuffixes(suffixes ...string) error {
-	p := CurrentPolicy()
-	names := make([]string, 0, len(p.hostnames))
-	for n := range p.hostnames {
-		names = append(names, n)
+	normSuffixes, err := normalizeSuffixes(suffixes)
+	if err != nil {
+		return err
 	}
-	return SetPolicy(names, suffixes)
+	return swapPolicy(func(old *Policy) *Policy {
+		return &Policy{
+			hostnames: hostnamesOf(old),
+			suffixes:  normSuffixes,
+		}
+	})
+}
+
+// hostnamesOf 取一份策略的精确主机名名单（快照拷贝，可安全改写）。
+func hostnamesOf(p *Policy) map[string]struct{} {
+	out := make(map[string]struct{})
+	if p == nil {
+		return out
+	}
+	for n := range p.hostnames {
+		out[n] = struct{}{}
+	}
+	return out
+}
+
+// suffixesOf 取一份策略的扩展后缀名单（快照拷贝，可安全改写）。
+func suffixesOf(p *Policy) []string {
+	if p == nil {
+		return nil
+	}
+	out := make([]string, len(p.suffixes))
+	copy(out, p.suffixes)
+	return out
 }

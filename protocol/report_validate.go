@@ -91,6 +91,29 @@ func (r *Report) Validate() ([]string, error) {
 		}
 	}
 
+	// —— evidence 编号唯一性（warn 级：放行，留痕） ——
+	//
+	// 同号的两条证据让「引用证据说理」**失去指向**：verdict 引用 "E1" 时，
+	// 消费方无从知道说的是哪一条；而 CheckEvidenceRefs 只查「引用了但不存在」，
+	// 同号时该编号确实存在，故它**不会报缺失**——歧于是静默的，比缺失更难查。
+	//
+	// 引擎自造的编号已保证不撞（AssignEvidenceIDs 避开已被占用的号），
+	// 但模型自报的重复编号是它自己的数据：不改写（改了会让指向它的引用失效），
+	// 只在留痕面告警。理由同 severity 白名单——引用是增强面，不是数据本体。
+	seenEvidenceID := make(map[string]int, len(r.Evidence))
+	for i, ev := range r.Evidence {
+		id := strings.TrimSpace(ev.ID)
+		if id == "" {
+			continue
+		}
+		if first, ok := seenEvidenceID[id]; ok {
+			warns = append(warns, fmt.Sprintf(
+				"evidence[%d].id %q 与 evidence[%d] 重复（同号引用无从指向）", i, id, first))
+			continue
+		}
+		seenEvidenceID[id] = i
+	}
+
 	// —— executed_steps 纯 slug（warn 级） ——
 	for _, s := range r.ExecutedSteps {
 		if !slugRe.MatchString(s) {
