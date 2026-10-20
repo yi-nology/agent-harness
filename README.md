@@ -364,8 +364,10 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 | 本仓版本 | 变更 | 下游要做什么 |
 |---|---|---|
+| **v0.6.1** | 修 archcheck 的静默假红（import 规则不认 `negative_follow` 豁免）；补 `CHANGELOG.md` 与发版纪律 | 若你的 policy 在 import 规则上写过 `negative_follow`：**此前它一条都没生效**，现在生效了，构建可能从红变绿；若写过 `forbid_call_regex` / `allow_paths`：那两字段一直被 YAML 静默丢弃，自校验现在会点名 |
 | **v0.6.0** | `netguard` 的放行面改为具名类型（`Allow`），校验层与拨号层共用同一个类型；新增接线件 `NewClient` / `NewTransport`；依赖地板抬到上游最新一轮（7 个模块）| `netguard.DialOptions.AllowPrivate` / `AllowLoopback` 两字段合并为 `Allow`（**宿主若已接线，改字段名**）。其余为新增 API，旧签名保留但已废弃。**地板抬高对下游是隐式 breaking**：`go mod tidy` 不跑会报 `updates to go.mod needed`，且报错不提真正原因——迁移说明见 [CHANGELOG.md](CHANGELOG.md) |
 | **v0.5.0** | 上游把判定环原语 `invoke` 从 `oagentkit/toolgate` 迁到 `oagentkit/guardx`（框架无关的原语不该被 eino 重仓的地板拖住），本仓跟随；依赖地板抬到上游最新一轮 | import 路径换成 `github.com/oagentkit/guardx/invoke`；require 升到 `toolgate v0.12.0` + `guardx v0.8.0`。**编译期报错**（类型身份变了），不是静默行为变化 |
+| **v0.3.0 – v0.3.2** | 依赖地板连续抬到上游当时最新（oagentkit 八模块 + oekit 四模块）| **`go mod tidy`**——地板抬高对下游是隐式 breaking：不改代码就编不过，而报错只说 `updates to go.mod needed`，不提真正原因。逐版抬了哪些地板见 [CHANGELOG.md](CHANGELOG.md) 与对应 tag 的 release 说明 |
 | v0.4.0 | 门禁执行体从 `package main` 下沉为可导入包 `archcheck/` | 无（新增包，不改既有 API）|
 
 受影响的本仓 API（签名里带 `invoke` 类型）：

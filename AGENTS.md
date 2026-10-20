@@ -436,7 +436,7 @@ IP 策略单源在 egress（包头「与上游 urlguard 的分工」明写「不
 本仓是**按版本引入**的下游依赖（`go get github.com/yi-nology/agent-harness@vX.Y.Z`），
 所以「发版」本身就是给下游的一份契约。三条纪律：
 
-1. **发版顺序：改代码并提交 → 生成 CHANGELOG 并提交 → 打 tag → 推 tag。**
+1. **发版顺序：改代码并提交 → 生成 CHANGELOG 并提交 → 打 tag → 推 tag → 发 GitHub Release。**
    生成器（`matrix-tools/scripts/gen_changelogs.py`）按 tag 切段，**tag 快照里的
    CHANGELOG 必须已经含该 tag 自己那一段**——顺序反了就会重演上游那条「已发布 tag
    的 CHANGELOG 缺自己那段」的缺口（下游拿到模块缓存才发现发布说明是残缺的，
@@ -447,6 +447,11 @@ IP 策略单源在 egress（包头「与上游 urlguard 的分工」明写「不
        --repo agent-harness --root /Users/zhangyi/my_project \
        --next-version vX.Y.Z
    ```
+
+   **GitHub Release 是发布动作的一部分，不是可选项**：本仓的发布页是下游读发布
+   说明的入口（v0.3.0 起每个 tag 都有 release），只打 tag 不发 release 等于
+   **发布页上那一版是空的**——而 `go get` 的人未必会去看 tag 的注解。release 正文
+   的**第一段必须是「下游要做什么」**（release 页是下游读者的第一落点）。
 
 2. **发版 commit 的 message 里必须写清「下游要做什么」**。CHANGELOG 是从 git 历史
    生成的，commit message 的正文**就是**发布说明的正文——不写进去，下游看不到。
