@@ -30,6 +30,8 @@ go.sum 需要跟着更新（不跑 `go mod tidy` 会报 `updates to go.mod neede
 ptc / archcheck …）的签名与语义均未变，宿主按 v0.6.2 写的代码不需要改。
 
 
+- 文档(changelog)：用修好的生成器重生成——恢复被旧版丢弃的 449 行正文
+
 ## [v0.6.2] — 2026-10-20
 
 - 文档(release)：发版纪律补上「发 GitHub Release」这一步，并补齐下游升级须知表
