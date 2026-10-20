@@ -243,9 +243,15 @@ func Run(root string, pol *Policy) (*Result, error) {
 		}
 	}
 	if th.MaxMethodsPerType > 0 {
-		if gods := godObjects(root, th.ScanRoots, th.MaxMethodsPerType); len(gods) > 0 {
+		gods, err := godObjects(root, th.ScanRoots, th.MaxMethodsPerType, th.forwardingShellLimit())
+		if err != nil {
+			// 门禁给不出结论时不能装作通过——解析失败意味着那些文件的方法数
+			// 没被计入，门禁对它们隐形（假绿）。
+			return nil, err
+		}
+		if len(gods) > 0 {
 			res.ThresholdFindings = append(res.ThresholdFindings,
-				fmt.Sprintf("god object（阈值 %d 方法/类型）%d 个:\n    %s", th.MaxMethodsPerType, len(gods), strings.Join(gods, "\n    ")))
+				fmt.Sprintf("god object（阈值 %d 实质方法/类型）%d 个:\n    %s", th.MaxMethodsPerType, len(gods), strings.Join(gods, "\n    ")))
 		}
 	}
 

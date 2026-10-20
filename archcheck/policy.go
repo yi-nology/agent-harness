@@ -10,13 +10,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
-
-// methodRe 匹配方法定义（排除普通函数与接口声明）：`func (recv T) Name(...)`
-var methodRe = regexp.MustCompile(`^func\s+\(([^)]*)\)\s+[A-Za-z_]\w*`)
 
 // NegFollow 是负向前置的结构化表达：anchor 紧跟 forbid_follow 时，命中位置
 // （被禁词）落在 forbid_follow 里即豁免。
@@ -45,10 +41,29 @@ type Rule struct {
 
 // Threshold 是结构债阈值：超长文件与 god object 的机械判据。
 type Threshold struct {
-	MaxFileLines      int      `yaml:"max_file_lines"`
-	MaxMethodsPerType int      `yaml:"max_methods_per_type"`
-	ScanRoots         []string `yaml:"scan_roots"`
-	Enforce           bool     `yaml:"enforce"` // true=超限即非零退出；false=仅报告
+	MaxFileLines      int `yaml:"max_file_lines"`
+	MaxMethodsPerType int `yaml:"max_methods_per_type"`
+	// ForwardingShellMaxChars 是「转发壳」的方法体长度上限（字符）。nil = 用缺省值。
+	//
+	// 转发壳 = 方法体只有一条转发语句、且剥掉注释与空白后长度不超过此值。
+	// god object 阈值比的是**实质方法数**（方法数 − 转发壳数），因为方法总数在
+	// façade 上等于**公共 API 表面规模**，不是复杂度集中度（issue #13）。
+	//
+	// 显式写 0 = 关闭该区分（所有方法都算实质方法），判定逐字退回旧行为。
+	ForwardingShellMaxChars *int     `yaml:"forwarding_shell_max_chars"`
+	ScanRoots               []string `yaml:"scan_roots"`
+	Enforce                 bool     `yaml:"enforce"` // true=超限即非零退出；false=仅报告
+}
+
+// forwardingShellLimit 返回「转发壳」的长度上限。
+//
+// 未声明（nil）时用缺省值；显式 0 = 关闭该区分（此时没有方法会被算成壳，
+// 因为任何含调用的方法体都长于 0——判定逐字退回旧行为）。
+func (t Threshold) forwardingShellLimit() int {
+	if t.ForwardingShellMaxChars == nil {
+		return defaultForwardingShellMaxChars
+	}
+	return *t.ForwardingShellMaxChars
 }
 
 // Exception 是例外登记：精确豁免某条规则的某处违反。

@@ -281,14 +281,20 @@ func TestGodObjectsAggregatesPerPackage(t *testing.T) {
 		"pb/a.go": mk(3),
 	})
 	// 阈值 5：每包各 3 个方法，合并成 6 会误报超限。
-	got := godObjects(root, []string{"pa", "pb"}, 5)
+	got, err := godObjects(root, []string{"pa", "pb"}, 5, defaultForwardingShellMaxChars)
+	if err != nil {
+		t.Fatalf("godObjects 不得报错: %v", err)
+	}
 	if len(got) != 0 {
 		t.Fatalf("两个包各 3 个方法的同名类型不得被并成 6 个方法（会误报），实得 %v", got)
 	}
 	// 同一包内 6 个方法必须仍被判超限（反向：不能因为改了聚合键就漏报）。
 	root2 := t.TempDir()
 	writeFixture(t, root2, map[string]string{"pa/a.go": mk(6)})
-	got2 := godObjects(root2, []string{"pa"}, 5)
+	got2, err := godObjects(root2, []string{"pa"}, 5, defaultForwardingShellMaxChars)
+	if err != nil {
+		t.Fatalf("godObjects 不得报错: %v", err)
+	}
 	if len(got2) != 1 {
 		t.Fatalf("同包内 6 个方法必须被判超限，实得 %v", got2)
 	}

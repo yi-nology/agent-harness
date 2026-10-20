@@ -123,6 +123,17 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		}
 	}
 
+	// ── 转发壳阈值不得为负 ──
+	//
+	// 负值没有意义：0 已经表达「关闭该区分」（所有方法都算实质方法）。
+	// 负值会被判据当成「没有方法是壳」——但它长得像别的意思（有人可能以为
+	// 负数 = 无限宽松）。声明面上的歧义要在这里掐掉，而不是留给判据去猜。
+	if v := pol.Thresholds.ForwardingShellMaxChars; v != nil && *v < 0 {
+		add(policyPath, 0,
+			"thresholds.forwarding_shell_max_chars 不得为负（负值没有意义；"+
+				"关闭「转发壳不计入阈值」这一区分请显式写 0）")
+	}
+
 	// ── 门面包指向的目录必须存在 ──
 	for _, fr := range pol.Facades {
 		if fr.Package == "" {
