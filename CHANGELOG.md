@@ -34,6 +34,21 @@ ColumnValue / ErrNotReport / SafeToResubmit / Retryable），
 逐个在源码中确认存在，无失效引用。
 
 
+- 文档(release)：下游升级须知表补 v0.6.5 行
+
+按发版纪律，这张表是**手写**的精简版（生成器每次都会重写 CHANGELOG，手写内容
+活不过下一次生成）——表里放「哪一版会让下游红、红在哪儿」。
+v0.6.5 有两件对下游有影响的事：
+1. **依赖地板抬高**（oekit/pkg v0.18.0 / oagentkit/obs v0.9.3 /
+   oagentkit/mcpkit v0.8.3）——对下游是**隐式 breaking**：本仓源码零改动，
+   但下游的 go.sum 需要跟着更新，不跑 `go mod tidy` 会报
+   `updates to go.mod needed`，而报错不提真正原因。
+2. **archcheck 的 god object 判据改比「实质方法数」**——对下游**无感**：
+   policy 不写新字段即按缺省 140 生效（老 policy 无需改动）；若某宿主要保持
+   旧语义（方法总数），在自己的 policy 里显式写 `forwarding_shell_max_chars: 0`
+   即可逐字退回旧行为。
+本条提交在 CHANGELOG 生成**之前**落地——否则它不会出现在 v0.6.5 段里。
+
 - fix(archcheck)：god object 判据区分「转发壳」与「实质方法」（issue #13）
 
 方法数超阈值的**前提**是判据自己写明的那句：「该类型同时承担了过多关注点，
