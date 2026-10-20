@@ -2,6 +2,10 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.6.2] — 2026-10-20
+
+- 文档(release)：发版纪律补上「发 GitHub Release」这一步，并补齐下游升级须知表
+
 ## [v0.6.1] — 2026-10-20
 
 ### 修复(archcheck)：import 规则必须认 negative_follow 豁免；补 CHANGELOG.md 与发版纪律
