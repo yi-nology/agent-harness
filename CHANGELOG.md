@@ -2,6 +2,57 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.6.1] — 2026-10-20
+
+### 修复(archcheck)：import 规则必须认 negative_follow 豁免；补 CHANGELOG.md 与发版纪律
+
+清 issue #11（真缺陷）、#12（文档化等价表达）、#10（缺 CHANGELOG.md）。
+一、#11：import 分支不应用 negative_follow（静默假红）
+`forbid_import_regex` 分支此前**不应用** negative_follow 豁免——同一个字段在文本
+分支生效、在 import 分支被忽略。后果是**假红**：policy 作者按字段名的自然用法
+（import 规则配 import 豁免）写负向前置，实际一条都豁免不掉，该放行的 import 照样
+报违规，而报错文案里没有任何「你的豁免没生效」的线索。
+失败形态是「门禁变红但红得没道理」：维护者的第一反应是「规则太严」，于是把豁免
+删掉，真正的缺陷留在原地。
+修法：豁免的判据面统一为「**被匹配的那段文本**」——文本分支是源码行，import 分支
+是 import 路径。锚点随之写在路径片段上（如 anchor: "…/internal/engine/" +
+forbid_follow: statemachine）。
+反向验证：把 import 分支的豁免调用去掉 → TestImportRuleHonorsNegativeFollow 红
+（变异已确认打中）。另加一条用例钉住「豁免不得扩大成整条规则都放行」。
+二、#12：调用面禁令与路径白名单的等价表达（方案 2，issue 作者倾向）
+policy **没有** forbid_call_regex / allow_paths 字段——判据面只有两种（import 路径 /
+源码文本）。两种常见诉求用现有字段表达：
+- 路径白名单（某第三方包只允许经某适配层引入）→ forbid_import_regex + scope_exclude
+- 调用面禁令（某目录禁止裸 fetch(，但几个目录除外）→ forbid_regex + scope_exclude
+已写进 archcheck 包文档（含对照表）、README 宿主复用清单、以及 policy 自校验的
+「规则无执行体」报错（给出可执行的下一步，并点明「policy 里没有那两个字段，写了
+会被 YAML 静默丢弃」）。
+为什么不再加第三种判据面：每多一种判据面就多一套豁免语义要记；本包已经因为
+「同一字段在两个分支语义不同」吃过一次亏，那次的修法是让两个分支同构，而非加一种。
+三、#10：补 CHANGELOG.md + 发版纪律
+本仓此前没有 CHANGELOG.md，发版信息只散在 commit message 与 GitHub Release 里。
+对「按版本引入」的下游这是实打实的障碍：v0.5.0/v0.6.0 抬了多个依赖地板，**对下游
+是隐式 breaking**（不改代码就编不过，报错却只说 `updates to go.mod needed`，不提
+真正原因），而下游根本无处可查迁移说明。
+- 用矩阵同款生成器（matrix-tools/scripts/gen_changelogs.py）从 git 历史生成，
+  7 个版本段（v0.2.0 … v0.6.0）。**发版 commit 的正文就是发布说明的正文**——
+  所以发版 commit 必须写清「下游要做什么」。
+- AGENTS.md 新增「发版纪律」：① 顺序必须是「改代码提交 → 生成 CHANGELOG 提交 →
+  打 tag → 推 tag」（tag 快照里的 CHANGELOG 必须已含该 tag 自己那一段，顺序反了就
+  重演上游那条「已发布 tag 的 CHANGELOG 缺自己那段」的缺口）；② 发版 commit 必须写
+  下游动作（import 路径变更 / 地板抬高 / 字段改名）；③ 地板抬高对下游是隐式 breaking，
+  必须在 CHANGELOG 里点出抬了哪些地板、迁移说明在哪个仓的哪个版本。
+- README「下游升级须知」表补 v0.5.0 / v0.6.0 行（表是手写的精简版——生成器每次都会
+  重写 CHANGELOG，手写内容活不过下一次生成）。
+四、顺带修：docsync 的依赖列改走 go/ast
+docsync 此前用正则扫**全文**的引号内容取依赖，于是**文档注释里的示例路径**会被
+当成真依赖（本次写完 #11 的文档示例后，README 依赖列多出一项「demo/internal」——
+那不是依赖，是举例）。与 archcheck 包当年的同一个病（import 声明有六种以上书写形态，
+逐行正则必然漏）同源，故同样走语法树。补一条用例钉住（文档注释/字符串里的
+example.com 路径不得进依赖列）。改完后 README 依赖列逐项不变——说明此前的文本扫描
+没有别的假阳性（它们要么是真依赖，要么被同一个归并键吸收了）。
+make check 全绿（覆盖率 86.6%，24 个包）、race 全过。
+
 ## [v0.6.0] — 2026-10-20
 
 ### 新增(netguard)：放行面具名且校验层与拨号层共用一个类型，并补上宿主接线件
