@@ -2,9 +2,50 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.6.3] — 2026-10-20
+
+- 杂务(deps)：依赖地板追平上游本轮新版本（llm / obs / mcpkit / concurrency / core）
+
+五个模块到各自最新 tag：
+- oagentkit/llm v0.13.0 → v0.14.1
+- oagentkit/obs v0.9.1 → v0.9.2
+- oagentkit/mcpkit v0.8.1 → v0.8.2
+- oekit/concurrency v0.17.1 → v0.18.0
+- oekit/core v0.9.2 → v0.10.0
+均**无本仓可见的破坏性变更**（逐个读 CHANGELOG + compare diff 核实）：
+- llm v0.14.0 新增 `port` 窄接口层（不依赖 eino 的降级链/预算/成本），**根包用
+  类型别名保持 API 不变**；本仓只钉了 `llm` 与 `llm/obsx`，两者路径未变。
+- core v0.10.0 新增 `config.WithStrict()`（未知键拒载 + 合法键清单 + 近似拼写
+  建议），**默认行为不变**（未知键仍静默忽略），严格模式显式开启；本仓只钉了
+  `core/version`，不涉及配置装载。
+- concurrency v0.18.0 新增 `retry.DoValue`（带返回值的重试），纯增量。
+- obs v0.9.2 / mcpkit v0.8.2：Go 地板降到 1.24 + 新增 mcp 自检/目录差集/健康
+  聚合/错误分类原语，纯增量。
+tools.go 的钉子说明按事实重写：core 钉子从「等于 logx 声明的地板」变为**领先**
+（logx v0.7.1 声明 core v0.9.2，本仓钉 v0.10.0——上游给 core 加了 config 严格
+模式）；四个钉子的版本与地板关系同步更新。
+下游要做什么：依赖地板抬高对下游是**隐式 breaking**——本仓源码零改动，但下游的
+go.sum 需要跟着更新（不跑 `go mod tidy` 会报 `updates to go.mod needed`，而报错
+不提真正原因）。本仓**无 API 变更**：公开包（protocol / eventbus / netguard /
+ptc / archcheck …）的签名与语义均未变，宿主按 v0.6.2 写的代码不需要改。
+
+
 ## [v0.6.2] — 2026-10-20
 
 - 文档(release)：发版纪律补上「发 GitHub Release」这一步，并补齐下游升级须知表
+
+发现一个流程缺口：v0.3.0 起每个 tag 都配了 GitHub Release（发布页是下游读发布说明
+的入口），而 2026-10-19/20 这几轮我**只打了 tag、没发 release**——发布页上
+v0.4.0 之后四版全是空的。而 `go get` 的人未必会去看 tag 的注解。
+两处补齐：
+1. AGENTS.md「发版纪律」第 1 条补上「→ 发 GitHub Release」，并写明 release 正文的
+   **第一段必须是「下游要做什么」**（release 页是下游读者的第一落点）。
+2. README「下游升级须知」表补 v0.6.1 行与 **v0.3.0–v0.3.2** 行——那三版连续抬了
+   依赖地板，对下游是隐式 breaking（不改代码就编不过，报错只说
+   `updates to go.mod needed`），此前表里没有它们，下游无从查起。
+**下游要做什么**：无（纯文档）。本仓的发布页此前缺 v0.4.0–v0.6.1 四条，已补发
+（正文取自各 tag 注解 + 「下游要做什么」段）；本版无 API 变更、无地板抬高。
+
 
 ## [v0.6.1] — 2026-10-20
 
@@ -255,7 +296,71 @@ netguard 同类，但锁在 main 里就意味着：各写一遍判据（各判�
 
 - 杂务(deps)：升级 oagentkit 八模块到最新，tools.go 注释同步事实
 
+agent      v0.8.0  -> v0.10.0
+guardx     v0.4.1  -> v0.5.0
+llm        v0.9.0  -> v0.11.0
+mcpkit     v0.6.0  -> v0.8.0
+obs        v0.5.0  -> v0.7.0
+runtime    v0.6.0  -> v0.7.0
+textx      v0.4.0  -> v0.5.0
+toolgate   v0.9.0  -> v0.11.0
+oekit 侧 core / logx / pkg / concurrency 已是最新，未动。
+## 变更面
+八个模块的新版本全部是纯依赖地板对齐，零 .go 源码改动（逐仓 diff 验证）。
+本仓源码无需跟着改，也未出现破坏性 API 变更。
+## go.sum
+214 行不变，三方条目逐字未变，无新增三方依赖。
+第一方 16 行仅版本号与哈希变化。
+## tools.go 注释同步
+钉子的性质变了。agent v0.10.0 声明 llm v0.11.0 / obs v0.7.0 / textx v0.5.0，
+logx v0.7.1 声明 core v0.9.2，与此处钉的版本完全相等。
+也就是说钉子不再领先于上游地板，作用退化为两件更朴素的事：让这四条 require
+在 go.mod 里显式可见（而不是仅以传递依赖身份藏在 agent / logx 的 go.mod 里），
+以及记录本仓实际验证过这些版本。注释已按事实改写，不再沿用抬高地板的说法。
+## 验证
+- make check 全绿：lint 0 issues，覆盖率 83.3%，架构门禁 7 规则 + 3 门面包 + 22 包依赖方向
+- go test ./... -race -count=1：24 包全过，无数据竞争
+- go build -tags tools ./...：钉子有效
+- go mod tidy -diff：无差异，幂等
+
+
 - 测试(archcheck)：门面包门禁的反向验证固化——facade.go 覆盖率 0% → ~90%
+
+## 发现
+`cmd/archcheck` 有 8 个测试函数，但**全部覆盖 `deps.go`**。而
+`harness-facade-stays-facade`（AGENTS.md 里写着「五条判定路径均已反向验证」的那道
+go/ast 门禁）的执行体 `facade.go` 覆盖率为 **0.0%**，`scan.go` 仅 13.3%。
+对照极清楚：**较老的依赖方向门禁有 8 个端到端测试，最新、最复杂的那道反而零覆盖。**
+AGENTS.md 那句「五条判定路径均已反向验证」指的是**写代码时手工注入过一次**，
+仓库里没有任何东西保证它下次还成立。而这道门禁的失效方向恰好是**变绿**不是变红：
+    1. 类型定义漏判   type X = ... 与 type X struct{} 混淆 → 真定义放行
+    2. 方法漏判       func (T) M() 不被拦 → 绕开上游类型演进
+    3. 多语句漏判     转发函数里顺手加一行 if —— 这正是纪律要防的
+    4. 非上游调用漏判 调本包自己的函数，字符串不含任何上游特征
+    5. 非允许 import  漏判 → 转发目标不再指名道姓
+任一条失效的表现都是「门禁变绿」——与上游并存的第二份实现从此无人拦截，正是
+`docs/OAGENTKIT-OVERLAP.md` 警告的事，且没有任何信号。
+## 修法
+新增 `cmd/archcheck/facade_test.go`（10 例），复用 `deps_test.go` 的 `writeFixture`
+惯例：造最小仓 → 跑 `facadeViolations` → 断言违规条数与文本。
+覆盖上述五条判定路径，另加分支语句（单条但非调用）、`.`/`_` 形态导入、空壳函数体、
+测试文件跳过；**同时钉住四种合法形态必须零违规**——门禁最容易的失败不是漏判而是
+误伤真转发，误伤一次维护者就学会忽略它，规则随即名存实亡。
+`facade.go` 各函数覆盖率：0.0% → 78.9%~100%；全仓覆盖率 **80.4% → 83.3%**。
+## 写用例时自己撞了两次门禁的口径（都判对了，是用例错）
+1. 起初把 `allowed_imports` 的类型拿来**构造**返回值（`return sig.T{N: n}`），
+   门禁报「唯一语句不是对上游包的调用」。查 `architecture-policy.yaml` 的 facades 段
+   才确认口径：`allowed_imports` 是**签名本身**要求的依赖——policy 段注释写得很清楚
+   「io/fs 是 LoadOverrides 的参数类型，eino/components/tool 是 WithAuditGate 的
+   出入参。两者都不提供任何实现」。构造就不是转发。
+2. 「测试文件应被跳过」那条用例里，我把**生产文件本身**写成了违规却断言零违规。
+两处都是门禁判对、用例写错，已按真实契约改正。口径本身也补进了用例注释——
+`allowed_imports` 只服务签名、不参与构造，这条不看配置根本猜不到。
+## 验证
+`make check` 全绿：fmt / vet / lint / test / 覆盖率 83.3%（门槛 60%）/ 架构门禁
+7 条规则 + 3 个门面包 + 22 包依赖方向 / docsync 一致 / go.mod 无 replace /
+go.work 未入库。`-race` 全过。
+
 
 ## [v0.3.1] — 2026-10-19
 
@@ -869,20 +974,264 @@ invoke.ErrStageFailed) 在这一层仍用不上，守卫崩溃与策略拒绝的
 （如 stage_failed）——那是本包对外契约的设计变更，留给该仓自己定。
 
 - 杂务(deps)：logx → v0.7.1（core 地板已由上游抬到 v0.9.2）
+
+上游采纳了本轮提的 oekit/logx#22，logx v0.7.1 的 CHANGELOG 明写：
+    build: core 地板 v0.6.0 → v0.9.2（logx#22）——无直接 require core 的下游
+    经 MVS 落到本仓声明的下界，抬至最新带动修复传递；logx 唯一使用的
+    core/lifecycle 逐字节未变，零行为风险
+本仓正是那条「无直接 require core 的下游」——`drain` 走 `logx.Delegating`，
+对 core 零直接依赖，此前只能靠 `tools.go` 把 core 钉在 v0.9.2。现在地板由上游
+直接抬好了，该 issue 的诉求已在上游侧闭合。
+v0.7.0 → v0.7.1 变更面：**零 `.go` 源码改动**，仅 go.mod / go.sum / README
+（另含 hlog、kitexlog 两个子模块的 go.mod 同步）。
+go.mod 只动一行，go.sum 只换 logx 的两条记录，**三方条目逐字未变**。
+## 验证
+- `go build -tags tools ./...` 退出 0
+- `go mod tidy -diff` 干净
+- `make check` 全绿（覆盖率 80.4% / 门槛 60%，lint 0 issues，架构门禁 7 规则 +
+  3 门面包 + 22 包依赖方向，docsync 一致）
+- `-race` 全过
+
 - 杂务(deps)：agent → v0.8.0（llm 包上移至 module 根，本仓未受影响）
+
+agent v0.7.0 → v0.8.0。变更面：`refactor!(agent): import 跟随 llm 包上移`，
+全仓 5 文件 / +6 −6：
+- `agentrun/agentrun.go`、`reflection/reflection.go`、`router/router.go`：
+  `github.com/oagentkit/llm/llm` → `github.com/oagentkit/llm`
+- `go.mod` / `go.sum`：llm 地板 v0.7.2 → v0.9.0
+**`dispatch` 不在变更文件里**（`git diff --name-only v0.7.0 HEAD | grep -c dispatch`
+= 0），而本仓对 agent 的唯一 import 就是 `agent/dispatch`，故本仓零影响。
+go.mod 只动一行（agent），go.sum 只换 agent 的两条记录，**三方条目逐字未变**。
+## 顺带记录一处 llm 包路径变更对 tools.go 的影响
+llm v0.9.0 把 `llm` 包从子目录上移到 module 根（`llm/*.go` → 根目录 `*.go`，
+纯 rename、0 内容变化），旧路径 `github.com/oagentkit/llm/llm` 已不存在。
+本仓 `tools.go` 钉的正是那个旧路径，随 llm 升到 v0.9.0 时已同步改为
+`github.com/oagentkit/llm`（见 2c8eca5）。这恰好是 tools.go 注释里预告的那类
+失效——**钉在子包上，就会随上游重构一起断**。根路径比子路径更抗变动，
+今后给新模块做钉子时优先挑根包/最稳定的叶子包。
+## 验证
+- `go build -tags tools ./...` 退出 0（四个钉子 import 全部有效）
+- `go mod tidy -diff` 干净
+- `go list -deps ./...` 第一方包仍为 **14 个**，闭包未变
+- `make check` 全绿（覆盖率 80.3% / 门槛 60%，lint 0 issues，架构门禁 7 规则 +
+  3 门面包 + 22 包依赖方向，docsync 一致）
+- `-race` 全过
+
 - 杂务(deps)：llm → v0.9.0（包上移至 module 根，import 路径变更）
+
+oagentkit/llm v0.9.0 起把包从 llm/llm/ 移到 module 根，
+import 路径由 github.com/oagentkit/llm/llm 变为 github.com/oagentkit/llm。
+- tools.go 的 blank import 同步改名（包名仍是 llm，注册行为不变）
+- go.mod 地板 v0.8.0 → v0.9.0，go.sum 重算
+本仓 CI 不设 GOPRIVATE，走公共 proxy + go.sum 校验；
+go.sum 已含 v0.9.0 条目，无需 sumdb 收录即可校验通过。
+
 - 杂务(deps)：用 tools.go 把四个非闭包内模块钉到最新（llm/obs/textx/core）
+
+## 背景：纯 require 写法钉不住，实测过
+llm / obs / textx / core 四个都不在 `go list -deps ./...` 的包级闭包里（harness
+第一方闭包只有 14 个包）。Go 的规则是 go.mod 只记录构建本模块所需的模块，于是
+「手写 require 钉到最新版」这件事根本不成立——实测：
+    go get llm@v0.8.0 obs@v0.5.0 textx@v0.4.0 core@v0.9.2   # 四个都加进去了
+    go mod tidy                                            # 四个 // indirect 全被剥掉
+只有 tools.go（`//go:build tools` 强制 blank import）能扛住 tidy。选子包而不是
+模块根路径，是因为这四个模块**都没有根包**——写 `_ "github.com/oagentkit/textx"`
+会直接报 `does not contain package`。实际钉的是 llm/llm、obs/obsx、textx/textutil、
+core/version，均已 `go build -tags tools` 实测编译通过。
+## 明写代价：引入了 5 个三方依赖
+这不是零成本的版本声明，它把用不到的东西拉进了依赖图：
+    + github.com/cloudwego/eino-ext/components/model/openai v0.1.13 // indirect
+    + github.com/cloudwego/eino-ext/libs/acl/openai        v0.1.17 // indirect
+    + github.com/evanphx/json-patch                        v0.5.2  // indirect
+    + github.com/meguminnnnnnnnn/go-openai                 v0.1.6  // indirect
+    + golang.org/x/time                                    v0.14.0 // indirect
+go.sum 由 189 行增至 214 行。一个**从不调用 LLM 的编排内核**因此挂上了 OpenAI SDK，
+纯粹是为了让 go.mod 里那四个版本号好看且不被 tidy 抹掉。成本已量化，值不值得由
+维护者判断；要撤销只需删掉 tools.go 再 `make tidy`。
+其中 textx/textutil 与 core/version 各自真实新增 0 个三方模块，是零成本的那两个；
+llm 与 obs 各引入约 1 个（OpenAI SDK + x/time）。
+## 验证
+- `go build -tags tools ./...` 退出 0：四个钉子的 import 路径全部有效
+- `go mod tidy -diff` 干净：钉子扛住了 tidy（这正是它存在的理由）
+- `go list -deps ./...` 第一方包仍为 **14 个**：tools.go 不参与普通构建，闭包未受污染
+- `make check` 全绿（覆盖率 80.4% / 门槛 60%，lint 0 issues，架构门禁 7 规则 +
+  3 门面包 + 22 包依赖方向，docsync 一致）
+- `-race` 全过
+## 删除判据
+tools.go 的注释里写了，这里再强调一次：判据是「这条 require 还有没有真实依赖
+支撑」，**不是**「版本号变没变」。若将来 harness 真的开始 import 其中某个包，
+该 require 由真实依赖接管，对应 blank import 即可删；若上游把地板抬过这里钉的
+版本（MVS 取更高者），钉子自动失效，同样可删。
+
 - 杂务(deps)：concurrency → v0.17.1、mcpkit → v0.6.0（其余新版本不在本仓依赖路径上）
+
+## 先说结论：看到的「很多新版本」里，大部分与本仓无关
+逐个核过远端真实 tag（`git ls-remote --tags`，不用 `go list -m -versions`——
+后者会把已被删除的 tag 也报出来）后，图内 12 个第一方模块的差距是：
+| 模块 | 图内 | 远端最新 | 在包闭包内？ | 本次动作 |
+|---|---|---|---|---|
+| oekit/concurrency | v0.17.0 | v0.17.1 | 是（async/singleflight） | **升** |
+| oagentkit/mcpkit | v0.5.1 | v0.6.0 | 是（mcpkit/mcp） | **升** |
+| oagentkit/llm | v0.7.2 | v0.8.0 | 否 | 不动 |
+| oagentkit/obs | v0.4.1 | v0.5.0 | 否 | 不动 |
+| oagentkit/textx | v0.3.0 | v0.4.0 | 否 | 不动 |
+| oekit/core | v0.6.0 | v0.9.2 | 否 | 不动 |
+判据是 `go list -deps ./...` 的**包级闭包**，只有 14 个第一方包：
+    agent/dispatch · guardx/{egress,injectband} · mcpkit/mcp
+    runtime/{pacer,procx,progress} · toolgate/{invoke,policy}
+    concurrency/{async,singleflight} · logx · pkg/{errors,jsonrepair}
+llm / obs / textx / core 只存在于**模块图**（上游 go.mod 的声明），没有任何本仓包
+import 它们。它们的版本由上游各自的下次发版经 MVS 自动抬升，本仓既无控制也无需要——
+往 go.mod 里显式 require 会被 `go mod tidy` 立刻剥掉。故只升真正在闭包里的两个。
+## 两处升都是零源码改动
+- **concurrency v0.17.1**：纯依赖地板对齐（go.mod 里 pkg v0.11.0 → v0.15.1），
+  AGENTS.md/CHANGELOG/README/go.mod 变，**零 .go 改动**
+- **mcpkit v0.6.0**：只有 go.mod 变（concurrency 地板 v0.16.0 → v0.17.0），
+  **零 .go 改动**
+两者都不引入新的三方依赖（go.mod 差异全是第一方地板对齐）。
+## 为什么 oekit/core 跨 3 个 minor 也不动
+core v0.6.0 → v0.9.2 确有实质变更：新增 `chain`/`transport` 两个包，config 侧加了
+FieldSet / `require` tag / env 卫生、修了 inline yaml 的 FieldSet 缺口（v0.9.1）、
+移除了依赖进程环境的 env 拼写冒烟检查（v0.9.2，issue #8）。
+但 logx v0.7.0 只 import core 的 **`lifecycle` 一个包**，而该包在 v0.6.0 与 v0.9.2
+之间**逐字节相同**（diff -r 无输出）。也就是说 core 的这批变更全部不在本仓的依赖
+路径上，为它强行升 floor 只会得到一个上游从未声明过的组合（logx v0.7.0 的 go.mod
+写的是 core v0.6.0）。等 logx 自己抬地板时，MVS 会把新 core 带进来，那时才是正确
+的验证时机。
+## go.sum
+干净 GOMODCACHE + GOPRIVATE 直连 VCS 重算。验证判据：**三方条目逐字未变**
+（校验面未被削弱），仅两处第一方版本替换，go.sum 仍 189 行。
+本次不涉及 tag 重写（v0.17.1 / v0.6.0 都是新追加的 tag），故未清 CI 的 setup-go 缓存
+——上一轮清理是针对「缓存里存着重写前的副本」，本轮前提不成立，清了只是白白拖慢构建。
+验证：make check 全绿（覆盖率 80.3% / 门槛 60%，lint 0 issues，架构门禁 7 规则 +
+3 门面包 + 22 包依赖方向，docsync 一致）、-race 全过、go mod tidy -diff 幂等、
+升级前后第一方包闭包逐项一致。
+
 - 杂务(deps)：依赖地板升到最新 tag（两个旧 tag 远端已删，此前只能靠 proxy 缓存解析）
+
+agent v0.2.1 → v0.7.0、guardx v0.1.1 → v0.4.0、toolgate v0.8.0 → v0.9.0、
+runtime v0.5.0 → v0.6.0、mcpkit v0.5.0 → v0.5.1（indirect）、
+oekit/concurrency v0.16.0 → v0.17.0、oekit/pkg v0.14.0 → v0.15.1。
+这不是可选升级而是必修：agent v0.2.1 与 guardx v0.1.1 已被从远端删除，
+`go list -m -versions` 还能看到它们是 goproxy.cn 的缓存条目。直连 VCS 构建报
+`reading go.mod at revision v0.2.1: unknown revision v0.2.1`。
+源码零改动即可编译：harness 实际用到的 5 个 oagentkit 包（agent/dispatch、
+guardx/egress、guardx/injectband、runtime/*、toolgate/*）在旧/新版本间逐字节相同；
+oekit 侧只动了 ratelimit/keyed.go（本仓未使用）与新增 urlguard 包（本仓未使用）。
+go.sum 用干净 GOMODCACHE + GOPRIVATE 直连 VCS 重算——旧文件记的是 tag 重写**之前**
+的哈希，mcpkit@v0.5.0 校验直接报 SECURITY ERROR。验证判据：三方条目逐字未变
+（校验面未被削弱），仅第一方 12 条按预期更新。
+顺带清掉 6 条既存 golangci-lint 问题（CI 不跑 lint，此前全是潜伏债）：
+- cmd/archcheck：死变量 stillBlocked，append 结果从未被读，门禁打印实际走
+  all → byRule，删掉不改变行为
+- protocol：死函数 decisionProse，2026-09-25 normalizeDecision 改为「未知值一律
+  归空」后遗留的孤儿谓词，零调用点
+- cmd/docsync、spill：只读句柄 defer f.Close() 的 errcheck
+- netguard/chain.go：ST1005 错误串首字母大写
+- tooldisclose：QF1008 冗余嵌入字段
+动过门禁执行体，故按纪律做反向验证：往 statemachine/step.go 注入 stdlib errors，
+门禁准确报出 harness-single-errors-package [error]、statemachine/step.go:6、
+forbid_import 并退出非零；样本已还原，工作区无残留。
+netguard 包头补记与上游 oekit/pkg/urlguard 的分工：逐条比对后，urlguard 的
+blockedCIDRs 是向 egress 的 ipv4ExplicitBlocks 看齐的**收敛版**（少了 240.0.0.0/4
+保留段），换过去是放松防线而非收紧，IP 策略继续单源 egress；但域名后缀层如今有两份
+且已漂移（.lan 本包有 urlguard 无、.localdomain urlguard 有本包无），记下「增删前先
+比对、缺就改本包这处名单、不要引第二份权威」。
+验证：make check 全绿（覆盖率 80.3% / 门槛 60%，架构门禁 7 规则 + 3 门面包 +
+22 个包依赖方向，docsync 一致、go.mod 无 replace、go.work 未入库）、
+golangci-lint 0 issues、-race 全过、go mod tidy -diff 幂等。
+
 - 杂务(go.sum)：清掉 toolgate 升版后残留的旧版本 hash
 
+go get 升到 toolgate v0.6.1 时 go.sum 里仍留着 mcpkit v0.1.0 / runtime v0.3.1 /
+toolgate v0.2.1 的 hash。构建不受影响（未被选中），但留着会让 go.sum 与 go.mod 的
+实际选择对不上，掩盖真正的依赖漂移。go mod tidy 已确认这是唯一差异。
+
+
 - 文档(netguard)：更正与 urlguard 的关系结论——两处清单不是包含关系
+
+上一版包头写「urlguard 的 blockedCIDRs 是向 egress 的 ipv4ExplicitBlocks 看齐的
+收敛版（少了 240.0.0.0/4）」，**该结论有误**，两处都要更正：
+1. urlguard 并**不少** 240.0.0.0/4——它的 blockedCIDRs 里有这条。
+2. urlguard 不是 egress 的子集：egress 靠 netip 谓词覆盖回环/私网/链路本地/
+   组播/未指定，只把 CGNAT、192.0.0/24、三个 TEST-NET、198.18/15、240/4 写进
+   显式表；urlguard 整表列举，**多出 0.0.0.0/8**。
+原判断的错因：只比对了 egress 的显式 CIDR 段，漏了谓词覆盖的部分，把「两表
+写法不同」误读成「谁更全」。
+实测（22 探针对扫）后确认 egress 有一处**真实缺口**——0.0.0.0/8 除全零地址外
+全部放行，且 IPv4-mapped 形态同样漏判：
+    0.1.2.3            egress=放行  urlguard=拒
+    0.255.255.255      egress=放行  urlguard=拒
+    ::ffff:0.1.2.3     egress=放行  urlguard=拒
+根因：`netip.Addr.IsUnspecified()` 只认全零这一个地址，而 0.0.0.0/8 不在
+`ipv4ExplicitBlocks` 里，于是 RFC 1122 的 "this network" 段漏判——这是可用的
+SSRF 路径。修复归 guardx，已向其提 issue；本仓不在此私补一份网段表（那会造出
+与上游并存的第二份清单，正是本包一直在防的事）。
+IP 策略仍单源 egress 的结论不变，但理由改为「缺口在上游修，不在本仓绕过」。
+
 - 文档：补使用指南与特性说明，修 README 三处事实错误
+
+README 讲清了「为什么这么设计」，但仓库缺一份「怎么接」——宿主开发者
+无法从架构说明里学会接进来。新增 docs/USAGE.md（按宿主接入顺序组织，
+九组独立能力逐个讲清 职责 → 最小集成片段 → 关键符号 → 坑，
+末尾附按症状索引的坑速查表），README 补特性章节与文档导航。
+顺带修三处会让读者踩空的事实错误：
+- 宿主接入写 require v0.1.0，但远端只有 v0.2.0（git ls-remote --tags 核实），
+  照抄直接失败；改为 v0.2.0 并补上「用 ls-remote 而非 go list -m -versions
+  核 tag」的提醒——后者报的是 proxy 缓存目录，不是远端现实。
+- 示例代码调用 hdispatch.NewGuard，但 import 的是 dispatch，包名不存在，
+  编译不过。
+- 开篇「零 replace（暂用 replace，见下）」自相矛盾：modreplace 门禁早已禁止
+  go.mod 含 replace，本地并行开发走 make devlink 的 workspace。
+包表 protocol 行数 1821 → 1850，随 cbf85e4 的注释增补同步。
+
 - 文档：补 netguard / ptc 包表行数（ef6ca82 引入的改动）
 - 文档：补 ptc 包表更新，使 31bef24 之后的 HEAD 重新通过 docsync
 
+31bef24 给 ptc 接上了 Stage 判定环与 oagentkit/toolgate 依赖，包表随之要改
+（919→993 行；依赖列新增 dop251/goja 与 oagentkit/toolgate）。那一行改动当时
+留在工作区未提交，于是 HEAD 上 README 的依赖列与实际不符——docsync 对依赖列是
+逐项相等判定（行数才有 25% 容差），故 checkout HEAD 后 make check 是红的。
+补上这一行，让 HEAD 与工作区一致。
+
+
 - 测试(ptc)：把「沙箱够不着网络」钉成用例，出站守卫与判定环的分工才有依据
+
+上一轮说「netguard 该不该接进判定环」之前先验了一件事，结果是**没有对应的洞**：
+沙箱里 fetch / XMLHttpRequest / WebSocket / require / process / Deno / setTimeout
+全部 undefined，程序本身根本够不着网络。出站只可能发生在宿主绑定的实现里，而那是宿主
+自己的代码、由宿主自己接 netguard。
+所以正确的做法不是加一个没人会用的 OutboundGuard API，而是把这条分工的前提**钉住**：
+判定环判「这次调用要不要放行」、netguard 判「这个 URL 能不能发出去」，两个执行点；把
+URL 守卫塞进逐调用的判定环就得去猜「哪个参数字段是 URL」，那是领域知识，不该进内核。
+而这条前提此前只是一句包头注释。谁哪天给 VM 加个 fetch、或 goja 升级后自带了某个网络
+全局，就会静默多出一条「程序能自己出站、绕过 netguard」的路，而没有任何用例会红。
+故新增 sandbox_test.go：
+- TestSandboxHasNoNetworkPrimitives：逐个断言网络/模块逃逸/定时器原语均为 undefined，
+  并带**正控**（typeof host === object）——否则 VM 整体坏掉时本用例会假绿。
+- TestDiscoverIsTheOnlyExtraGlobal：装配后多出来的全局只有 discover；未装配不挂。
+- TestSandboxCannotReachHostBindingInternals：绑定面只传可序列化的 JSON 文本，
+  程序拿不到宿主侧的 Go 值（逃逸的常见形态不是「多一个全局」，是「把宿主对象递回去」）。
+反向验证：给沙箱挂一个 fetch → 用例变红，并直接说清后果
+（「请重新决定 netguard 接在哪，别让程序自己就能出站」）。
+ptc 与 netguard 两处包头都补了这套分工的理由，互相指认——读任一侧的人都能查到对方。
+
 - 测试(ptc)：用真门禁验证程序内的判定环确实生效
+
+上一条修复只证明了**机制**存在（Options.Stages 能跑环）。这一组用**真的**门禁证明
+「此前被绕过的那些门，现在确实在程序里生效」。
+用桩环证明不了这件事：桩环只能说明环被调用了，说明不了它拦的是哪一种拒绝、
+拒绝理由能不能传回模型眼前。后者恰恰是模型能不能自己改正的关键。
+- TestRealGatesApplyInsideProgram：tooldisclose.Stage + toolgate/policy.Stage 同时
+  在链上。已加载 + 只读 → 放行并拿到工具输出；未取回 schema 的工具 → 被披露门拦下，
+  拒绝理由里带环节名（模型能据此知道该去取 schema 而不是换工具）。
+- TestRealAuditGateBlocksInsideProgram：审计门拦变异工具。披露门管不了「这个工具
+  这次调用该不该放行」，后者只有审计门判——而它此前在程序内根本不跑。用例同时钉住
+  hits==0（审计门不能被 try/catch 绕成「换个分支继续执行同一个工具」）与留痕恰为一条。
+用外部测试包（package ptc_test）：生产代码里 ptc 与 tooldisclose 互不依赖，
+policy 来自 toolgate，deps 门禁只判生产代码。
+反向验证：把判定环摘掉（恢复修复前状态）→ 9 个用例变红，含本组两条真实门禁用例。
+
 
 ## [v0.2.0] — 2026-10-18
 
@@ -1207,25 +1556,149 @@ proxy 可解析），故移除临时 replace 并把依赖升到 v0.1.1。
 本批改动由并发会话的 worker 产出，此处代为入库。
 
 - 杂务(deps)：guardx 升至 v0.1.1（reminder 门面的实现载体）
+
+ef2143d 把 reminder 转为门面，实现落到 oagentkit/guardx/injectband。v0.1.1 是首个含该包的版本，go.sum 已按正式 release 重建，无 replace（CI 门禁项）。
+验证：make check 全绿（覆盖率 80.5%、门禁 7 规则无阻断、docsync 包表一致）；reminder 转发经真实 v0.1.1 依赖编译通过，覆盖率 100%。
+
 - 杂务(deps)：五个直接依赖升至上游最新
+
+oagentkit/agent      v0.2.0 → v0.2.1
+  oagentkit/runtime     v0.3.0 → v0.3.1
+  oagentkit/toolgate    v0.2.0 → v0.2.1
+  oekit/pkg             v0.13.0 → v0.14.0
+  oekit/concurrency     v0.13.1 → v0.15.0（跨两个 minor）
+间接依赖零变化，go.sum 191 → 189 行。
+解析在 CI 的 Go 环境里完成（本地沙箱禁 rename(2)，go 的模块缓存无法落盘，
+go get / go mod tidy 都跑不了），产物回传后人工审阅再入库，编译与全量门禁
+由 CI 裁决。
+版本显式钉住而非 @latest：proxy 的 @latest 端点带缓存，oekit/concurrency
+v0.15.0 在解析时刚发布不到十分钟，@latest 仍返回 v0.14.0，静默少升一档。
+
 - 杂务：初始化公开仓，module path 改写 + 内部代号脱敏
 
+首次入库。相对本地开发态做了三类处理：
+1. module path 公开化
+   git.enjoye.top/enjoydream/agent-harness -> github.com/yi-nology/agent-harness
+   覆盖 go.mod、6 个 Go 文件 import、README 安装示例。
+   依赖已全部为 public 模块，故 go.sum 中陈旧的 agentkit hash 行、
+   Makefile 的 GOPRIVATE/GONOSUMCHECK 一并清理。
+2. 内部代号脱敏
+   README / AGENTS.md / docs / policy 注释中的内部产品代号与组织名
+   替换为中性表述。门禁 forbid_import_regex 与 AGENTS.md 规则路径
+   按约定保留真实路径——去掉会让「禁止 import 宿主仓」这道门禁失效。
+3. 补 MIT LICENSE（同 oagentkit / oekit 家族惯例）
+无凭据、证书、私钥类文件入库。
+
+
 - CI：给公开 module 加 replace 防线
+
+工作区当前存在一条本地 replace（guardx 本地验证 injectband 转发用，
+注释自己标了「禁止提交」），但没有任何机制拦着它：.gitignore 里那段
+「本仓 go.mod 当前不含 replace，此处仅作防线」只是注释，git add . 照样带走。
+一旦入库，所有外部 go get github.com/yi-nology/agent-harness 都在解析
+依赖图时失败——别人机器上没有 ./ 这个路径。且发布那一刻没有任何本地信号，
+只有下游报「拉不下来」才暴露。
+按本仓「不写进机器约束的约定半年后必然回退」的口径改成机器约束：
+CI 新增一步，go.mod 出现 replace 即判失败。已反向验证（干净文件放行、
+注入 replace 必拦）。同时把本地工作区 /.guardx-work/ 等收进 .gitignore
+——此前只在本地 .git/info/exclude 里，不随仓分发。
+
 - CI：移除临时工作流（tidy-fix / gate-probe）
+
+两者都是为绕开本地沙箱「禁止 rename(2)、go 模块缓存无法落盘」而临时借用
+CI runner 的，用途已尽：依赖问题已修、门禁全貌已探明。常驻门禁见 ci.yml。
+
 - CI：临时门禁探测工作流（用完即删）
 - CI：临时 tidy 修复工作流（用完即删）
 - CI：加 GitHub Actions 门禁工作流
 
+.gitignore 里已写明「门禁的检出能力应由 CI 持续保证，不该靠把违规样本留在仓里」，
+本次入库把该原则落实：push/PR 触发 make check（fmt-check + vet + test +
+cover-gate + architecture-check）。
+Go 版本用 go-version-file 跟随 go.mod，避免两处各写一份后悄悄漂移。
+
+
 - 文档：把提交身份约定写进 AGENTS.md
+
+本仓 local config 此前是 zhangyi01 <zhangyi01@kylinos.cn>，而 global 才是 MurphyYi <zy84338719@hotmail.com>。local 优先级更高，所以本仓任何一次提交都会落成工作身份——38 个提交里有 31 个是这么来的。
+约定：提交身份固定为 MurphyYi <zy84338719@hotmail.com>，配在本仓 local，不动 global（global 是别的项目在用的工作身份），也不用 -c 临时覆盖绕过。
+沿用历史写法 MurphyYi 而非 Murphy-Yi：本地 git log 里只有前者，换写法等于在同一仓库制造两种 Author 名。
+
 - 文档：同步 protocol 行数（1822 → 1821）
 - 文档：定性 delta 两条 SUSPECTED，并把 LICENSE 署名与门禁位置写成约定
+
+delta 的 entries 无回收、FlushAll 按 max(iteration) 扫序——两处单独看都像缺陷，
+审计因「本仓看不出 iteration 是否受模型影响」而标为 SUSPECTED。去宿主侧查实后
+结论是都不成立：Pacer 由 bianque runLLMStep 每个环节新建、defer 里 FlushAll 后
+整体丢弃，iteration 是该环节内的局部计数器（round, counted），不跨环节累加、
+不可由模型取值。故前者不是泄漏，后者也不构成空转。
+但这两处的安全性**依赖一个外部不变量**，代码里没写、编译器也不管：一旦有人
+把 Pacer 改成长生命周期（如整个会话一个），两条会同时引爆，且症状是「跑久了
+内存涨 / 收口卡住」，极难归因。已把该不变量写进 delta 包头，含 bianque 侧的
+对应位置，改接线前先看那一段。
+另：LICENSE 署名定案为 enjoydream 不改（版权归属看作者实体、不看仓挂在哪个
+org；oagentkit/* 与 oekit/* 全部同款）；AGENTS.md 里 make check 那行补上了新增
+的门禁与「门禁本体一律进 make check、不要只挂 ci.yml」的约定。
+
 - 文档：同步 pii 行数（541 → 583）
 - 文档：同步包表行数（checkpoint 402 / ptc 326）
+
+两处行数变化来自本轮缺陷修复本身——docsync 门禁按设计把它们拦了下来。
+
 - 文档：修正 AGENTS.md 的 warn 级债计数
+
+门禁实测为 15 处（protocol 11 + watchdog 4），原文写的是「protocol 下 12 处」，
+数量与范围都已过时。计数来自 architecture-check --report。
+
 
 - 格式：gofmt ptc 回归测试
 
 - 测试(pii)：补「已登记但显式关闭」路径的护栏，并订正早返回的可覆盖性说法
+
+接管并发会话遗留未提交的一摊（会话中断后工作区只剩这两处），复核后提交。
+生产改动是纯注释：`return v, false` 代码未动，只是把原来那句
+「确属已登记但显式关闭：既定语义，原样返回」换成如实的描述——这条分支是
+**纯快路径**，不是语义守卫。
+新增 surface_disabled_test.go（111 行）三条用例构成完整三角，防止两个方向
+同时塌缩：
+- 已登记 + 显式关闭 → 原样透传（含结构），且不得报阻断（策略设 block 以
+  确保「面关闭先于策略生效」这条次序真被验证）
+- 已登记 + 面开启 → 照样处置（否则「显式关闭」可能被实现成「永远透传」）
+- 未登记面名（拼错）→ 仍须 fail-closed，不被上一条路径吃掉
+## 订正了一处自相矛盾
+这摊活内部有两处注释对同一事实给了相反的说法：
+- policy.go 新注释：「实测把本分支拆掉，surface_disabled_test.go 的用例仍全绿
+  ——这行因此无法被行为断言覆盖」
+- 测试文件原注释：「nil 容器是这条早返回**唯一**可观测的差异」「这两条才是给
+  早返回守卫的牙」
+实测裁决：摘掉 ApplyValue 里的早返回分支后，单跑该用例**仍然 PASS**，全量
+pii 也全绿。原因是 applyValue 对每种容器类型都有 `if t == nil` 早退，nil
+照样原样返回——所以早返回确实是可摘的纯快路径，policy.go 的说法正确，而
+测试文件那两条 nil 断言**不构成守卫**，其因果描述是错的。
+已把测试文件的注释改成如实口径：nil 断言钉的是「透传保结构」这条契约
+本身（JSON `null` 不得静默变 `[]`/`{}`），但它不区分早返回与递归回退，
+并交叉引用 policy.go 的说明，避免下一个人再被这条错误因果误导。
+三条用例的语义覆盖未动，补的是注释准确性——测试价值在于钉住行为，不在于
+声称钉住了哪段实现。
+make check 全绿：覆盖率 80.6%（门槛 60%）、架构门禁无阻断、docsync 一致。
+
 - 测试(pending)：用真实 Encode 产物修正透传用例
+
+Encode 用的是短键 k/w（state 的 json tag），不是 kind/word——原先那个
+「已是 Encode 产物」的输入其实根本解不出 State，生产代码的包装行为是对的，
+是断言写错了。
+
 - 测试(docsync)：给门禁自身补测试，并抽出 isSelfPath 供直接验证
+
+原先「排除仓内自身」写死在 measure 内部，无法被测试打到，只能靠整体运行观察。
+抽成 isSelfPath 后，路径边界这条判据有了正反两组用例：自身与其子包排除，
+agent-harness-fork / agent-harnessx / agent-harness2-tools 一律**不得**排除。
+其余用例钉住本次两处修复：URL 字面量 / 协议相对地址 / 上级相对路径 /
+纯 stdlib 标识必须被排除（否则门禁永远红），含大写与前缀近似自身的 module
+路径必须被识别（否则 README 漏写依赖能蒙混过关）；normalizeDep 的归并口径与
+suffixMatch 的方向性（简写可接受、方向不可反）一并钉住。
+
 - 测试(ptc)：修正回归测试里的 ErrorKind 常量名
+
+上一轮 CI 已证实修复生效（ErrorKind=budget_bytes），失败原因是测试把
+常量写成了 byte_budget。

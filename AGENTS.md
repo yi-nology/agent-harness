@@ -448,6 +448,14 @@ IP 策略单源在 egress（包头「与上游 urlguard 的分工」明写「不
        --next-version vX.Y.Z
    ```
 
+   **生成器必须是 matrix-tools 的当前版本**：旧版有两个会静默丢东西的缺陷——分类渲染
+   分支对 chore/docs/test 类提交**只取标题、body 整段丢弃**（发布说明的实质内容
+   就在 body 里），以及 round 前缀使 conventional commit 解析失效（同样落到
+   「只取标题」的分支）。本仓 2026-10-20 用旧版生成器产出过一份 CHANGELOG，
+   重生成后**多出 449 行**——其中包括 v0.3.2 那一版的整个依赖地板表。判据：生成的
+   产物行数突然变少、或某版的说明只剩标题没有正文，就是踩到了这个坑
+   （上游见 matrix-tools#40 / #43）。
+
    **GitHub Release 是发布动作的一部分，不是可选项**：本仓的发布页是下游读发布
    说明的入口（v0.3.0 起每个 tag 都有 release），只打 tag 不发 release 等于
    **发布页上那一版是空的**——而 `go get` 的人未必会去看 tag 的注解。release 正文
