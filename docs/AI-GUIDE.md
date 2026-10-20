@@ -175,6 +175,11 @@ make architecture-check   # 架构门禁（当前 7 规则 + 3 门包 + 24 包�
    - 行数按 **25% 相对容差**判定——容差内的逐行涨落不拦，跨量级误述拦。
    - 仓里有包但 README 没写 → 同样红（反向检查）。
 
+   > ⚠️ **但 README「工程底座」那张表不在 `docsync` 的判定面内**——
+   > `docsync` 只校验上面这张**包表**。「工程底座」里的生产行数 / 测试文件数 /
+   > 覆盖率是**纯散文**，机器不管，**漂了不会有人拦**。
+   > 改了包/门禁后顺手重算一遍那张表（v0.6.4 那次就发现它已经过期了三个月）。
+
 5. **验收**：
 
    ```bash
@@ -340,7 +345,7 @@ make check
 | `test` | 全量单测 | 看失败断言 |
 | `cover-gate` | 覆盖率 < 60%（当前实测 86.6%） | 补测试，别降阈值 |
 | `architecture-check` | 7 条规则 + 3 门包 + 24 包依赖方向 | 见下表 |
-| `docsync` | README 包表 ↔ 仓库实际 | 重算行数与依赖，改 README 表 |
+| `docsync` | README **包表** ↔ 仓库实际（包名 / 行数 / 依赖列 / 职责列）| 重算行数与依赖，改 README 包表。**注意「工程底座」表不在判定面内**，那几个数字要自己手算 |
 | `modreplace` | go.mod 含 `replace` | 改用 `make devlink` |
 | `modwork` | go.work / go.work.sum 被跟踪 | `git rm --cached` |
 
@@ -465,7 +470,20 @@ panic 无法被外层 recover**（panic 发生在 goroutine 内部），会直�
 **做法**：枚举位归一**收成一处共享口径**（`protocol/report_normalize.go`），
 并用**枚举式**用例把「漏一个就红」变成机械判定。逐个字段补不算数。
 
-### 5.11 变更纪律类操作
+### 5.11 文档里的数字没人维护
+
+**症状**：README「工程底座」表里的行数 / 测试文件数 / 覆盖率与实际差得很远，
+但**没有任何门禁报红**——因为那张表不在 `docsync` 的判定面内。
+
+**为什么直觉会错**：AI 以为「改了代码，文档自然会跟着更新」，
+或以为「README 是文档，文档不会被测」。实际上 `docsync` **只管包表**
+（包名 / 行数 / 依赖列 / 职责列），包里之外的数字全是散文。
+
+**做法**：改包或改门禁后，**手动**重算 README「工程底座」三处数字；
+写文档里的数字时，先问一句「**这个数字谁在维护？**」——
+没人维护就写明「不受机器管，改前请手算」。
+
+### 5.12 变更纪律类操作
 
 | 纪律 | 为什么 |
 |---|---|
@@ -559,10 +577,15 @@ make devunlink                        # 断开
 
 # ── 宿主侧复用本仓门禁（示例）─────────────
 # import "github.com/yi-nology/agent-harness/archcheck"
-# pol, err := archcheck.Load("policy.yaml")
+# root, err := archcheck.FindRoot(".")                                  // 向上找 policy
+# pol, err := archcheck.Load(filepath.Join(root, "architecture-policy.yaml"))
 # res, err := archcheck.Run(root, pol)
+# archcheck.WriteReport(os.Stderr, res, archcheck.ReportOptions{Full: false})
 # if res.HasBlocking() { os.Exit(1) }
 ```
+
+> `archcheck.PolicyPath(root, pol)` **不是加载路径**——它返回报告里显示用的相对路径
+> （缺省即 `"architecture-policy.yaml"`）。拿它去 `Load` 会读到错的地方。
 
 **门禁执行体是包不是脚本**（`archcheck`）——宿主仓要复用同一套判据时
 **import 它**，不要复制一份实现（各写一遍必然各判一套，漂移到没人发现为止）。
@@ -592,12 +615,15 @@ make devunlink                        # 断开
 
 ## 附：相关文档
 
-| 文档 | 回答什么 |
-|---|---|
-| [README](../README.md) | 是什么、为什么这么设计、边界纪律、下游升级须知 |
-| [AGENTS.md](../AGENTS.md) | 在本仓干活的工作纪律（含每条纪律的事故来源） |
-| [docs/USAGE.md](USAGE.md) | **宿主开发者**：怎么把 harness 接进自己产品 |
-| [docs/OAGENTKIT-OVERLAP.md](OAGENTKIT-OVERLAP.md) | 本仓与上游 `oagentkit` 的能力边界 |
-| [docs/CHECKPOINT.md](CHECKPOINT.md) | 续跑契约的细节 |
-| [architecture-policy.yaml](../architecture-policy.yaml) | 门禁声明面（模块拓扑 / 规则 / 阈值） |
-| [CHANGELOG.md](../CHANGELOG.md) | 版本历史与破坏性变更 |
+| 文档 | 回答什么 | 性质 |
+|---|---|---|
+| [README](../README.md) | 是什么、为什么这么设计、边界纪律、下游升级须知 | 活文档 |
+| [AGENTS.md](../AGENTS.md) | 在本仓干活的工作纪律（含每条纪律的事故来源） | 活文档 |
+| [docs/USAGE.md](USAGE.md) | **宿主开发者**：怎么把 harness 接进自己产品 | 活文档 |
+| [docs/OAGENTKIT-OVERLAP.md](OAGENTKIT-OVERLAP.md) | 本仓与上游 `oagentkit` 的能力边界 | 活文档 |
+| [docs/CHECKPOINT.md](CHECKPOINT.md) | 续跑契约的细节（设计推导 + 跨进程闸） | 活文档 |
+| [architecture-policy.yaml](../architecture-policy.yaml) | 门禁声明面（模块拓扑 / 规则 / 阈值） | 活文档（机器判定）|
+| [CHANGELOG.md](../CHANGELOG.md) | 版本历史与破坏性变更 | 活文档（按 tag 切段生成）|
+| [docs/SPLIT_PLAN.md](SPLIT_PLAN.md) | 从宿主仓拆分的分层依据 | **历史快照**（2026-10-17 写于 10 个包时）|
+| [docs/MIGRATION_OAGENTKIT_20261018.md](MIGRATION_OAGENTKIT_20261018.md) | 门面迁移与 errors 链路改写的执行记录 | **历史快照**（2026-10-18 已执行完毕）|
+| [docs/SELF-AUDIT-20261018.md](SELF-AUDIT-20261018.md) | 独立复核发现并修复的缺陷 | **历史快照**（2026-10-18 收尾）|

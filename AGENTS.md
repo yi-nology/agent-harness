@@ -34,7 +34,7 @@ AI 代理在本仓干活时最容易犯的错是「顺手把宿主的需求写�
 |---|---|---|
 | `harness-no-bare-goroutine` | 生产代码裸 `go func` | goroutine 内 panic **无法被外层 recover**，直接杀进程。走 `concurrency/async.GoSafe` |
 | `harness-no-printf-log-callback` | 公开 API 里的 `logf func(string, ...any)` | printf 回调一旦焊进签名就是**不可逆 API 债**；留痕走 `logx.Delegating` 懒解析，宿主用 `SetDefault` 换后端 |
-| `harness-single-errors-package` | `github.com/pkg/errors` 等第二套 errors 包 | 类型同一性红线：混用会打断 BizError 的 `As/Is` 判定（Not Found 变 500）|
+| `harness-single-errors-package` | `github.com/pkg/errors` 等第二套 errors 包（**只允许 `oekit/pkg/errors` 一套**）| 类型同一性红线：混用会打断 BizError 的 `As/Is` 判定（Not Found 变 500）|
 
 三条规则都已做**反向验证**（注入违规 → 门禁报错 + 退出码 1），不是走过场。
 「从没见过它触发」的规则等于没有规则——改规则时同样要这么验。
@@ -71,13 +71,17 @@ AI 代理在本仓干活时最容易犯的错是「顺手把宿主的需求写�
 （变参 kv，非 `Wrapf`；nil-safe + kv 结构化上下文），判定用同包 `Is`/`As`，
 解包到根用 `Cause`，链路保持单 import，不再双 import stdlib。
 
-**已清偿（2026-10-18）**：`go.mod` 已升到 `oekit/pkg v0.13.0`，全仓 24 个文件
-（含测试）统一切到 `pkg/errors`，`pkg/errors.New` 就是 `stderrors.New` 的 shim
+**已清偿（2026-10-18）**：`go.mod` 当时升到 `oekit/pkg v0.13.0`（此后随上游继续
+抬升，当前 **v0.18.0**），全仓统一切到 `pkg/errors`（当时 24 个文件，现 **54** 个），
+`pkg/errors.New` 就是 `stderrors.New` 的 shim
 （`pkg/errors/std.go`），`Wrap` 的输出格式 `msg + ": " + err.Error()` 与
 `fmt.Errorf("msg: %w", err)` 逐字相同，故改写是行为等价的。
 
 门禁 `harness-single-errors-package` 已**收紧为「只允许这一套」**：
-`forbid_import_regex: '^\s*"errors"$|"github\.com/pkg/errors"'`，
+`forbid_import_regex: '^errors$|^github\.com/pkg/errors$'`——
+判的是 **import 路径**而不是源码文本（旧的 `^\s*"errors"$` 只认「整行就是一个裸
+路径」，`import "errors"` 单行形态与 `import e "errors"` 别名形态全漏，
+而本仓大量用单行 import，那条规则曾对相当一部分文件从来没生效过）。
 两条均已做反向验证（注入违规 → 报错 + 退出码 1）。
 所以「不小心又写回 stdlib errors」从此不是靠自觉，是机器拦。
 
@@ -245,9 +249,36 @@ severity 照常是 error，唯独一件事都不判。
    全部登记包、例外须写 `until` 与拆除条件。执行体在 `archcheck/selfcheck.go`。
 
 顺带清偿：一处**真实违规**被上面的漏洞藏了很久——`ptc/bytebudget_regression_test.go`
-用的是 stdlib `"errors"`，而 AGENTS.md 写着「全仓 24 个文件统一切到 `pkg/errors`」。
+用的是 stdlib `"errors"`，而 AGENTS.md 写着「全仓统一切到 `pkg/errors`」。
 门禁修好后第一个报出来的就是它。这正是「门禁变绿」最贵的样子：违规躺在仓里，
 文档写着已经清偿。
+
+### 文档里的数字也要有主（2026-10-20 补齐）
+
+门禁能管的只有**被写成规则的那部分**。本仓文档里的数字分三类，判定面各不相同：
+
+| 数字 | 谁在判 | 失效形态 |
+|---|---|---|
+| README **包表**的行数 / 依赖列 / 包名 | `make docsync`（机器）| 包表漂了会拦 |
+| README「**工程底座**」的生产行数 / 测试文件数 / 覆盖率 | **没人判**（散文）| 静默过期 |
+| 各 `docs/*.md` 里的**上游模块清单 / 版本号 / API 名** | **没人判**（散文）| 静默过期 |
+
+2026-10-20 修 README「工程底座」三处漂移就是证据：生产代码 11,491 行/66 文件 →
+13,336 行/77 文件、测试 84 → 99 个文件、覆盖率 80.4% → 86.6%。这三处**已经过期了
+三个月**——它们是 `archcheck` 从 `cmd/` 下沉成独立包（2026-10-19）之前的旧值，
+此后没人更新。**没人红、没人提醒、构建全绿。**
+
+纪律：**文档里的每个数字，要么被机器判，要么在它旁边写明「不受机器管，改前请手算」。**
+没有第三条路——「我记得更新过了」不是保证，记忆的保质期比一次发版还短。
+
+配套两条：
+
+1. **新增机器可判的表，就把它的判定接进 `make check`**——`docsync` 就是这么长出来的。
+2. **接不进机器判的表（如「工程底座」），就在表旁边写明这一点**——
+   让读者知道**这个数字可能会过期**，而不是以为它是活的。
+
+判「某条规则真的在判吗」的同一把尺子，在这里换成「**这个数字谁在维护**」：
+两者都指向同一个问题——**没人负责的东西会静默失真**。
 
 ### 派生状态只能有一个真相（2026-10-19）
 
@@ -465,6 +496,12 @@ IP 策略单源在 egress（包头「与上游 urlguard 的分工」明写「不
    同时改了别的文件，过滤失效——它就会漏在自己那一版的说明之外。2026-10-20 本仓
    就踩了一次（生成提交同时改了 AGENTS.md，结果 v0.6.3 的快照比理想状态少两行）。
    故：**改文档 → 提交 → 单独生成并提交 CHANGELOG**（那个提交只碰 CHANGELOG.md）。
+
+   **生成后必须扫一次编码损坏**：`grep U+FFFD CHANGELOG.md`。源 commit message 里
+   带坏字节时，生成器会**忠实复现**——本仓 v0.3.0 段就有一处（「自动派生签名」
+   被写坏）。根因在已发布 commit `57d1dead` 的 body 里，而**已发布 tag 不重写历史**
+   （改写会让下游按 tag/commit 引用的校验失效），故只在 CHANGELOG 的呈现层修。
+   下次重新生成它会回来——这是**已知**的，再修一次即可，但**不能装作没这回事**。
 
    **GitHub Release 是发布动作的一部分，不是可选项**：本仓的发布页是下游读发布
    说明的入口（v0.3.0 起每个 tag 都有 release），只打 tag 不发 release 等于

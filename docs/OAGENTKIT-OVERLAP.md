@@ -1,10 +1,17 @@
-# 与 oagentkit 的重叠面盘点（2026-10-18）
+# 与 oagentkit 的重叠面盘点（2026-10-18 盘点，2026-10-20 更新处置状态）
 
 > 背景：仓依赖已从旧门面仓 `agentkit` 迁移到 `github.com/oagentkit/*`
 > 矩阵。本文回答一个问题：**迁移之后，agent-harness 还该做什么、不该做什么。**
 >
 > 核对方式：从 goproxy 取 `agent v0.2.0` / `runtime v0.3.0` / `guardx v0.1.0` /
 > `toolgate v0.2.0` / `mcpkit v0.1.0` 的模块 zip 直接读源码（本地缓存解压被沙箱拒绝）。
+>
+> ⚠️ **版本口径**：上面那组版本是**盘点当时**的上游版本。本仓当前钉的版本已远高于此
+> （`agent v0.10.0` / `runtime v0.7.1` / `guardx v0.8.2` / `toolgate v0.12.0` /
+> `mcpkit v0.8.3`，以 `go.mod` 为准）——**上游能力仍在搬家**（2026-10-20 一轮就把
+> `toolgate/invoke` 挪到 `guardx/invoke`、`obs/obsx` 挪到 `llm/obsx`）。
+> 故 §一 的「上游现在提供了什么」是**当时的快照**，重叠面结论需按当前版本复核；
+> 本文已随实际改动更新的是 §二 的处置状态与 §五 的遗留限制。
 
 ## 一、上游现在提供了什么
 
@@ -45,17 +52,19 @@ README 清单，全部同步完成；改名后覆盖率仍 100%。
 参考侧用 octop-harness **v1.0.2**（唯一带 `tests/` 的副本；已安装的 1.0.4 wheel 不含测试，
 RECORD 375 条 0 条含 test）。版本差为补丁级，以下均为**行为**差异而非 API 拼写差异。
 
+**处置状态（截至 2026-10-20）：九项全部处置完毕，无遗留待定项。**
+
 | # | 包 | 分歧 | 状态 |
 |---|---|---|---|
 | 1 | `netguard` | 跳数差一：`>= maxHops` 只允许 9 跳，参考 `range(_MAX_REDIRECTS+1)` 允许 10 跳 | ✅ **已修**（`> maxHops`，并加钉住语义的回归用例）|
 | 2 | `tooldisclose` | 整串加成拿**原始查询**比对，多词查询（最需要加成的场景）永远拿不到；参考先归一为 `alpha_lookup` | ✅ **已修**（`normalizeQuery` 词下划线相连 + 6 条新用例，覆盖率仍 100%）|
-| 3 | `tooldisclose` | 检索上限 5/20 vs 参考 3/5——**20 恰是本包要防的「退化成全量披露」** | ⏸ 待定（可调常量，属产品决策）|
-| 4 | `tooldisclose` | 无词干还原：参考对 len>3 的词去尾 s，`files` 能命中 `read_file` | ⏸ 待定 |
-| 5 | `budget` | `MaxInput` 语义三处不一致：参考 `reserved<=0` 原样返回不设地板；`baseInput>window` 时参考返 baseInput | ⏸ 待定 |
-| 6 | `budget` | `RemovedTokens` 参考是**净值**（原长 − 摘要长），本仓是**毛移除量**，**同名字段不同义** | ⏸ 待改名 |
-| 7 | `budget` | 守卫阈值 `MinItems=2` 与参考的 `8`（且与 KeepTail 耦合）不符 | ⏸ 待定 |
-| 8 | `offload` | **同轮重复内容**：参考逐 block 处理、同轮两条相同图片都保持内联；本仓 `State.Mark` 循环内即时生效，第二条同内容本轮即被替换——与本仓自己注释「首次见到恒为 false」矛盾，**两侧测试都没覆盖** | ⏸ **建议优先修**（是本仓自身的内部矛盾）|
-| 9 | `netguard` | 参考有**按名拦截层**（`metadata.google.internal`、`.internal/.lan/.local` 后缀），不看 DNS 结果就拒；本仓只把解析出的 IP 交给 egress，故解析到公网的 `foo.internal` 参考拒、本仓放行 | ⏸ 待定 |
+| 3 | `tooldisclose` | 检索上限 5/20 vs 参考 3/5——**20 恰是本包要防的「退化成全量披露」** | ✅ **已对齐**：`DefaultSearchLimit = 3`、`MaxSearchLimit = 5`，两个数都与参考一致；防退化的意图保留在 `clampLimit`（钳到 `[1,5]`）而不是靠一个宽上限 |
+| 4 | `tooldisclose` | 无词干还原：参考对 len>3 的词去尾 s，`files` 能命中 `read_file` | ✅ **已修**：`stemTerm`（长度 > 3 去尾 `s`，**按 rune 计**——按字节计会让含多字节字符的短词越过门槛，与参考不一致）|
+| 5 | `budget` | `MaxInput` 语义三处不一致：参考 `reserved<=0` 原样返回不设地板；`baseInput>window` 时参考返 baseInput | ✅ **已对齐为有意分歧**（推导见 §三 第 1 条）：`MaxInput` **任何情况下都取 min**，只有 `outputReserve<=0` / `window<=0` 才提前返回 `baseInput` |
+| 6 | `budget` | `RemovedTokens` 参考是**净值**（原长 − 摘要长），本仓是**毛移除量**，**同名字段不同义** | ✅ **已改**：拆成两个字段——`GrossRemovedTokens`（毛，未扣摘要）/ `NetRemovedTokens`（净，钳位 0）。要「减掉多少」走后者，**别按名字对齐参考实现的同名字段**（那会静默错账，方向恰好是「看起来更省了」）|
+| 7 | `budget` | 守卫阈值 `MinItems=2` 与参考的 `8`（且与 KeepTail 耦合）不符 | ✅ **已对齐**：`ForceKeepItems(6) + MinSummarizeItems(2) = MinEffectiveItems = 8`，与参考一致；且**刻意不随调用方 keep-tail 变化**（理由见 §三 第 2 条——否则两条守卫会数学上永不可达，等于悄悄废掉它们）|
+| 8 | `offload` | **同轮重复内容**：参考逐 block 处理、同轮两条相同图片都保持内联；本仓 `State.Mark` 循环内即时生效，第二条同内容本轮即被替换——与本仓自己注释「首次见到恒为 false」矛盾，**两侧测试都没覆盖** | ✅ **已修**：`applyOne` 引入**本轮内** `fresh` 集合，本轮刚标记的一律按「首次」处理并**原样保留**（`Replaced` 恒为 false）；同轮重复内容各自落盘一次（内容寻址、幂等），去重收益体现在**跨轮** |
+| 9 | `netguard` | 参考有**按名拦截层**（`metadata.google.internal`、`.internal/.lan/.local` 后缀），不看 DNS 结果就拒；本仓只把解析出的 IP 交给 egress，故解析到公网的 `foo.internal` 参考拒、本仓放行 | ✅ **已修**：名字层落地为 `checkHostName` / `classifyHostName` + `BlockedNameError`——**解析前按名拒**，不花一次 DNS 往返；拨号层（`DialFunc`）走的是**同一套**名单 |
 
 ### 三个高价值遗漏的处置
 
@@ -117,13 +126,18 @@ RECORD 375 条 0 条含 test）。版本差为补丁级，以下均为**行为**
 
 ## 五、遗留限制（如实记录）
 
-- **`delta` / `netguard` / `dispatch` / `eventbus` / `watchdog` 在本沙箱内无法跑测试**：
-  迁移后的 `github.com/oagentkit/*` 模块 zip 解压被沙箱的 `rename(2)` 拒绝。
-  本轮 `netguard` 的新逻辑（按名拦截 + 空 Location）是在 `/tmp/vnet` **隔离仓**里
-  用桩替换第三方依赖后实跑的，并做了反向验证；**尚未在真实依赖树上复测**。
+- ✅ **已解除（2026-10-20）**：`delta` / `netguard` / `dispatch` / `eventbus` / `watchdog`
+  曾因沙箱拒绝解压 `github.com/oagentkit/*` 模块 zip 而**在本沙箱内无法跑测试**——
+  本轮 `netguard` 的新逻辑（按名拦截 + 空 Location）当时是在 `/tmp/vnet` **隔离仓**里
+  用桩替换第三方依赖后实跑的，并做了反向验证，但**未在真实依赖树上复测**。
+  现已解除：这些包的测试都在**真实依赖树**上跑通，`make test` 全绿
+  （99 个测试文件、覆盖率 86.6%），按名拦截层与空 Location 行为均有回归用例钉住。
 - 参照侧用的是 octop-harness **v1.0.2**（唯一带 `tests/` 的副本），代码是 **1.0.4**。
   补丁级差异下结论可用，但严格说未验过 1.0.4 的测试（其 wheel 不含测试）。
 - `netguard.go` 包注释里仍有「告警」「本机」等词。架构门禁**不扫注释行**
-  （`cmd/archcheck/main.go:196` 无条件跳过 `//` 开头的行），故从未被抓到。
-  该豁免是有意的（否则约 26 处正当注释会误红，其中大半正是解释「为什么排除领域概念」），
+  （执行体已下沉为 `archcheck` 包，落点在 `archcheck/scan.go:167`
+  ——无条件跳过 `//` 开头的行），故从未被抓到。
+  该豁免**只作用于 `forbid_regex` 类规则**：判 import 的 `forbid_import_regex`
+  走 `go/ast`，注释本来就不是 import，豁免与否无差别。
+  豁免是有意的（否则约 26 处正当注释会误红，其中大半正是解释「为什么排除领域概念」），
   但代价是注释里的领域词会静默累积。是否收窄尚未决策。

@@ -585,9 +585,10 @@ return out;
 
 **坑**
 
-- **撞名即装配期拒，不进 VM**：`jsIdent` 把 `-` `.` 等映射成 `_`，`get-logs` 与 `get_logs`
-  净化后同名。放任覆盖会让 `host.get_logs()` 执行的是**另一个工具**——无报错、无日志，
-  CallLog 还照常记着 B 的账。
+- **撞名即装配期拒，不进 VM**：`toolname.Normalize` 把 `-` `.` 等映射成 `_`，`get-logs` 与
+  `get_logs` 净化后同名。放任覆盖会让 `host.get_logs()` 执行的是**另一个工具**——无报错、
+  无日志，CallLog 还照常记着 B 的账。规整规则只有一份（`toolname` 包），
+  **别在宿主侧另写一套净化逻辑**——两套规则漂移开的形态是「目录里派得出、程序里认不出」。
 - **可选形参必须排在必填之后**。否则中间出现可选、后面又有必填时，
   模型为了传后面的必填项就得先把前面的空位填上——比直接判非法更坏。
 - **可选槽位只在真的给了值时才写入 JSON**。写进去一个 `undefined` 到 JSON 里就是 `null`，
@@ -1553,13 +1554,14 @@ tag 被删后条目仍留着直到缓存过期，而拿它当采购单会得到�
 
 | 文档 | 回答什么 |
 |---|---|
-| [README](../README.md) | 定位、边界纪律、包清单、门禁总览 |
-| [SPLIT_PLAN.md](SPLIT_PLAN.md) | 从宿主仓拆分的分层依据（L1/L2 已完成，L3 待拆） |
-| [CHECKPOINT.md](CHECKPOINT.md) | 续跑契约的设计推导与三条不变量 |
+| [README](../README.md) | 定位、边界纪律、包清单、门禁总览、下游升级须知 |
+| [AI-GUIDE.md](AI-GUIDE.md) | **改本仓的 AI 代理**：任务 → 改哪些文件 → 哪条门禁拦 → 怎么验收 |
 | [OAGENTKIT-OVERLAP.md](OAGENTKIT-OVERLAP.md) | 与 oagentkit 的重叠面盘点：哪些该做、哪些上游已有 |
-| [MIGRATION_OAGENTKIT_20261018.md](MIGRATION_OAGENTKIT_20261018.md) | 门面迁移与 errors 链路改写的执行记录 |
-| [SELF-AUDIT-20261018.md](SELF-AUDIT-20261018.md) | 独立复核发现并修复的缺陷 |
+| [CHECKPOINT.md](CHECKPOINT.md) | 续跑契约的设计推导与三条不变量 |
 | [AGENTS.md](../AGENTS.md) | 代理在本仓干活的工作纪律 |
+| [SPLIT_PLAN.md](SPLIT_PLAN.md) | 从宿主仓拆分的分层依据（**2026-10-17 历史快照**，非当前包清单）|
+| [MIGRATION_OAGENTKIT_20261018.md](MIGRATION_OAGENTKIT_20261018.md) | 门面迁移与 errors 链路改写的执行记录（**历史快照**，2026-10-18 已执行完毕）|
+| [SELF-AUDIT-20261018.md](SELF-AUDIT-20261018.md) | 独立复核发现并修复的缺陷（**历史快照**，2026-10-18 收尾）|
 
 规则源：[`architecture-policy.yaml`](../architecture-policy.yaml)。
 执行体：`archcheck` 包（`deps.go` 判依赖方向、`facade.go` 判门包、`scan.go` 跑正则规则、`selfcheck.go` 校验 policy 自身）；`cmd/archcheck` 只是它的 CLI 装配。

@@ -12,6 +12,23 @@
 > - **[docs/USAGE.md](docs/USAGE.md) = 怎么接、接错了会怎样** ← 宿主开发者从这儿开始
 > - **[docs/AI-GUIDE.md](docs/AI-GUIDE.md) = 怎么改、会被哪条门禁拦** ← 要动这个仓的 AI 代理从这儿开始
 > - [AGENTS.md](AGENTS.md) = 在本仓干活的工作纪律
+>
+> **全部文档一览**（`docs/` 下的三份是**历史快照**，记录当时的判断与踩坑，
+> 不是当前事实；当前事实一律以本文 + 门禁 + 源码为准）：
+>
+> | 文档 | 回答什么 | 性质 |
+> |---|---|---|
+> | [README](README.md) | 是什么、为什么这么设计、边界纪律、下游升级须知 | 活文档 |
+> | [docs/USAGE.md](docs/USAGE.md) | 宿主开发者：怎么把 harness 接进自己产品 | 活文档 |
+> | [docs/AI-GUIDE.md](docs/AI-GUIDE.md) | 改本仓的 AI 代理：任务 → 改哪些文件 → 哪条门禁拦 → 怎么验收 | 活文档 |
+> | [AGENTS.md](AGENTS.md) | 在本仓干活的工作纪律（每条纪律的事故来源） | 活文档 |
+> | [architecture-policy.yaml](architecture-policy.yaml) | 门禁**声明面**：模块拓扑 / 规则 / 阈值 / 例外 | 活文档（机器判定）|
+> | [CHANGELOG.md](CHANGELOG.md) | 版本历史与破坏性变更 | 活文档（按 tag 切段生成）|
+> | [docs/OAGENTKIT-OVERLAP.md](docs/OAGENTKIT-OVERLAP.md) | 本仓与上游 `oagentkit` 的能力边界：哪些该做、哪些上游已有 | 活文档 |
+> | [docs/CHECKPOINT.md](docs/CHECKPOINT.md) | 续跑契约的设计推导、三条不变量与跨进程闸 | 活文档 |
+> | [docs/SPLIT_PLAN.md](docs/SPLIT_PLAN.md) | 从宿主仓拆分的分层依据（L1/L2/L3）| **历史快照**（2026-10-17 写于 10 个包时）|
+> | [docs/MIGRATION_OAGENTKIT_20261018.md](docs/MIGRATION_OAGENTKIT_20261018.md) | 门面迁移与 errors 链路改写的执行记录 | **历史快照**（已于 2026-10-18 执行完毕）|
+> | [docs/SELF-AUDIT-20261018.md](docs/SELF-AUDIT-20261018.md) | 独立复核发现并修复的缺陷 | **历史快照**（2026-10-18 收尾）|
 
 ## 边界：本仓有什么、没有什么
 
@@ -22,6 +39,7 @@ protocol   统一报告协议          专家包 / 专家清单 / 技能
            宽容解析 + 结构化校验  诊断链 / 编排图（faultChain 等）
            白名单校验            运维词表（巡检域、K8s 词面…）
            Markdown 渲染         目标类型（主机 / 集群 / Pod）
+contract   编排运行契约（唯一边界） 宿主状态的落库方式与并发约束
 statemachine 环节状态机          审批风险分级（restart/delete 四档）
 eventbus   进程内有损广播        拓扑内容（谁允许派发谁）
 policy     操作审计门            品牌文案（报告标题、引导 agent 名）
@@ -152,6 +170,14 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 | 门禁 | 7 条正则规则 + 2 条 `go/ast` 规则 + 24 包依赖方向 + README 包表一致性 |
 | 例外登记 | **0** |
 
+> ⚠️ **上表不在 `docsync` 的判定面内**——`docsync` 只校验下面那张「包清单」表的
+> 包名、依赖列与行数。**本表是纯散文**：数字漂了不会有人拦。
+> v0.6.4 那次修「工程底座」三处漂移（生产代码 11,491 行/66 文件 → 13,336 行/77 文件、
+> 测试 84 → 99 个文件、覆盖率 80.4% → 86.6%）时，这三处已经过期了**三个月**——
+> 它们是 `archcheck` 从 `cmd/` 下沉成独立包（2026-10-19）之前的旧值，此后没人更新。
+> 这正是本仓「散文不是门禁」那条纪律的反面案例：**机器只管得着被写成规则的那部分**。
+> 改这张表时请手动重算，**别信上一版**。
+
 ## 头号红线：不得长出领域知识
 
 拆分做完后最现实的风险不是拆不动，而是**业务代码一年年渗回内核**，等发现时
@@ -200,23 +226,42 @@ make architecture-check   # 域词污染 + 依赖方向，违反即非零退出
 躺在文件里、看起来有人维护过，实际一条都不判）。现在它是可导入的包：
 
 ```go
-import "github.com/yi-nology/agent-harness/archcheck"
+import (
+	"path/filepath"
 
-pol, err := archcheck.Load("docs/architecture-policy.yaml")
+	"github.com/yi-nology/agent-harness/archcheck"
+)
+
+// ① 定位仓根：从当前目录向上找 architecture-policy.yaml
+//    （宿主仓把自己的 policy 放仓根，本仓同样如此——**不在 docs/ 下**）
+root, err := archcheck.FindRoot(".")
 if err != nil {
-    return err // policy 解析失败 = 门禁给不出结论，必须响亮失败
+    return err
 }
+
+// ② 加载声明面。policy 解析失败 = 门禁给不出结论，必须响亮失败
+pol, err := archcheck.Load(filepath.Join(root, "architecture-policy.yaml"))
+if err != nil {
+    return err
+}
+
+// ③ 跑判定
 res, err := archcheck.Run(root, pol)
 if err != nil {
     return err
 }
+
+// ④ 出报告 + ⑤ 判阻断
 archcheck.WriteReport(os.Stderr, res, archcheck.ReportOptions{Full: false})
 if res.HasBlocking() {
     os.Exit(1)
 }
 ```
 
-宿主复用时要知道的四条：
+> `archcheck.PolicyPath(root, pol)` **不是加载路径**——它返回的是**报告里显示用的
+> 相对路径**（缺省即 `"architecture-policy.yaml"`）。拿它去 `Load` 会读到错的地方。
+
+宿主复用时要知道的五条：
 
 1. **policy 的 `modules` 段要求每个 root 指向真实存在的包目录**——陈旧的 root 会被
    policy 自校验判红（这正是「机制包迁出当天即红」的落点）。
@@ -365,6 +410,9 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 | 本仓版本 | 变更 | 下游要做什么 |
 |---|---|---|
+| **v0.6.4** | 纯文档：新增 `docs/AI-GUIDE.md`（面向 AI 代理的操作手册），并校准 README「工程底座」表的三处漂移 | 无（无 API 变更、无地板抬高）|
+| **v0.6.3** | **依赖地板追平上游本轮新版本**（llm / obs / mcpkit / concurrency / core 共 5 个模块）| **`go mod tidy`**——地板抬高对下游是隐式 breaking：不跑就报 `updates to go.mod needed`，且报错不提真正原因。逐模块版本差异与「是否影响本仓」已逐个核对，写在 [CHANGELOG.md](CHANGELOG.md) 的 v0.6.3 段 |
+| **v0.6.2** | 纯文档：发版纪律补上「发 GitHub Release」这一步，并补齐本表此前缺的 v0.6.1 与 v0.3.0–v0.3.2 两行 | 无（纯文档）。本仓发布页此前 v0.4.0–v0.6.1 四版是空的，已按各 tag 注解补发 |
 | **v0.6.1** | 修 archcheck 的静默假红（import 规则不认 `negative_follow` 豁免）；补 `CHANGELOG.md` 与发版纪律 | 若你的 policy 在 import 规则上写过 `negative_follow`：**此前它一条都没生效**，现在生效了，构建可能从红变绿；若写过 `forbid_call_regex` / `allow_paths`：那两字段一直被 YAML 静默丢弃，自校验现在会点名 |
 | **v0.6.0** | `netguard` 的放行面改为具名类型（`Allow`），校验层与拨号层共用同一个类型；新增接线件 `NewClient` / `NewTransport`；依赖地板抬到上游最新一轮（7 个模块）| `netguard.DialOptions.AllowPrivate` / `AllowLoopback` 两字段合并为 `Allow`（**宿主若已接线，改字段名**）。其余为新增 API，旧签名保留但已废弃。**地板抬高对下游是隐式 breaking**：`go mod tidy` 不跑会报 `updates to go.mod needed`，且报错不提真正原因——迁移说明见 [CHANGELOG.md](CHANGELOG.md) |
 | **v0.5.0** | 上游把判定环原语 `invoke` 从 `oagentkit/toolgate` 迁到 `oagentkit/guardx`（框架无关的原语不该被 eino 重仓的地板拖住），本仓跟随；依赖地板抬到上游最新一轮 | import 路径换成 `github.com/oagentkit/guardx/invoke`；require 升到 `toolgate v0.12.0` + `guardx v0.8.0`。**编译期报错**（类型身份变了），不是静默行为变化 |
@@ -429,9 +477,12 @@ if err := g.Assert(caller, callee, depth); err != nil { /* 结构化 *dispatch.D
 
 - 新增能力前先问：**这是机制还是资产？** 资产进宿主/领域包，机制才进本仓。
 - 新依赖方向先改 policy 再写代码；例外带注释写明拆除条件。
+- **改了包或门禁，同步本 README 的包表**：新增/删除包、改外部依赖、改生产行数跨过 25% 容差——三者任一发生就要改表，`make docsync` 会拦。
 - 内核包规模远小于宿主，`max_file_lines: 400` 直接阻断（宿主仓是报告口径）。
   2026-10-18 起 `thresholds.enforce` 由 false 切 true：此前 3 处超长文件
   （`protocol/report_types.go` 660、`protocol/report_test.go` 782、
   `cmd/archcheck/main.go` 490）已拆分归零，2026-10-19 起执行体整体下沉为 `archcheck` 包，切换条件才成立。**拆分只为满足
   机械阈值，单文件读不动时该模块应重新分组，而不是继续往上加。**
-- 拆自宿主仓的代码历史见 `docs/SPLIT_PLAN.md`（L2/L3 待拆部分）。
+- 拆自宿主仓的代码历史见 [`docs/SPLIT_PLAN.md`](docs/SPLIT_PLAN.md)——那是 2026-10-17
+  写于 10 个包时的**分层依据快照**，其中「L2/L3 待拆」一节描述的是当时的待办，
+  **不是当前包清单**（当前清单见本文「包清单」表）。

@@ -2,6 +2,11 @@
 
 > 来源：对九个包做的一次独立代码复核（执行 + 阅读并用），
 > 外加我自己对着本仓纪律的复查。**已全部修复或明确记录**。
+>
+> **2026-10-20 更新**：§五.1 那条「模块改址后 denylist 漏新路径」的缺口**已清偿**
+> （两条规则的 denylist 现都含 `github.com/yi-nology/...`，且以 `(/|$)` 收尾）；
+> §五.4 的 `Seed` 依赖已由 `Committer.SeedFromStore` + `StoreCAS` 缓解。
+> 本节其余内容保持原样，作为当时的记录。
 
 ## 一、`pii`：历史门面成了策略的后门
 
@@ -56,15 +61,28 @@
 
 ## 五、仍未修、明确记录的不足
 
-1. **模块改址后门禁规则出现新缺口**（**新发现，需拍板**）：
+1. ✅ **已清偿（2026-10-20）**：**模块改址后门禁规则出现新缺口**（当时**需拍板**）：
    本仓 module 已迁到 `github.com/yi-nology/agent-harness`，而规则三
-   （`architecture-policy.yaml:260`）的 denylist 仍只写
+   （`architecture-policy.yaml`）的 denylist 仍只写
    `git.enjoye.top/enjoydream/(bianque|ekit|agentkit)`。
    将来若 import `github.com/yi-nology/agentkit/...`，**门禁放行**——
-   违反的是同一条红线。当前无此类 import（宿主 `bianque` 仍在旧路径，规则暂未失效），
+   违反的是同一条红线。当时无此类 import（宿主 `bianque` 仍在旧路径，规则暂未失效），
    但缺口是真的。修法是一行：denylist 追加 `github\.com/yi-nology/(bianque|ekit|agentkit)`。
+   **现两条规则的 denylist 都已含新路径**：
+
+   | 规则 | 当前 denylist |
+   |---|---|
+   | `harness-no-host-dependency` | `git\.enjoye\.top/enjoydream/bianque(/|$)\|github\.com/yi-nology/bianque(/|$)` |
+   | `harness-no-domain-runtime-deps` | `git\.enjoye\.top/enjoydream/(bianque\|ekit\|agentkit)(/\|$)\|github\.com/yi-nology/(bianque\|ekit\|agentkit)(/\|$)` |
+
+   两处都以 `(/|$)` 收尾而不是裸 `/`：宿主仓**根包**的 import 路径没有结尾斜杠
+   （`github.com/yi-nology/bianque`），只写 `/` 会漏掉恰恰最可能被直接引用的那个包——
+   **漏掉的形态是门禁变绿，不是变红**。
 2. **`tooldisclose` 打分是子串包含，参考实现是词集合交集**：
    `art` 会命中 `partial`。加了词干还原后 `file` 会命中 `profile`——
    召回更高、精度更低。已由上限 5 兜底，未改匹配形态。
 3. **`offload` 的 provider 消息块形态识别仍未做**（交给宿主）：内核不该认识各家消息结构。
 4. **`SeqGate` 依赖宿主调用 `Seed`**：机制正确，但漏调就等于闸失效，属人的纪律而非机械保证。
+   **2026-10-20 已缓解**：`Committer.SeedFromStore` 把「读快照 + 灌基线」收成一步，
+   且跨进程那条线另有 `StoreCAS.SaveIfNewer`（条件更新）兜底——
+   `SeqGate` 退化为进程内的快速过滤，**不再是唯一的防线**。

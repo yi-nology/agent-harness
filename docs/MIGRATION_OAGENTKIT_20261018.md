@@ -5,6 +5,14 @@
 > 实测结果：依赖升级 ✅ / 5 处 import 替换 ✅ / 24 个文件 errors 链路改写 ✅ /
 > 门禁两条规则收紧并反向验证 ✅ / `make check` 全绿（覆盖率 83.1%，门槛 60%）。
 >
+> ⚠️ **本文是历史快照。** 里面的版本号（`oekit/pkg v0.13.0`、四个 oagentkit 模块的
+> 当时版本）是**迁移当时**的值；本仓当前钉的版本已远高于此（`oekit/pkg v0.18.0`、
+> `agent v0.10.0`、`guardx v0.8.2`、`toolgate v0.12.0` 等，见 `go.mod`），
+> 且此后上游又搬过家（`toolgate/invoke` → `guardx/invoke`、`obs/obsx` → `llm/obsx`）。
+> **当前事实以 `go.mod` + [README 包表](../README.md) 为准。**
+> 本文保留的价值是**踩坑记录**：§1.5 的 sonic build tag 坑（报错完全指不到真实原因）、
+> §2 的 `progress` 撞名坑，这两条至今仍会绊到人。
+>
 > 清单外额外发现并修复的**既有缺陷**（均与本次迁移无关，是被 build cache 长期掩盖的）：
 > ① `bytedance/sonic v1.15.0` 的 build tag 排除 Go 1.27（见 §1.5）；
 > ② `pii` 包 `type Strategy` 与 `func Strategy()` 同名重名，无法编译；
