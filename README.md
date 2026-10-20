@@ -387,16 +387,20 @@ ptc.Options.Stages      // []invoke.Stage
 ## 宿主接入
 
 ```bash
-go get github.com/yi-nology/agent-harness@v0.2.0
+go get github.com/yi-nology/agent-harness@latest
 ```
 
 ```go
-require github.com/yi-nology/agent-harness v0.2.0   // 零 replace，直接版本化引入
+require github.com/yi-nology/agent-harness v0.6.4   // 零 replace，直接版本化引入
 ```
 
 > 升级前用 `git ls-remote --tags origin` 核候选版本真的存在——
 > `go list -m -versions` 报的是 proxy 的缓存目录，不是远端现实。
-> 当前已发布 tag 以远端为准（写稿时为 v0.2.0）。
+> 当前已发布 tag 以远端为准（写稿时为 v0.6.4）。
+>
+> ⚠️ **require 里写的是「最低版本」，不是「锁定版本」**：下游 `go mod tidy`
+> 只保证不低于这个版本，不会自动升到最新版。要用新版本必须显式
+> `go get ...@<新版本>`——这也是为什么这里写当前版本号而不是 `v0.0.0`。
 
 ```go
 import "github.com/yi-nology/agent-harness/dispatch"

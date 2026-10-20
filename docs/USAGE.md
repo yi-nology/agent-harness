@@ -13,7 +13,7 @@
 
 ## 怎么读这份文档
 
-**按需跳读，不必全接。** 22 个包是 9 组彼此独立的能力，典型接入顺序如下：
+**按需跳读，不必全接。** 22 个能力包分 10 组彼此独立的能力，典型接入顺序如下：
 
 ```
 ① 契约面        contract + statemachine    ← 你的状态长什么样（必接）
@@ -30,6 +30,12 @@
 
 每节的结构一致：**职责 → 最小集成片段 → 关键符号 → 坑**。
 最后一节 [§6 坑速查表](#6-坑速查表) 是全文浓缩，接线完成后拿它自查一遍。
+
+> **22 与 24 的口径差**：本文覆盖 **22 个能力包**（下面 10 组）。
+> `architecture-policy.yaml` 的 `modules` 段登记 **24 个**——
+> 多出的两个是 `toolname`（工具名归一的**单一真相**，被 `tooldisclose` 与 `ptc`
+> 共用，不单独成组接入）与 `archcheck`（门禁工具本身，宿主不用引）。
+> 两个数都对，说的不是一件事。
 
 ---
 
@@ -86,8 +92,17 @@ module github.com/yi-nology/agent-harness
 ```
 
 ```bash
-go get github.com/yi-nology/agent-harness@v0.2.0
+# 按最新发布版引入
+go get github.com/yi-nology/agent-harness@latest
+
+# 或钉到具体版本（查已发布版本：git ls-remote --tags origin）
+go get github.com/yi-nology/agent-harness@v0.6.4
 ```
+
+> **版本号为什么写 `@latest` 而不是钉死一个数字**：本文写稿时是 v0.6.4，
+> 而它会随发版变旧。钉死的数字在几轮发版后就是**过期指引**——
+> 按它引入会拿到一个缺了好几轮能力的旧版本，且没有报错。
+> `go get @latest` 不会过期；要复现特定版本再显式钉。
 
 **零 `replace`。** 本仓 go.mod 不得含 `replace`（`make check` 的 `modreplace` 门禁）。
 本地需要同时改上游仓时用 `make devlink` 走 `go.work`，见 [§5](#5-本地多仓并行开发)。
@@ -1403,8 +1418,8 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `vet` | go vet |
 | `lint` | golangci-lint（**未安装时明确报错退出**，不静默跳过） |
 | `test` | 全量单测 |
-| `cover-gate` | 覆盖率 < 60% 即红（当前实测 **80.4%**） |
-| `architecture-check` | 7 条规则 + 3 个门面包 + 22 个包的依赖方向 |
+| `cover-gate` | 覆盖率 < 60% 即红（当前实测 **86.6%**） |
+| `architecture-check` | 7 条规则 + 3 个门面包 + 24 个模块的依赖方向 |
 | `docsync` | README 包表 ↔ 仓库实际（生产行数 / 外部依赖） |
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |
