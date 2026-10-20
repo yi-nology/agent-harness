@@ -107,7 +107,11 @@ func ResolveLocation(current, location string) (string, error) {
 // 两条错误都成立时，先报**真实且更早**的那条：起始跳非法是链的根因，
 // 跳数超限可能只是根因的次生现象。两种结论都不丢，调用方拿到起始跳的 error
 // 后重试或改链即可。
-func CheckChain(start string, hops []string, allowPrivate, allowLoopback bool, maxHops int) error {
+// CheckChainWith 逐跳校验一条跳转链（具名放行面）。
+//
+// 放行面与 CheckURLWith、拨号层同一个类型（见 allow.go）——逐跳校验与单跳校验
+// 必须是同一套判据，否则「起始跳放行、后续跳收紧」这种事就没人能发现了。
+func CheckChainWith(start string, hops []string, allow Allow, maxHops int) error {
 	if maxHops <= 0 {
 		maxHops = DefaultMaxHops
 	}
@@ -116,7 +120,7 @@ func CheckChain(start string, hops []string, allowPrivate, allowLoopback bool, m
 	if n := firstTerminalHop(hops); n >= 0 {
 		followed = hops[:n]
 	}
-	if err := CheckURL(start, allowPrivate, allowLoopback); err != nil {
+	if err := CheckURLWith(start, allow); err != nil {
 		return &HopDeniedError{Hop: 1, URL: start, Err: err}
 	}
 	if len(followed) > maxHops {
@@ -133,12 +137,20 @@ func CheckChain(start string, hops []string, allowPrivate, allowLoopback bool, m
 		if err != nil {
 			return &HopDeniedError{Hop: i + 2, URL: loc, Err: err}
 		}
-		if err := CheckURL(next, allowPrivate, allowLoopback); err != nil {
+		if err := CheckURLWith(next, allow); err != nil {
 			return &HopDeniedError{Hop: i + 2, URL: next, Err: err}
 		}
 		current = next
 	}
 	return nil
+}
+
+// CheckChain 逐跳校验一条跳转链（双 bool 形态）。
+//
+// Deprecated: 用 CheckChainWith（理由同 CheckURL 的 Deprecated 说明）。
+// 保留旧签名是为了不破宿主 API。
+func CheckChain(start string, hops []string, allowPrivate, allowLoopback bool, maxHops int) error {
+	return CheckChainWith(start, hops, Allow{Private: allowPrivate, Loopback: allowLoopback}, maxHops)
 }
 
 // firstTerminalHop 返回首个终止跳下标，没有则 -1。

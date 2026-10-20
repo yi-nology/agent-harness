@@ -1123,13 +1123,14 @@ import (
 )
 
 func guardOutbound(rawURL string) error {
-	// 外部输入面（告警回推 / IM 推送）：(false, false)
-	// 凭证连通性探测：探测本机/内网自建服务是能力本身，传 (true, true)
-	return netguard.CheckURL(rawURL, false, false)
+	// 外部输入面（告警回推 / IM 推送）：零值放行面 = 私网与回环全拒
+	// 凭证连通性探测：探测本机/内网自建服务是能力本身，用 AllowSelfService()
+	// ——那个名字把意图留在代码里（这组比特也是 SSRF 穿透的入口）
+	return netguard.CheckURLWith(rawURL, netguard.Allow{})
 }
 
 func guardRedirects(start string, hops []string) error {
-	return netguard.CheckChain(start, hops, false, false, netguard.DefaultMaxHops)
+	return netguard.CheckChainWith(start, hops, netguard.Allow{}, netguard.DefaultMaxHops)
 }
 
 // 扩展名单：整份原子交换，先全量校验再一次性交换
@@ -1141,13 +1142,19 @@ func updatePolicy() error {
 
 **坑**
 
-- **已知局限：DNS rebinding 窗口**。DNS 解析与实际拨号之间存在 TOCTOU。
-  要根除需 Transport `DialContext` 的 `Control` 钩子在连接建立时复核对端地址；
-  本批先拦住「字面量私网/元数据地址」这一渗透测试主路径。
-  **宿主在 DialContext 上接不接是接线决策**，不是本包加一个函数的能事。
-- **名单分两组，口径不同**：回环族名字与回环地址同待遇，随 `allowLoopback`；
+- **`CheckURL` / `CheckChain` 的双 bool 形态已废弃**，请用具名的 `CheckURLWith` /
+  `CheckChainWith` + `netguard.Allow`。旧签名仍在（不破宿主 API），但两个 bool 的
+  含义只能靠调用点约定区分，而放行面是安全边界；具名形态让调用点自解释，
+  且将来加第三个放行维度不必破签名。**零值 `Allow{}` 是严的**（私网与回环全拒），
+  要放行必须显式写出来。
+- **拨号层要接上，否则 rebinding 窗口仍在**。`CheckURLWith` 是**写面校验**
+  （配置时判一次）；实际请求在之后由 HTTP 客户端再解析一次 DNS，两次之间权威
+  DNS 可以改口——那是活的 SSRF 窗口。`netguard.DialFunc` 把同一套判定落到
+  建连那一刻（名字层 + egress 预检 + 建连后核对真实 `RemoteAddr`），
+  **接法见下节**。
+- **名单分两组，口径不同**：回环族名字与回环地址同待遇，随 `Allow.Loopback`；
   其余名单项（精确名元数据/容器网桥名、`.internal/.local/.lan` 后缀）**无条件拒绝，
-  不看旗标**。`allowPrivate` 的语义是「放行 RFC1918 私网**地址**」，
+  不看旗标**。`Allow.Private` 的语义是「放行 RFC1918 私网**地址**」，
   不是「放行任意私有命名空间的**主机名**」。
 - **内置默认名单不可被削减**：`SetPolicy` 只能增补扩展位。
 - **后缀校验发生在注入期**：无前导点的后缀被拒（`corp` 会把语义从「拦 foo.corp」
@@ -1163,6 +1170,54 @@ func updatePolicy() error {
   协议相对地址 `//host/x` 更危险，不解析看不出跨主机跳转。
 - `netguard` **不在工具调用的判定环上，这是有意的**——塞进去就得猜「哪个参数字段是 URL」，
   那是领域知识。
+
+#### 3.9.1.1 拨号层接线：把 rebinding 窗口闭上
+
+写面校验（`CheckURLWith`）与实际请求分属两次 DNS 解析，两次之间权威 DNS 可以改口
+（`evil.example` 写面解析成公网地址、实际请求解析成元数据地址）。**接线是宿主的
+决策，但机制本仓已经备好**——只剩把 `Transport.DialContext` 换成 `netguard.DialFunc`。
+
+最省事的接法（`NewClient` 把「守卫挂在传输层」收成一行，并保留宿主自己的
+client 注入口）：
+
+```go
+import "github.com/yi-nology/agent-harness/netguard"
+
+// 生产：零值放行面 = 私网与回环全拒
+hc, err := netguard.NewClient(nil, netguard.Allow{})
+if err != nil {
+	return err
+}
+resp, err := hc.Get(targetURL)
+```
+
+已有自己的 `*http.Transport` 时：
+
+```go
+tr := netguard.NewTransport(myTransport, netguard.Allow{})
+hc := &http.Client{Timeout: 5 * time.Second, Transport: tr}
+```
+
+**三条接线纪律**：
+
+1. **两层放行面必须同一个值**。`Allow` 是校验层与拨号层**共用的类型**
+   （`CheckURLWith` / `CheckChainWith` / `DialOptions.Allow`），映射到上游 egress
+   也只有一处实现。口径不一致的后果是**分层放行**：校验层拒、拨号层放行——后者
+   才是安全问题。
+2. **逐 URL 的策略无法在拨号层表达**（拨号按连接、校验按 URL）。此时取
+   **拨号层最宽、校验层逐条**：拨号层放行校验层可能放行的全部范围，但**不放行
+   校验层恒拒的段**（链路本地/元数据、保留段）——那些段的拒绝与放行面无关。
+3. **测试要连本机假服务器时，只在测试里放宽回环**：
+
+   ```go
+   hc, err := netguard.NewClient(&http.Client{Timeout: 2 * time.Second},
+       netguard.Allow{Loopback: true})   // 只在测试里
+   ```
+
+   **不要**为了省事把生产配置一起放宽——那等于把刚补上的窗口重新打开。
+   若客户端的 `Transport` 是自定义 `RoundTripper`（不是 `*http.Transport`），
+   `NewClient` 会**报错**而不是悄悄放行：拨号发生在传输层内部，挂不上就没有
+   拨号层防线。
 
 #### 3.9.2 `pii`：个人信息脱敏
 

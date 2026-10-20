@@ -67,7 +67,7 @@ func TestDialFuncRejectsRebinding(t *testing.T) {
 			return conn, nil
 		},
 		DialOptions{
-			AllowPrivate: true,
+			Allow: Allow{Private: true},
 			Lookup: func(ctx context.Context, host string) ([]net.IP, error) {
 				return []net.IP{net.ParseIP("93.184.216.34")}, nil // 公网，预检放行
 			},
@@ -124,7 +124,7 @@ func TestDialFuncRejectsBlockedResolvedIP(t *testing.T) {
 			return &fakeConn{remote: addrOf("169.254.169.254")}, nil
 		},
 		DialOptions{
-			AllowPrivate: true,
+			Allow: Allow{Private: true},
 			Lookup: func(ctx context.Context, host string) ([]net.IP, error) {
 				return []net.IP{net.ParseIP("169.254.169.254")}, nil
 			},
@@ -150,7 +150,7 @@ func TestDialFuncRejectsAnyBlockedAmongMany(t *testing.T) {
 			return &fakeConn{remote: addrOf("93.184.216.34")}, nil
 		},
 		DialOptions{
-			AllowPrivate: true,
+			Allow: Allow{Private: true},
 			Lookup: func(ctx context.Context, host string) ([]net.IP, error) {
 				return []net.IP{net.ParseIP("93.184.216.34"), net.ParseIP("169.254.169.254")}, nil
 			},
@@ -200,7 +200,7 @@ func TestDialFuncPrivatePolicy(t *testing.T) {
 		)
 	}
 	// 允许私网 → 放行。
-	d := mk(DialOptions{AllowPrivate: true, Lookup: lookupPriv})
+	d := mk(DialOptions{Allow: Allow{Private: true}, Lookup: lookupPriv})
 	if _, err := d(context.Background(), "tcp", "intranet.example:80"); err != nil {
 		t.Fatalf("AllowPrivate=true 时私网必须放行: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestDialFuncPrivatePolicy(t *testing.T) {
 		func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return &fakeConn{remote: addrOf("127.0.0.1")}, nil
 		},
-		DialOptions{AllowLoopback: true, Lookup: lookupLoop},
+		DialOptions{Allow: Allow{Loopback: true}, Lookup: lookupLoop},
 	)
 	if _, err := d4(context.Background(), "tcp", "local.example:80"); err != nil {
 		t.Fatalf("AllowLoopback=true 时回环必须放行: %v", err)
@@ -241,7 +241,7 @@ func TestDialFuncRejectsLiteralIP(t *testing.T) {
 			return &fakeConn{remote: addrOf("169.254.169.254")}, nil
 		},
 		DialOptions{
-			AllowPrivate: true,
+			Allow: Allow{Private: true},
 			Lookup: func(ctx context.Context, host string) ([]net.IP, error) {
 				lookupCalled = true
 				return nil, nil

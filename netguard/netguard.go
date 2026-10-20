@@ -84,10 +84,12 @@ import (
 	"github.com/oekit/pkg/errors"
 )
 
-// CheckURL 校验出站 URL 是否允许平台代发。allowPrivate=false 时 RFC1918 私网一并拒绝；
-// allowLoopback=false 时回环/未指定地址一并拒绝（告警回推/IM 推送等外部输入面）；
-// 凭证连通性探测传 (true, true)——探测本机/内网自建服务是能力本身，且写面已收 admin。
-func CheckURL(rawURL string, allowPrivate, allowLoopback bool) error {
+// CheckURLWith 校验出站 URL 是否允许平台代发。
+//
+// 放行面用具名的 Allow（见 allow.go）：私网与回环是两个独立开关，零值即全拒。
+// 外部输入面（平台代发给他人的目标）用零值；探测自己部署的服务用
+// AllowSelfService()——那个名字把意图留在了代码里。
+func CheckURLWith(rawURL string, allow Allow) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return errors.Wrap(err, "出站 URL 非法")
@@ -101,7 +103,7 @@ func CheckURL(rawURL string, allowPrivate, allowLoopback bool) error {
 	}
 	// 名字层必须在解析之前跑：判定不依赖 DNS 结果，且省掉一次解析。
 	// CheckChain 逐跳调用本函数，故每一跳都过名字层。
-	if err := checkHostName(host, allowLoopback); err != nil {
+	if err := checkHostName(host, allow.Loopback); err != nil {
 		return err
 	}
 	ips := []net.IP{}
@@ -112,13 +114,25 @@ func CheckURL(rawURL string, allowPrivate, allowLoopback bool) error {
 	} else {
 		ips = resolved
 	}
-	opts := egress.Options{AllowPrivate: allowPrivate, AllowLoopback: allowLoopback}
+	eopts := allow.egressOptions()
 	for _, ip := range ips {
-		if err := egress.CheckHostWith(ip.String(), opts); err != nil {
+		if err := egress.CheckHostWith(ip.String(), eopts); err != nil {
 			return errors.Wrap(err, "出站目标已拒绝", "host", host)
 		}
 	}
 	return nil
+}
+
+// CheckURL 校验出站 URL 是否允许平台代发（双 bool 形态）。
+//
+// Deprecated: 用 CheckURLWith。双 bool 的两个开关含义只能靠调用点约定区分
+// （issue #2 的「缺口 1b」），而放行面是安全边界；具名形态让调用点自解释，
+// 且将来加第三个放行维度不必破签名。
+//
+// 保留旧签名是为了不破宿主 API：宿主现有的调用点一行不改仍能编译，
+// 但新代码请用 CheckURLWith。
+func CheckURL(rawURL string, allowPrivate, allowLoopback bool) error {
+	return CheckURLWith(rawURL, Allow{Private: allowPrivate, Loopback: allowLoopback})
 }
 
 // ── 名字层：DNS 解析之前按名字拒 ──

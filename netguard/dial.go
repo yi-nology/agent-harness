@@ -31,14 +31,24 @@
 //
 // # 用法
 //
+// 最省事的是用本包的构造件（它把「守卫挂在传输层」这件事收成一行，
+// 且保留宿主自己的 client/transport 注入口——见 client.go）：
+//
+//	hc, err := netguard.NewClient(nil, netguard.Allow{})
+//
+// 手搓传输层时（已有自己的 *http.Transport）：
+//
 //	hc := &http.Client{Transport: &http.Transport{
-//	    DialContext: netguard.DialFunc(nil, netguard.DialOptions{AllowPrivate: true}),
+//	    DialContext: netguard.DialFunc(nil, netguard.DialOptions{
+//	        Allow: netguard.Allow{Private: true},
+//	    }),
 //	}}
 //
 // # 与 CheckURL 的策略口径必须一致
 //
-// DialOptions 的两个开关与 CheckURL 的 allowPrivate / allowLoopback 同义。
-// **两者不一致的后果是分层放行**：校验层按「允许私网」放行、拨号层按缺省
+// DialOptions 的放行面与校验层是**同一个类型**（Allow，见 allow.go）：
+// 两者共用一份语义与一个到上游 egress 的转换点。
+// **口径不一致的后果是分层放行**：校验层按「允许私网」放行、拨号层按缺省
 // （禁私网）拒，表现为「配置明明允许内网，调用却失败」；反向则是校验层拒、
 // 拨号层放行——后者才是安全问题。
 //
@@ -60,10 +70,9 @@ import (
 
 // DialOptions 拨号层守卫的策略选项。
 type DialOptions struct {
-	// AllowPrivate 放行私网段（与 CheckURL 的 allowPrivate 同义）。
-	AllowPrivate bool
-	// AllowLoopback 放行回环族（与 CheckURL 的 allowLoopback 同义）。
-	AllowLoopback bool
+	// Allow 放行面——与校验层（CheckURLWith / CheckChainWith）**同一个类型**，
+	// 同一份语义。零值即私网与回环全拒。
+	Allow Allow
 	// Dialer 底层拨号器。nil 时用带 10s 超时的 net.Dialer 缺省。
 	Dialer *net.Dialer
 	// Lookup 主机解析器。nil 时用 net.DefaultResolver.LookupIP；测试可注入
@@ -99,7 +108,7 @@ func DialFunc(next func(ctx context.Context, network, addr string) (net.Conn, er
 			return nil, errors.Wrap(err, "拨号地址非法", "addr", addr)
 		}
 		// 名字层：与 CheckURL 同一套名单。
-		if err := checkHostName(host, opts.AllowLoopback); err != nil {
+		if err := checkHostName(host, opts.Allow.Loopback); err != nil {
 			return nil, err
 		}
 		// 预检：解析出的每个 IP 都必须过 egress。
@@ -165,8 +174,7 @@ func checkRemoteAddr(conn net.Conn, opts DialOptions) error {
 
 // checkIP 单个 IP 过 egress（与 CheckURL 同一判据、同一开关）。
 func checkIP(host string, ip net.IP, opts DialOptions) error {
-	eopts := egress.Options{AllowPrivate: opts.AllowPrivate, AllowLoopback: opts.AllowLoopback}
-	if err := egress.CheckHostWith(ip.String(), eopts); err != nil {
+	if err := egress.CheckHostWith(ip.String(), opts.Allow.egressOptions()); err != nil {
 		return errors.Wrap(err, "出站目标已拒绝", "host", host, "ip", ip.String())
 	}
 	return nil
