@@ -34,6 +34,22 @@
 //  2. 跨仓依赖用 `ext:<import 路径前缀>` 表达，如
 //     `ext:github.com/yi-nology/agent-harness/netguard`。
 //  3. 报告用 WriteReport；是否阻断用 Result.HasBlocking。
+//
+// # 调用面禁令与路径白名单怎么表达
+//
+// policy **没有** `forbid_call_regex` / `allow_paths` 字段——判据面只有两种：
+// **import 路径**（`forbid_import_regex`）与**源码文本**（`forbid_regex`）。
+// 常见的两种诉求用现有字段就能表达：
+//
+//	| 诉求 | 表达方式 |
+//	|---|---|
+//	| 「某个第三方包只允许经某一个适配层引入」（路径白名单）| `forbid_import_regex` + `scope_exclude: [适配层目录]` |
+//	| 「某目录禁止裸 fetch(，但 api 客户端目录与两个 SSE 钩子除外」（调用面禁令 + 路径白名单）| `forbid_regex`（匹配调用形态）+ `scope_exclude`（豁免目录）|
+//
+// 为什么不再加第三种判据面：每多一种判据面，policy 作者就要多记一套豁免语义
+// （负向前置的锚点写在哪、目录豁免算不算……）。本包已经因为「同一字段在两个分支
+// 语义不同」吃过一次亏（import 分支不认 `negative_follow`，静默假红），那次的
+// 修法是**让两个分支同构**，而不是再加一种。
 package archcheck
 
 import (

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -210,5 +212,52 @@ func TestLocDeviationIsSymmetric(t *testing.T) {
 func TestLocDeviationHandlesEmptyPackage(t *testing.T) {
 	if got := locDeviation(0, 0); got != 0 {
 		t.Errorf("0 vs 0 的偏差应为 0，实得 %v", got)
+	}
+}
+
+// TestImportPathsIgnoresDocExamples 依赖列只认**真正的 import 声明**。
+//
+// 旧实现用正则扫全文的引号内容，于是**文档注释里的示例路径**会被当成真依赖：
+// 写一句 `forbid_import_regex: "example.com/demo/internal/(engine|service)"`
+// 就让 README 的依赖列多出一项「demo/internal」——那不是依赖，是举例。
+//
+// 与本仓 archcheck 包当年的同一个病（import 声明有六种以上书写形态，逐行正则必然
+// 漏）同源，故同样走语法树。这条用例钉住它。
+func TestImportPathsIgnoresDocExamples(t *testing.T) {
+	dir := t.TempDir()
+	src := `package demo
+
+// 文档注释里的示例路径不是依赖：
+//	forbid_import_regex: "example.com/demo/internal/(engine|service)"
+//	negative_follow:
+//	  - anchor: "example.com/demo/internal/engine/"
+import (
+	_ "github.com/oagentkit/guardx/egress"
+	_ "github.com/oekit/pkg/errors"
+)
+
+func f() { _ = "example.com/other/third/pkg" }
+`
+	path := filepath.Join(dir, "a.go")
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := importPaths(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mods []string
+	for _, p := range paths {
+		if looksLikeModulePath(p) {
+			mods = append(mods, p)
+		}
+	}
+	if len(mods) != 2 {
+		t.Fatalf("只应取到两个真 import，实得 %d 个: %v", len(mods), mods)
+	}
+	for _, p := range mods {
+		if strings.HasPrefix(p, "example.com") {
+			t.Fatalf("文档注释/字符串里的示例路径不得被当成依赖: %q", p)
+		}
 	}
 }

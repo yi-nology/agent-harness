@@ -227,6 +227,16 @@ if res.HasBlocking() {
    （`internal/xxx`），按顶层目录判会把整棵 `internal/` 误报成一个未登记的包。
 4. **判据与实现分离**：policy 是声明，本包是执行体。宿主可以只用自己的声明面
    （只写 `modules` 段 + `dependency_direction` 段），复用本包的全部判定。
+5. **判据面只有两种**（import 路径 / 源码文本），没有 `forbid_call_regex` /
+   `allow_paths` 这类字段——常见诉求用现有字段表达：
+
+   | 诉求 | 表达方式 |
+   |---|---|
+   | 某个第三方包只允许经某一个适配层引入（路径白名单）| `forbid_import_regex` + `scope_exclude` |
+   | 某目录禁止裸 `fetch(`，但 api 客户端目录与两个 SSE 钩子除外 | `forbid_regex`（匹配调用形态）+ `scope_exclude` |
+
+   写了不存在的字段会被 YAML **静默丢弃**（那条规则于是变成「声明还在、一条都判
+   不了」），policy 自校验会把它报成「规则无执行体」并给出可执行的下一步。
 
 ### 与 oekit 家族的一致性（2026-10-17 补齐）
 
@@ -354,7 +364,8 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 | 本仓版本 | 变更 | 下游要做什么 |
 |---|---|---|
-| **v0.5.0** | 上游把判定环原语 `invoke` 从 `oagentkit/toolgate` 迁到 `oagentkit/guardx`（框架无关的原语不该被 eino 重仓的地板拖住），本仓跟随 | import 路径换成 `github.com/oagentkit/guardx/invoke`；require 升到 `toolgate v0.12.0` + `guardx v0.8.0`。**编译期报错**（类型身份变了），不是静默行为变化 |
+| **v0.6.0** | `netguard` 的放行面改为具名类型（`Allow`），校验层与拨号层共用同一个类型；新增接线件 `NewClient` / `NewTransport`；依赖地板抬到上游最新一轮（7 个模块）| `netguard.DialOptions.AllowPrivate` / `AllowLoopback` 两字段合并为 `Allow`（**宿主若已接线，改字段名**）。其余为新增 API，旧签名保留但已废弃。**地板抬高对下游是隐式 breaking**：`go mod tidy` 不跑会报 `updates to go.mod needed`，且报错不提真正原因——迁移说明见 [CHANGELOG.md](CHANGELOG.md) |
+| **v0.5.0** | 上游把判定环原语 `invoke` 从 `oagentkit/toolgate` 迁到 `oagentkit/guardx`（框架无关的原语不该被 eino 重仓的地板拖住），本仓跟随；依赖地板抬到上游最新一轮 | import 路径换成 `github.com/oagentkit/guardx/invoke`；require 升到 `toolgate v0.12.0` + `guardx v0.8.0`。**编译期报错**（类型身份变了），不是静默行为变化 |
 | v0.4.0 | 门禁执行体从 `package main` 下沉为可导入包 `archcheck/` | 无（新增包，不改既有 API）|
 
 受影响的本仓 API（签名里带 `invoke` 类型）：

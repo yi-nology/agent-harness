@@ -80,10 +80,17 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 
 		// 没有执行体的规则 = 永远判不了的规则。旧实现把它当「声明面字段」
 		// 静默跳过，于是「写错字段名」与「故意声明一条说明」不可区分。
+		//
+		// 报错要给出**可执行的下一步**：policy 里没有 forbid_call_regex /
+		// allow_paths 这类字段（判据面只有 import 路径与源码文本两种），
+		// 写了会被 YAML 解析静默丢弃——于是规则就成了「声明还在、一条都判不了」。
 		if r.ForbidRegex == "" && r.ForbidImport == "" {
 			add(policyPath, 0,
 				"规则 %q 没有执行体（forbid_regex 与 forbid_import_regex 皆空）：它一条都判不了，"+
-					"却仍计入「N 条规则」的报告——这是最隐蔽的门禁失效形态", r.ID)
+					"却仍计入「N 条规则」的报告——这是最隐蔽的门禁失效形态。"+
+					"调用面禁令用 forbid_regex 表达、路径白名单用 scope_exclude 表达；"+
+					"policy 里没有 forbid_call_regex / allow_paths 这两个字段，写了会被 YAML 静默丢弃",
+				r.ID)
 		}
 		switch r.Severity {
 		case "", "error", "warn":

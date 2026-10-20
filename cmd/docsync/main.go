@@ -19,6 +19,8 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -42,13 +44,6 @@ type row struct {
 var (
 	// 表头：| `pkg` | loc | deps | 职责 |
 	rowRe = regexp.MustCompile("^\\|\\s*`([a-z]+)`\\s*\\|\\s*([0-9]+)\\s*\\|\\s*([^|]*?)\\s*\\|\\s*(.*?)\\s*\\|$")
-	// 候选：任意不带空白的带引号 token。像不像 module 路径交给 looksLikeModulePath
-	// 判断——用正则硬表达「排除 scheme:// 与相对路径」既写不准又难维护。
-	//
-	// 这里不能图省事放宽成「含点含斜杠就算」：测试与注释里全是 URL 字面量
-	// （http://127.0.0.1:8900/api、//169.254.169.254/latest）与相对路径
-	// （../escape），放宽即把它们全当成依赖，门禁直接失效。
-	importRe = regexp.MustCompile(`"([^"\s]+)"`)
 	// 外部依赖判定：第二段起表示子路径；仓内自身的 module 不算外部。
 	selfModule = "github.com/yi-nology/agent-harness"
 )
@@ -206,13 +201,23 @@ func measure(pkg string) (int, []string, error) {
 			return 0, nil, readErr
 		}
 		loc += countLines(string(b))
-		for _, m := range importRe.FindAllStringSubmatch(string(b), -1) {
-			path := m[1]
+		// 依赖取自**真正的 import 声明**（go/ast），不是从源码文本里扫引号内容。
+		//
+		// 旧实现用正则扫全文，于是**文档注释里的示例路径**会被当成真依赖：
+		// 写一句 `forbid_import_regex: "example.com/demo/internal/(engine|service)"`
+		// 就会让 README 的依赖列多出一项「demo/internal」——那不是依赖，是举例。
+		// 这与本仓 archcheck 包当年的同一个病（import 声明有六种以上书写形态，
+		// 逐行正则必然漏）同源，故同样走语法树。
+		paths, perr := importPaths(f)
+		if perr != nil {
+			return 0, nil, perr
+		}
+		for _, path := range paths {
 			if isSelfPath(path) {
 				continue // 本仓自身不算外部依赖
 			}
 			if !looksLikeModulePath(path) {
-				continue // URL 字面量、相对路径、纯 stdlib 标识等
+				continue // 纯 stdlib 标识等
 			}
 			depSet[normalizeDep(path)] = true
 		}
@@ -223,6 +228,27 @@ func measure(pkg string) (int, []string, error) {
 	}
 	sort.Strings(deps)
 	return loc, deps, nil
+}
+
+// importPaths 取一个文件里真正 import 的路径。
+//
+// 解析失败必须响亮失败：依赖列是从 import 声明推出来的，推不出来就没有结论，
+// 静默跳过等于「这个包的依赖列是空的」。
+func importPaths(path string) ([]string, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly|parser.SkipObjectResolution)
+	if err != nil {
+		return nil, fmt.Errorf("解析 %s 失败（依赖列取自 import 声明，解析不出来就没有结论）: %w", path, err)
+	}
+	var out []string
+	for _, im := range f.Imports {
+		p, uerr := strconv.Unquote(im.Path.Value)
+		if uerr != nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 // isSelfPath 判断路径是否指向本仓自身（含其子包）。

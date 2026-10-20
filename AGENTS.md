@@ -431,6 +431,36 @@ IP 策略单源在 egress（包头「与上游 urlguard 的分工」明写「不
 校验按 URL），此时取「拨号层最宽、校验层逐条」，且拨号层**不放行校验层恒拒的段**
 （链路本地/元数据、保留段——那些段的拒绝与开关无关，两层必须一致）。
 
+## 发版纪律（2026-10-20 补齐）
+
+本仓是**按版本引入**的下游依赖（`go get github.com/yi-nology/agent-harness@vX.Y.Z`），
+所以「发版」本身就是给下游的一份契约。三条纪律：
+
+1. **发版顺序：改代码并提交 → 生成 CHANGELOG 并提交 → 打 tag → 推 tag。**
+   生成器（`matrix-tools/scripts/gen_changelogs.py`）按 tag 切段，**tag 快照里的
+   CHANGELOG 必须已经含该 tag 自己那一段**——顺序反了就会重演上游那条「已发布 tag
+   的 CHANGELOG 缺自己那段」的缺口（下游拿到模块缓存才发现发布说明是残缺的，
+   而 `go mod download` 拿到的就是 tag 快照）。生成命令：
+
+   ```bash
+   python3 <matrix-tools>/scripts/gen_changelogs.py \
+       --repo agent-harness --root /Users/zhangyi/my_project \
+       --next-version vX.Y.Z
+   ```
+
+2. **发版 commit 的 message 里必须写清「下游要做什么」**。CHANGELOG 是从 git 历史
+   生成的，commit message 的正文**就是**发布说明的正文——不写进去，下游看不到。
+   三类必写：① 破坏性的 import 路径变更（下游要改哪一行 import）；② 依赖地板抬高
+   （下游 `go mod tidy` 不跑就红，而报错只说 `updates to go.mod needed`，不提原因）；
+   ③ 字段合并/改名（下游要改哪个调用点）。
+
+3. **「地板抬高」对下游是隐式 breaking**：本仓自身代码零改动，只看本仓的 diff
+   看不出来。凡是把上游矩阵模块抬到新版的发版，都要在 CHANGELOG 里显式点出
+   「抬了哪些地板、对应的迁移说明在哪个仓的哪个版本」。
+
+另：README 的「下游升级须知」表是**手写**的精简版（生成器每次都会重写 CHANGELOG，
+手写内容活不过下一次生成）——表里放「哪一版会让下游红、红在哪儿」，细节指 CHANGELOG。
+
 ## LICENSE 署名
 
 `Copyright (c) 2024-2026 enjoydream` —— **照此为准，不要因为仓名是 `yi-nology`

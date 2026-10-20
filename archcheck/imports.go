@@ -50,6 +50,24 @@ import (
 // 解析失败必须响亮失败（返回 error → 门禁退出码 2），不得静默跳过该文件：
 // 静默跳过等于「该文件对本规则隐形」，而语法坏掉的文件本就编译不过，
 // 真正的风险是「门禁在这个文件上给不出任何结论，却显示成通过」。
+//
+// # 豁免口径：判据面是「被匹配的那段文本」
+//
+// negative_follow 在两个分支都要生效，且**判据面相同**——都是「正则匹配到的那
+// 段文本」：文本分支是源码行，import 分支是 import 路径。
+//
+// 此前 import 分支**不应用** negative_follow，于是同一个字段在两个分支语义不同：
+// policy 作者按字段名的自然用法（import 规则配 import 豁免）写负向前置，实际
+// 一条都豁免不掉——**假红**（该放行的 import 照样报违规）。
+//
+// 豁免锚点写在哪也随判据面而定：import 分支里锚点是**路径片段**，例如
+//
+//	forbid_import_regex: "example\\.com/demo/internal/(engine|service)"
+//	negative_follow:
+//	  - anchor: "example.com/demo/internal/engine/"
+//	    forbid_follow: statemachine
+//
+// 即「路径以 engine/ 开头、紧接着是 statemachine 的那条 import 豁免」。
 func importViolations(root string, r Rule) ([]Violation, error) {
 	re, err := regexp.Compile(r.ForbidImport)
 	if err != nil {
@@ -73,7 +91,12 @@ func importViolations(root string, r Rule) ([]Violation, error) {
 			if uerr != nil {
 				continue
 			}
-			if !re.MatchString(p) {
+			loc := re.FindStringIndex(p)
+			if loc == nil {
+				continue
+			}
+			// 豁免判据面 = import 路径（与文本分支同构：都是被匹配的那段文本）。
+			if neutralized(p, loc[0], loc[1], r.NegFollow) {
 				continue
 			}
 			out = append(out, Violation{

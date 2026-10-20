@@ -54,6 +54,9 @@ func iterFiles(root string, includes []string, ignoreTest bool) []string {
 // 豁免的形态是「anchor 紧跟 forbid_follow」，命中位置（被禁词）落在 forbid_follow 里。
 // 故要问的是：命中位置**之前**是否存在一处 anchor，其后紧跟 forbid_follow。
 //
+// 判据面是「被匹配的那段文本」：文本分支传源码行，import 分支传 import 路径。
+// 两侧同构——否则同一个字段在两个分支语义不同（豁免写了一条不生效，且不报错）。
+//
 // 旧实现只取 anchor 在本行的**第一次**出现（strings.Index），于是同一行出现多处
 // anchor 时，后面那处永远看不到——而「断言不得出现某词」的用例里，同一行常常有
 // 两处断言（一正一反），漏判的表现是**门禁把合法的负向断言报成违规**。
