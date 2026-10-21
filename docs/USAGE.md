@@ -512,6 +512,53 @@ func advise(err error) string {
 - **`Code` 不得写入每次都变的内容**（数值、标识、耗时），它要跨版本稳定用于聚合。
 - **`RetryableReporter` 的实现方必须 nil-safe**：链上可能挂 typed-nil 指针。
 
+#### 3.3.4 审批门接进判定环：`policy.Stage`
+
+审计门（`policy`）有两个接入口：
+
+| 入口 | 形态 | 用在哪 |
+|---|---|---|
+| `policy.WithAuditGate` | 包住**单个工具**（eino 的 `InvokableTool`） | 一个工具单独加审 |
+| `policy.Stage` | 接成**判定环的一环**（`invoke.Stage`） | **一处装配、处处生效** |
+
+`Stage` 才是「装配一次、处处生效」的形态：工具调用、程序内调用
+（`ptc` 的 `host.<tool>()`）、子进程侧调用全部走同一条 invoke 链 ⇒
+审批规则只装配一次。
+
+```go
+import (
+	"github.com/yi-nology/agent-harness/guardset"
+	"github.com/yi-nology/agent-harness/policy"
+)
+
+// 审批门：策略来自宿主的外置 yaml（阈值只降不升）。
+p, err := policy.LoadOverrides(fsys)
+if err != nil {
+	return err // 解析失败即拒，不带错跑
+}
+gate := policy.NewGate(p, nil)
+
+// 接成判定环的一环。Op 决定这一环审的是哪类操作；
+// onDecision 是审计回调（留痕用）。
+stages := []invoke.Stage{
+	policy.Stage(gate, policy.Op{Type: policy.OpToolCall}, func(d policy.Decision) {
+		audit("tool_call", d)
+	}),
+	tooldisclose.Stage(catalog),   // 披露门
+	guardset.Stage(guards),        // 多守卫合成
+}
+```
+
+**三个要点**
+
+- **`Op` 决定审的是哪类操作**：`OpToolCall`（工具调用面）/ `OpExecuteStep`
+  （已批准方案的执行步骤）/ `OpPlanSubmit`（方案提审）。判定环里
+  `c.Name` 会覆盖 `Op.Tool`（工具名由调用现场给出）。
+- **没装审批门（`gate == nil`）⇒ 不放行这道门，但不是静默**：留痕里仍有这一环，
+  名称可查（`audit_gate`）。
+- **审批与执行后端是两层**：审批判「该不该做」，`sandbox` 的档位判「在哪跑」。
+  两者要**一起同意**才放行——那正是 `gatecheck` 包做的事（见 §3.11）。
+
 ---
 
 ### 3.4 程序化工具编排：`ptc`
@@ -1556,7 +1603,72 @@ case retryplan.PathReplayed:
 **退避**：`d.Backoff` 与 `d.RetryAfter` 给了退避建议（限流类必须退避：
 立刻重试只会立刻再被限流，把一次退避能吸收的拥塞放大成重试风暴）。
 
-### 3.11 门面三件：`dispatch` + `policy` + `reminder`
+### 3.11 审批 × 档位的联合判据：`gatecheck`
+
+审批层（`policy`）与沙箱层（`sandbox`）各自分属两个上游模块，**互不知情**
+（`toolgate/policy` 不 import `guardx/sandbox`，反之亦然）。于是
+「两层是否都同意」这个判定**没有单点**——它落在每个宿主手里，必然漂移：
+同一个调用在 A 宿主被判「需人审」、在 B 宿主被判「自动放行」。
+
+`gatecheck` 把它收成**一条**判定（**只做合成，不重新实现任何一层**）。
+
+```go
+import (
+	"github.com/yi-nology/agent-harness/gatecheck"
+	"github.com/yi-nology/agent-harness/policy"
+	"github.com/yi-nology/agent-harness/sandbox"
+)
+
+// 装配一次，之后每次执行走同一套判据（次序固定在一处）。
+g := gatecheck.NewGuard(policyGate, sandboxRegistry)
+
+out, dec := g.Run(ctx, gatecheck.Request{
+	Op:       policy.Op{Type: policy.OpExecuteStep, Mode: policy.ModeAuto},
+	MinLevel: sandbox.LevelOS,
+	Budget:   sandbox.Budget{MaxMemory: 1 << 30},
+	Program:  program,
+})
+switch dec.Outcome {
+case gatecheck.OutcomeProceed:
+	// out 已执行完成
+case gatecheck.OutcomeNeedHuman:
+	// 去问人（不要去换后端）
+case gatecheck.OutcomeDenied:
+	// 这次操作被否
+case gatecheck.OutcomeLevelShort:
+	// 档位不足 / 预算兜不住 ⇒ 宿主该换环境
+case gatecheck.OutcomePlanOnly:
+	// 计划模式：只审不执行
+}
+```
+
+**判据顺序是有意的**：
+
+| 审批层 | 沙箱层 | 结论 | 写反的后果 |
+|---|---|---|---|
+| 拒绝 | 任意 | **拒绝** | 档位不足 → 宿主去**换后端**，而该做的是「这次被否了」 |
+| 需人审 | 选不到 | **需人审** | 档位不足 → 宿主**不找人** ⇒ 这次调用既没执行也没人管，**静默丢失** |
+| 放行 | 选不到 | 拒绝（档位不足） | 降级放行 ⇒ 「以为兜住了、实际没有」 |
+
+**「需人审」必须优先于「档位不足」**：两条拒绝对宿主处置完全不同——
+档位不足该**换环境**，需人审该**去问人**。先报哪条决定宿主去找谁。
+
+**两处 fail-closed**：没装审批门 ⇒ 按需人审；要求了档位却没有登记簿 ⇒ 拒绝。
+
+**受管后端（`gatecheck.Managed`）**：把真后端包起来，判据在 `Exec` 内部、
+紧挨着执行，**不可绕过**——否则「判过的后端 ≠ 实际跑的后端」又有了信号落差。
+
+```go
+// 把 ptc.SubprocessProvider（或任何 sandbox.Provider）包成受管后端，
+// 注册进登记簿即可。
+managed := gatecheck.NewManaged(inner, policyGate, sandboxRegistry, sandbox.LevelProcess)
+_ = sandboxRegistry.Register(managed)
+```
+
+**承诺边界**：本包只判「两层是否都同意」，**不判「实际隔离强度是否兑现声明」**
+——档位是后端自报的，内核不校验其真实性（那要审后端实现，不是判据能做的事）。
+
+### 3.12 门面三件：`dispatch` + `policy` + `reminder`
 
 这三个包是**门面**，核心都在 `oagentkit`。**不要在本仓加实现**——
 `harness-facade-stays-facade` 门禁（error 级，走 `go/ast`）会拦下新类型、

@@ -46,10 +46,12 @@ modules:
 
   - id: policy
     roots: [policy]
-    requires: ["ext:github.com/oagentkit/toolgate"]
+    requires: ["ext:github.com/oagentkit/toolgate", "ext:github.com/oagentkit/guardx"]
     owner: harness
     managed: true
-    notes: 操作审计门：阈值只降不升、解析失败即拒
+    notes: |
+      操作审计门：阈值只降不升、解析失败即拒。
+      guardx 是为 Stage 的返回类型（invoke.Stage）而登记的——签名所需，非实现。
 
   - id: spill
     roots: [spill]
@@ -547,9 +549,12 @@ facades:
     desc: 操作审计门门面包，核心在 oagentkit/toolgate/policy
     severity: error
     upstream: ["github.com/oagentkit/toolgate/policy"]
-    # 额外依赖是签名本身要求的，不是实现：io/fs 是 LoadOverrides 的参数类型，
-    # eino/components/tool 是 WithAuditGate 的出入参。两者都不提供任何实现。
-    allowed_imports: ["io/fs", "github.com/cloudwego/eino/components/tool"]
+    # 额外依赖是签名本身要求的，不是实现：
+    #   - io/fs 是 LoadOverrides 的参数类型；
+    #   - eino/components/tool 是 WithAuditGate 的出入参；
+    #   - guardx/invoke 是 Stage 的返回类型（判定环的一环）。
+    # 三者都不提供任何实现。
+    allowed_imports: ["io/fs", "github.com/cloudwego/eino/components/tool", "github.com/oagentkit/guardx/invoke"]
 
   - package: reminder
     desc: 系统注入防伪包裹门面包，核心在 oagentkit/guardx/injectband

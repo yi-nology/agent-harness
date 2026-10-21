@@ -7,6 +7,7 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/oagentkit/guardx/invoke"
 )
 
 // 本包是到 oagentkit/toolgate/policy 的**类型别名转发层**：它的职责不是实现审计语义
@@ -122,5 +123,83 @@ func TestWithAuditGateFiresAudit(t *testing.T) {
 	}
 	if seen[0].Decider != DeciderRule {
 		t.Errorf("审计决策者应为 rule, got %q", seen[0].Decider)
+	}
+}
+
+// ── 4. Stage 转发：接进判定环的那一环 ──
+//
+// 审计门有两个接入口：`WithAuditGate`（包单个工具）与 `Stage`（接成判定环的一环）。
+// 后者是「一处装配、处处生效」的形态——工具调用、程序内调用、子进程侧调用
+// 全走同一条 invoke 链 ⇒ 审批规则只装配一次。
+//
+// 门面原先缺这一项，宿主想接审批进判定链只能 import 上游 toolgate，
+// 那就绕过了本仓「调用面逐字兼容」的承诺。
+//
+// 故本测试钉的是：转发**能用**，且装上之后**真的参与判定**。
+func TestStageForwardsAndParticipates(t *testing.T) {
+	// 审批门固定裁决 deny（用例外规则，与 kit 的判定顺序一致：
+	// 例外规则 → 矩阵层 → 兜底）。
+	//
+	// **规则只对 OpExecuteStep 生效** —— 这样「传给上游的 Op 是哪个」才有
+	// 可观察的差别：Op 被抹掉（变成 OpToolCall）⇒ 规则不命中 ⇒ 走矩阵层
+	// ⇒ 结论不同。若规则不限 op 类型，两种 Op 都命中，差异就消失了。
+	p := &Policy{AutoMaxRisk: 2, FullMaxRisk: 3}
+	p.Rules = []Rule{{
+		ID:      "test_deny",
+		OpTypes: []string{string(OpExecuteStep)},
+		Verdict: VerdictDeny,
+		Reason:  "测试固定拒绝",
+	}}
+	g := NewGate(p, nil)
+
+	// 回调被调到了没（钉「审计留痕」这条线），以及**按哪条规则判的**。
+	var decided bool
+	var got Decision
+	stage := Stage(g, Op{Type: OpExecuteStep}, func(d Decision) { decided = true; got = d })
+	if stage == nil {
+		t.Fatal("Stage 转发不应返回 nil")
+	}
+
+	// 装进 invoke 链跑一次：拒绝必须是**这一环**给出的。
+	chain, err := invoke.NewChain(okHandler, []invoke.Stage{stage})
+	if err != nil {
+		t.Fatalf("装配判定链失败: %v", err)
+	}
+	if _, verr := chain.Do(context.Background(), invoke.Call{Name: "x", Args: "{}"}); verr == nil {
+		t.Fatal("审批门拒绝时判定链应当拒")
+	}
+	if !decided {
+		t.Error("裁决回调应被调用（审计留痕断了）")
+	}
+	// 钉「按哪条规则判的」：Op 传错时结论可能仍是拒绝（fail-safe），
+	// 但**理由与规则 ID 会变**——只钉「放行/拒绝」抓不到这种漂移。
+	if got.RuleID != "test_deny" {
+		t.Errorf("裁决应由规则 test_deny 给出，实得 RuleID=%q（传给上游的 Op 没被用上？）", got.RuleID)
+	}
+}
+
+// okHandler 一个恒放行的执行体（判定链必须有执行体才能装配）。
+//
+// invoke.Handler 是**函数类型**（不是接口）。
+func okHandler(context.Context, invoke.Call) (invoke.Result, error) {
+	return invoke.Result{Text: "ok"}, nil
+}
+
+// TestStageNilGateDoesNotBlock 钉住：没装审批门（g == nil）⇒ **不放行这道门**
+// 但**不静默**——留痕里仍有这一环（kit 的既有语义）。
+//
+// 误用形态：把「没装门」当成「拒绝一切」⇒ 宿主不装门就跑不动；
+// 或当成「完全放行」⇒ 以为审批过了，实际没有门。
+func TestStageNilGateDoesNotBlock(t *testing.T) {
+	stage := Stage(nil, Op{Type: OpToolCall}, nil)
+	if stage == nil {
+		t.Fatal("Stage 转发不应返回 nil")
+	}
+	chain, err := invoke.NewChain(okHandler, []invoke.Stage{stage})
+	if err != nil {
+		t.Fatalf("装配判定链失败: %v", err)
+	}
+	if _, verr := chain.Do(context.Background(), invoke.Call{Name: "x", Args: "{}"}); verr != nil {
+		t.Fatalf("未装配审批门时不应拦下调用: %v", verr)
 	}
 }
