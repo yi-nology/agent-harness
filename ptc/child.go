@@ -28,8 +28,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/oagentkit/guardx/sandbox/wire"
 	"github.com/oagentkit/guardx/toolfail"
+	"github.com/oagentkit/guardx/wire"
 	"github.com/oekit/pkg/errors"
 )
 

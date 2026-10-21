@@ -17,7 +17,7 @@
 //	启动通道：父发 Start → 子；子回 Result → 父
 //	调用通道：子发 Request → 父；父回 Response → 子
 //
-// **两条通道必须是两条连接**（见 guardx/sandbox/wire 的包注释）。又因为
+// **两条通道必须是两条连接**（见 guardx/wire 的包注释）。又因为
 // `os.Pipe` 是**单向**的，故每条通道用两条单向管道——共 4 条。
 // 用 socketpair 能省成 2 条，但那是 Unix 专有；`os.Pipe` 跨平台。
 //
@@ -43,8 +43,8 @@ import (
 
 	"github.com/oagentkit/guardx/invoke"
 	"github.com/oagentkit/guardx/sandbox"
-	"github.com/oagentkit/guardx/sandbox/wire"
 	"github.com/oagentkit/guardx/toolfail"
+	"github.com/oagentkit/guardx/wire"
 	"github.com/oekit/concurrency/async"
 )
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/oagentkit/guardx/sandbox/wire"
+	"github.com/oagentkit/guardx/wire"
 	"github.com/yi-nology/agent-harness/toolname"
 )
 
