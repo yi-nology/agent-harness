@@ -60,13 +60,21 @@ func requireMemoryLimitSupport(t *testing.T) {
 // （那正是唯一能建出子 cgroup 的环境形态）。
 func buildChildProgram(t *testing.T) string {
 	t.Helper()
+	return buildChildProgramTB(t)
+}
+
+// buildChildProgramTB 编译子进程程序的共用实现（测试与 benchmark 都要用）。
+//
+// benchmark 传的是 *testing.B，故这里收 testing.TB（两者都满足）。
+func buildChildProgramTB(tb testing.TB) string {
+	tb.Helper()
 	if pre := os.Getenv(childBinEnv); pre != "" {
 		if _, err := os.Stat(pre); err != nil {
-			t.Fatalf("指定的预编译子进程不可用（%v）", err)
+			tb.Fatalf("指定的预编译子进程不可用（%v）", err)
 		}
 		return pre
 	}
-	dir := t.TempDir()
+	dir := tb.TempDir()
 	src := filepath.Join(dir, "main.go")
 	prog := `package main
 
@@ -77,13 +85,13 @@ func main() {
 }
 `
 	if err := os.WriteFile(src, []byte(prog), 0o600); err != nil {
-		t.Fatalf("写子进程源码失败: %v", err)
+		tb.Fatalf("写子进程源码失败: %v", err)
 	}
 	bin := filepath.Join(dir, "child")
 	cmd := exec.Command("go", "build", "-o", bin, src)
 	cmd.Env = os.Environ()
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("编译子进程失败: %v\n%s", err, out)
+		tb.Fatalf("编译子进程失败: %v\n%s", err, out)
 	}
 	return bin
 }
