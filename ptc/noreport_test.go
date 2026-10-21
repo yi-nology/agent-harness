@@ -36,12 +36,34 @@ import (
 // 本包兜住它：父侧**自己**给「等结果」加一个期限，超了就报错收场。
 // 这不是改上游语义，是**在调用侧补一道闸**。
 
+// noopBinEnv 预编译「不回结果」子进程二进制的路径（环境变量）。
+//
+// 与 childBinEnv 是**两个不同的程序**：前者是正常的子进程形态（会回 Result），
+// 后者**不回**（模拟宿主忘了调 MaybeRunChild）。故分开两个环境变量，
+// 免得装错。
+const noopBinEnv = "AGENT_HARNESS_PTC_NOOP_BIN"
+
+// childModeEnvName 控制 cmd/ptcchild 走哪个形态（正常子进程 / 不回结果）。
+const childModeEnvName = "AGENT_HARNESS_PTC_CHILD_MODE"
+
 // buildNoopChildProgram 编译一个「**不是**子进程形态」的小程序：
 // 它会**睡一段时间然后退出**，但从不回 Result 帧。
 //
 // 这模拟「宿主忘了调 MaybeRunChild」的真实形态：子进程活着、不回结果。
 func buildNoopChildProgram(t *testing.T) string {
 	t.Helper()
+	// 预编译版本（目标环境无 Go 工具链时用）——与 buildChildProgram 同一套思路。
+	//
+	// 注意：预编译的二进制是**同一个** cmd/ptcchild，它的「不回结果」行为由
+	// 运行时的 AGENT_HARNESS_PTC_CHILD_MODE=noop 决定。故这里**同时**把它
+	// 设进本进程的环境——子进程继承父进程环境。
+	if pre := os.Getenv(noopBinEnv); pre != "" {
+		if _, err := os.Stat(pre); err != nil {
+			t.Fatalf("指定的预编译「不回结果」子进程不可用（%v）", err)
+		}
+		t.Setenv(childModeEnvName, "noop")
+		return pre
+	}
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.go")
 	// 注意：**不** import ptc、**不**调 MaybeRunChild——它就是个普通程序，
