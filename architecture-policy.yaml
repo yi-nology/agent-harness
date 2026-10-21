@@ -158,7 +158,7 @@ modules:
   # 从未被执行过，连漂移都没人发现（执行体见 archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
-    requires: [toolname, sandbox, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"] # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包；sandbox 是执行档位与后端协议
+    requires: [toolname, sandbox, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"] # guardx 含 sandbox/wire（跨进程协议） # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包；sandbox 是执行档位与后端协议
     owner: harness
     managed: true
     notes: 程序化工具编排沙箱（goja VM，三重预算替代 OS 沙盘）
@@ -488,12 +488,16 @@ rules:
   # 直接用 syscall 起进程的形态拦不住——那需要拦整个 syscall 面，代价远大于
   # 收益，且当前本仓生产代码零 os/exec。规则拦的是**常见形态**，不是全部形态。
   - id: harness-sandbox-execution-single-entry
-    desc: 外部程序执行只允许经 sandbox 包登记的后端；其余生产代码不得直接 import os/exec
+    desc: 外部程序执行只允许经 ptc 执行后端；其余生产代码不得直接 import os/exec
     severity: error
     scope: [.]
     include: ["*.go"]
     ignore_test: true
-    scope_exclude: [cmd, sandbox]
+    # 收口点从 sandbox 迁到 ptc：sandbox 已转为**门面**（核心在 oagentkit/guardx），
+    # 而「起外部进程」这件事的实现落在 ptc 的子进程后端（ptc-subprocess）。
+    # 收口**一处**的意图不变——仍是「只有一个包能 import os/exec」，
+    # 只是那个包从「sandbox 执行面」变成了「ptc 执行面」。
+    scope_exclude: [cmd, ptc]
     forbid_import_regex: '^os/exec$'
 
 # ── 门面包不可变 ──
@@ -669,6 +673,26 @@ sandbox_providers:
         这层约束由**解释器自己执行**，不是内核强制——故档位是 LevelProcess 而非
         LevelOS。标成 LevelOS 就是让档位表说谎，而档位表是宿主做风险判断的依据，
         说谎的成本落在宿主身上。
+
+    - id: ptc-subprocess
+      level: LevelProcess
+      package: ptc
+      # 预算支持面：**兑现内存**（子进程 + 内核地址空间上限 RLIMIT_AS）。
+      #
+      # 与 ptc-goja 的差别就在这一维：能力面两者同级（都是 JS 子集 + 绑定白名单），
+      # 强的只是**资源面**——执行搬出了宿主进程，内存由内核封顶。
+      #
+      # 进程内形态兜不住内存（Go 运行时没有「只给一个 VM 限内存」的开关，goja
+      # 公开 API 也没有内存限制），故它**不实现** Capable，缺省即「只兑现三闸」。
+      # 两个后端由此在登记簿里可区分：要求 MaxMemory 时，进程内后端**不被选中**
+      # （要求与实际之间不允许有静默落差），子进程后端被选中。
+      supports: [wall_clock, max_calls, max_bytes, max_memory]
+      notes: |
+        子进程执行后端：程序在子进程里跑，用内核地址空间上限兑现 MaxMemory。
+        程序被内核杀掉时，父侧从管道 EOF 认出「执行域异常终止」——不是「程序返回空」。
+        跨进程调用协议归上游 guardx/sandbox/wire（帧格式 + 两条通道 × 四个角色）；
+        判定环与宿主工具留在父侧，故子进程形态**不弱化门禁**。
+        宿主接入成本一行：main 开头调 ptc.MaybeRunChild()。
 
 # ── 全局阈值 ──
 thresholds:

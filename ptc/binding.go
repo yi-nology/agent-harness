@@ -17,6 +17,38 @@ import (
 	"github.com/yi-nology/agent-harness/toolname"
 )
 
+// bindingCaller 一次绑定调用的执行面。
+//
+// # 为什么抽出这一层
+//
+// 同一套挂载逻辑要服务两种执行形态：
+//
+//   - **进程内**（本地）：直接调宿主给的 Binding.Call；
+//   - **跨进程**（子进程）：程序在子进程里跑，绑定实现留在父侧，故此处发一次
+//     跨进程请求，父侧执行后回结果。
+//
+// 抽出这一层后，挂载、三预算闸、判定环、调用形态包装**全部共用**——差异只在
+// 「这一次调用怎么落到宿主工具上」。若不抽，子进程形态就得把 mountBindings
+// 整份复制一遍，那正是「同一机制两份实现 ⇒ 必然漂移」。
+type bindingCaller func(ctx context.Context, name, argsJSON string) (string, error)
+
+// localCaller 进程内形态：直接调宿主给的 Binding.Call。
+//
+// 名称在参数里查表——挂载时已保证名字唯一（撞名在装配期被拒），故查表必然命中。
+func localCaller(bindings []Binding) bindingCaller {
+	byName := make(map[string]Binding, len(bindings))
+	for _, b := range bindings {
+		byName[b.Name] = b
+	}
+	return func(ctx context.Context, name, argsJSON string) (string, error) {
+		b, ok := byName[name]
+		if !ok {
+			return "", fmt.Errorf("绑定 %q 未装配", name)
+		}
+		return b.Call(ctx, argsJSON)
+	}
+}
+
 // mountBindings 把全部绑定挂到 vm 的 host 对象上，并挂程序内发现入口。
 //
 // 三预算闸在**包装层**（超限即中断收口，不给程序「越限继续跑」）。返回非 nil 的
@@ -29,6 +61,7 @@ func mountBindings(
 	maxCalls, maxBytes int,
 	discover Discoverer,
 	stages []invoke.Stage,
+	callIt bindingCaller,
 ) *Result {
 	// host.<tool> 绑定面：三预算闸在包装层（超限=中断收口，不给程序「越限继续跑」）。
 	host := vm.NewObject()
@@ -65,7 +98,7 @@ func mountBindings(
 				panic(vm.NewGoError(serr))
 			}
 			start := time.Now()
-			out, err := b.Call(runCtx, args) // runCtx：墙钟到点断阻塞调用（批三百零七）
+			out, err := callIt(runCtx, b.Name, args) // runCtx：墙钟到点断阻塞调用（批三百零七）
 			rec := CallRecord{Name: b.Name, Bytes: len(out), MS: time.Since(start).Milliseconds()}
 			res.Calls++
 			res.Bytes += len(out)
