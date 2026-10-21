@@ -2,6 +2,267 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.8.1] — 2026-10-21
+
+### 新增(ptc)：新增子进程执行后端——用内核地址空间上限兑现 MaxMemory
+
+承接 docs/SANDBOX-DESIGN-20261021.md 的 P1（跨进程执行与资源兜底）。
+# 缺口
+进程内 goja VM 跑在宿主进程里，而三闸（墙钟 / 调用数 / 输出字节）**没有内存闸**
+——Go 运行时没有「只给一个 VM 限内存」的开关，goja 公开 API 也没有内存限制
+（只有 SetMaxCallStackSize，那是栈深）。故一个快速分配的程序能在 deadline 到点
+**之前**把宿主进程撑爆，而宿主里还跑着编排引擎、事件总线、别的环节。
+本后端把执行搬出宿主进程：子进程里跑 goja，用**内核的地址空间上限**
+（RLIMIT_AS）兑现内存上限。
+# 三条设计决定
+## 1. 协议归上游（guardx/wire）
+跨进程调用协议（帧格式 + 两条通道 × 四个角色）归上游 guardx——协议是最不该
+私有的东西（各后端各写一遍 ⇒ 换个后端就得换一套）。本仓只实现后端：
+起进程、连管道、跑程序。
+## 2. 判定环留在父侧
+程序里的 host.<tool>() 与普通工具调用走**同一套** invoke.Stage 判定环——
+而判定环与宿主工具都在父侧。子进程里只有一个「发请求」的桩，判定在父侧做。
+**故本后端不弱化门禁**：子进程形态下判定环照走。
+若把判定环放到子进程，「程序里的 host.<tool>() 绕过所有门禁」这条纪律就断了。
+## 3. 执行面只有一份（不复制）
+进程内与子进程的差别**只有一处**：绑定调用怎么落到宿主工具上。其余（语法预检、
+三预算闸、中断驱动、调用形态包装、Promise 收口、错误分类）逐字相同。
+故把 Run 的执行主体抽成 `execute`（ptc/execute.go），两种形态共用——否则
+子进程形态就得把这段复制一遍，而漂移出来的往往是**安全语义**（比如子进程版
+漏了墙钟闸，就成了「看起来更安全的路径反而更不安全」）。
+绑定调用则抽成 `bindingCaller` 间接层：进程内传 localCaller（本地闭包），
+子进程传 remoteCaller（经管道请求父侧）。
+# 档位与支持面（两维正交）
+档位仍是 **LevelProcess**：能力面没变（还是 JS 子集 + 绑定白名单），强的只是
+**资源面**。故：
+- 进程内后端**不实现** `sandbox.Capable`（兜不住内存）⇒ 缺省即「只兑现三闸」；
+- 子进程后端**实现** Capable（能兑现 MaxMemory）；
+- 登记簿据此区分：要求 MaxMemory 时，进程内后端**不被选中**（要求与实际之间
+  不允许有静默落差），子进程后端被选中。
+# 平台差异
+`RLIMIT_AS` 是 Unix 专有。非 Unix 平台**返回错误**而不是静默放行——「以为兜住了、
+实际没有」正是这套机制要消灭的东西。
+`RLIMIT_AS` 限的是**虚拟地址空间**（可能远大于物理内存），故它是**粗但硬**的
+上限：兜得住「快速分配撑爆宿主」这个形态，但可能比真实内存占用更早触发。
+本后端**如实声明**自己兑现的是「地址空间有硬上限」，不是「物理内存精确封顶」。
+# 验收用例（真兜底）
+```
+TestSubprocessExecutesProgram      程序在子进程跑，工具调用经管道往返父侧执行
+TestSubprocessMemoryLimitKillsChild 子进程申请超限内存 ⇒ 被内核杀掉 ⇒
+                                   父侧收到「执行域异常终止」，宿主进程存活
+```
+第二个用例是设计档 §八 P1 的原文要求：「一个真兜底的用例——子进程内程序申请
+超过上限的内存 ⇒ 子进程被内核杀掉 ⇒ 父侧收到「执行域异常终止」，**宿主进程
+存活**」。它用**现场编译的小程序**当子进程（走与生产完全一致的 MaybeRunChild
+入口与 fd 传递），故测出来的就是生产行为。
+# 门禁连带改动
+- **`harness-sandbox-execution-single-entry` 的收口点从 `sandbox` 迁到 `ptc`**：
+  sandbox 已转为**门面**（核心在上游），而「起外部进程」的实现落在 ptc 的子进程
+  后端。收口**一处**的意图不变（仍只有一个包能 import os/exec），只是那个包变了。
+- `ptc/ptc.go` 拆出 `ptc/execute.go`（抽 execute 后涨到 410 行，顶破 400 阈值）。
+# 门禁
+```
+fmt-check ✅  vet ✅  test ✅  cover-gate ✅
+architecture-check ✅（8 条规则 + 5 个门包 + 28 个包的依赖方向）
+docsync ✅  modreplace ✅  modwork ✅
+golangci-lint ✅ 0 issues
+```
+（上游 guardx v0.12.0 提供 sandbox/wire：帧格式 + 启动通道 St archer/Runner +
+调用通道 Server/Client。）
+
+### 新增(sandbox)：跟随上游 guardx v0.10.0——门面加 Capable，档位登记门禁扩「预算支持面」一维
+
+上游 guardx v0.10.0（PR #19，承接 guardx#17）落地了执行沙箱的「预算支持面」：
+Budget 补 MaxMemory、新增可选能力面 Capable、Resolve 按支持面过滤。
+本仓同步三处。
+## 1. 门面加 Capable 别名
+`Budget` 是类型别名 ⇒ 上游加的 MaxMemory 字段**自动跟随**，门面不用改。
+需显式转发的是新增的接口与函数：Capable / CapableFunc / SupportsBasic /
+SupportsAll。`Resolve` 的 variadic 化（`Resolve(min, budget ...Budget)`）在
+门面上**不可见**——本仓门面不转发 Resolve，宿主直接用上游的即可。
+## 2. 档位登记门禁扩一维：登记「支持哪些预算项」
+policy 的 `sandbox_providers` 段新增 `supports` 登记项（取值
+wall_clock / max_calls / max_bytes / max_memory）。
+为什么登记这一维：档位（Level）答的是「能力面多强」，预算支持面答的是
+「资源兜底兑现哪几项」。两者**正交**——进程内解释器的能力面与 LevelProcess
+同级，却兜不住内存。少了这一维，「要求了内存兜底而后端兜不住」这件事在
+**声明面**是隐形的，宿主只能在运行期才发现。
+门禁核对「登记与代码事实一致」，判据走 `go/ast` 的**方法指纹**（门禁不能
+import 被判的包）：
+- 后端**没有** Supports 方法 ⇒ 只能登记基本三闸（上游 Capable 的缺省语义：
+  漏声明得到的是「兜不住」，不是「兜得住」）；
+- 登记了 max_memory 而代码无 Supports ⇒ **报红**（声明面说了兜得住、代码兜不住，
+  要求与实际之间出现静默落差）；
+- 代码有 Supports 而登记只写三闸 ⇒ **不报红**（后端自报得比登记更保守，
+  不是撒谎）。
+## 3. ptc-goja 如实登记「只兑现三闸」
+`supports: [wall_clock, max_calls, max_bytes]`——**不兑现内存**，理由写在
+登记的注释里：进程内 goja VM 跑在宿主进程里，Go 运行时没有「只给一个 VM 限内存」
+的开关，goja 公开 API 也没有内存限制（只有 SetMaxCallStackSize，那是栈深）。
+故它**真兜不住**内存，登记必须如实落在保守的一侧。
+## 反向验证
+注入两条违规，门禁都准确报红（事后已恢复）：
+- 登记 max_memory 但代码无 Supports ⇒ `sandbox_provider_supports_drift`
+- 登记未知预算项 gpu_memory ⇒ `sandbox_provider_unknown_budget`
+## 门禁
+```
+fmt-check ✅  vet ✅  test ✅  cover-gate ✅
+architecture-check ✅（8 条规则 + 5 个门包 + 28 个包的依赖方向）
+docsync ✅  modreplace ✅  modwork ✅
+golangci-lint ✅ 0 issues
+```
+（archcheck/sandbox.go 因加支持面核对顶破 400 行阈值，按关注点拆出
+archcheck/sandbox_supports.go——「档位核对」与「支持面核对」是两个关注点。）
+（本提交不含并发工作线的 ptc/ptc.go 改动与 docs/SANDBOX-DESIGN-20261021.md。）
+
+### 修复(netguard)：测试夹具改用规范 HTTP 服务器——修掉 CI 偶发红
+
+## 现象
+2026-10-21 CI 首次出现 netguard 红（此前 12 次全绿）：
+```
+Unsolicited response received on idle HTTP channel starting with
+"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"; err=<nil>
+--- FAIL: TestNewClientAttachesGuard (0.00s)
+    client_test.go:69: 放行回环后必须能连上: Get "http://127.0.0.1:33819/x":
+    readLoopPeekFailLocked: %!w(<nil>)
+```
+本地跑 10 次全过（macOS），故是**时序相关的偶发**，非确定性失败。
+## 根因
+**那串「unsolicited 响应」的字节逐字等于旧夹具写的那一行** —— 根因就在夹具。
+旧夹具是裸 TCP：accept 到连接后手写
+`HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n` 然后立刻 `c.Close()`。
+但那行响应**没有 `Connection: close` 头**——按 HTTP/1.1 语义它是 keep-alive，
+客户端读完会把连接放回空闲池，而服务端已经把它关了。于是池里可能躺着一条
+「客户端以为可复用、实际已关或还带着残留字节」的连接：下次复用时 Go transport
+先 peek 它，peek 到**响应**（而非 EOF）就报 unsolicited response。
+**协议不一致是客观存在的**，与平台无关；CI 的 Linux + 负载环境只是更容易撞上
+那个时序窗口。
+## 修法
+夹具改用 `net/http.Server`（`http.NewServeMux` + `Server.Serve`）——由标准库
+负责 keep-alive 与关闭语义，客户端与服务端对「这条连接还能不能用」的判断一致，
+这类协议不一致不可能再出现。
+**断言语义逐字不变**：仍回一个最小合法响应（200 + 零长度 body）——只关连接的
+话客户端读到 EOF，失败形态会与「被守卫拦住」混在一起（两者都表现为 Get 出错），
+那条用例就分不清「守卫拦了」与「服务端没回话」。
+## 如实说明验证强度
+- 本地（macOS）**未能复现**该失败：跑 10 次普通 + 20 次 -race + 5 次全包
+  -race 全过；专门写的探针（旧夹具 200 次连发 / 16 并发 × 10 次）在本地也不复现。
+- 故本修复的依据是**根因分析 + CI 日志里那串字节与夹具字面量的逐字匹配**，
+  不是「复现后再修」。改动只碰测试夹具，**不动生产代码**，且让协议一致性变好。
+## 门禁
+```
+fmt-check ✅  vet ✅  test ✅  cover-gate ✅
+architecture-check ✅  docsync ✅
+golangci-lint ✅ 0 issues
+```
+
+- 杂务(deps)：跟随 guardx v0.13.0——wire 的 import 路径迁到仓根
+
+上游 guardx#22 把 wire 从 `sandbox/wire/` 移到 `wire/`（仓根下）——
+矩阵的包路径规则是「github.com/{org}/{repo}/{包名末段}，中间层目录丢弃」，
+不支持「仓内包的子包」，故 wire 必须与 sandbox 平级。
+故本仓的 import 路径随之从
+  github.com/oagentkit/guardx/sandbox/wire
+变为
+  github.com/oagentkit/guardx/wire
+依赖地板同时抬到 v0.13.0。代码内容无变化（仅 import 路径），子进程后端的
+真兜底用例复跑全绿。
+
+- 杂务(deps)：core 地板抬到 v0.11.0 + 修 tools.go 版本钉子注释的漂移
+
+## 依赖地板
+`oekit/core` v0.10.0 → v0.11.0（上游最新）。
+变更性质核对：v0.11.0 把配置加载入口**按来源拆开**——新增 `LoadFile`（任意路径）
+与 `Unmarshal`（字节源），三个入口共享同一条解码线（展开 ${VAR} → 可选严格判定 →
+解码 → tag 接线 → FillDefaults → ValidateTags），故严格模式的诊断面
+（未知键拒载 + 合法键清单 + 拼写建议）**与来源无关**。
+`LoadBootstrap` 行为**逐字不变**，既有调用方零改动——**无破坏性变更**。
+本仓只 import `oekit/core/version`（版本号常量），影响面为零。
+## 顺带修一处「散文数字」漂移
+`tools.go`（版本钉子，`//go:build tools`）的「钉的是哪个版本」一节里写着
+`llm v0.14.1` / `obs v0.9.2`——而 go.mod 实际已是 v0.14.2 / v0.9.3
+（上一轮抬地板时改了 go.mod，没回改这段注释）。
+**这类漂移没有任何东西会报**：go.mod 是机器管的地板，那段注释是纯散文，
+而它恰恰是读者判断「钉子领先还是落后于上游地板」的**唯一依据**——
+照着过期版本号做判断，结论会反。
+本仓纪律「文档里的每个数字，要么被机器判，要么在它旁边写明『不受机器管，
+改前请手算』」对**代码注释里的版本号**同样适用。故本次在该段加了两件事：
+1. 显式标注 **「下面是散文，不受机器管——go.mod 才是权威，改依赖地板后要手工
+   回来改这一段」**；
+2. 给出**一条机械核对命令**（`go list -m` 四个模块），让核对不必靠记忆。
+顺带把 core 那条说明更新到 v0.11.0 的实际内容（入口按来源拆开），
+不再停留在 v0.10.0 时的「config 严格模式」。
+## 门禁
+```
+fmt-check ✅  vet ✅  test ✅  cover-gate ✅
+architecture-check ✅（8 条规则 + 5 个门包 + 28 个包的依赖方向）
+docsync ✅  modreplace ✅  modwork ✅
+golangci-lint ✅ 0 issues
+```
+（本提交只含 go.mod / go.sum / tools.go 三个文件，不含并发工作线的改动。）
+
+
+- 文档(sandbox-design)：补 P2 判定与 P3 记录
+
+## P2：判定为「本仓不做，宿主自己做」
+P1 落地后实测确认：宿主实现容器/microVM 后端**完全不需要本仓参与**——
+只依赖 guardx 即可（sandbox.Provider 就是那个扩展点：ID/Level/Supports/Exec，
+Registry 按「档位下限 + 预算可兑现性」挑后端）。
+故 P2 的形态是**宿主侧工作，不是内核侧工作**。本仓若再写一个容器后端，就变成
+「同一个机制两份实现」——正是 OVERLAP.md 明令禁止的形态。
+三个不做理由（写进档里）：① 价值前提未被证明（本档 §三 已论证：今天更强的
+能力裁剪在 ptc 的 JS 子集 + 绑定白名单下已经拿到了）；② 要给内核引入 docker
+运行时依赖（为一个尚未证明需要的后端抬地板不划算）；③ 本地/CI 不可复现
+（门禁要求覆盖率与测试在 CI 上可跑）。
+若宿主确实需要：实现 sandbox.Provider 并注册进 sandbox.Registry，本仓不动。
+## P3：本档初稿没有这一期
+核对全文确认：初稿的分期只有 P0 / P1 / P2——不是漏写，是没规划。
+按 P1/P2 落地后的现状，唯一还没被覆盖且值得做的一期是「P3-候选」：
+**把「跨域执行」这条纪律从文档变成门禁**。
+缺口是真的：本仓的档位登记门禁只核对「登记 ↔ 代码事实」，不核对
+「**实际执行用的后端**是不是登记过的那个」。形态是宿主绕过 sandbox.Registry
+直接调 ptc.Run（进程内形态），于是**要求了 OS 级隔离却跑在进程内解释器上**——
+门禁全绿，而实际强度与声明不符。
+但它**跨仓**（判宿主行为要宿主仓的 policy），且落点需与上游/宿主对齐：
+本仓的 archcheck 已是「可导入的判据执行体」形态，宿主复用同一份是可行方向
+（与本仓「门禁执行体必须可被宿主复用」的既有纪律一致）。
+**不擅自开工**——跨仓设计决定需要拍板，不是「照着做」的实现任务。
+
+- 文档(agent-harness)：补三条纪律 + 校准包数与工程底座数字
+
+代码侧（retryplan / sideeffect.FencedSink / Renew）已在 54959e2 入库，
+本次只补纪律与文档同步。
+AGENTS.md 新增三条纪律（都是本轮真实踩出来的）：
+1. **反向验证打不中时，先问「这真的是契约要求吗」，再问「用例够不够强」**。
+   给 FencedSink 做反向验证时，两条变异打不中——查下去发现它们在契约下
+   不可观测（陈旧拒收那条路径根本不碰已见令牌，拒收即 return）。
+   第一反应是「用例不够强」，补完才发现自己把**实现的内部状态**当成了
+   契约的一部分，于是又删掉了那两条。
+   契约里只写**调用方能观测到的**要求，不写**实现内部的**状态演变——
+   后者是把实现方式钉死，且会掩盖真正的契约缺口。
+2. **并发用例要「确定性构造」，不能靠时序去撞**。
+   要证明「比较与写入必须原子」非空，就得有三步实现的反面教材替身。
+   第一版靠 goroutine 调度时序去撞，结果偶发复现：写成「必须复现」是
+   flake，写成「不要求复现」等于没断言。修法是加**确定性竞态窗口钩子**
+   （读已见最大之后、判断之前卡住），并用**原子标志**保证只有首次调用
+   阻塞——用 sync.Once 会阻塞后续调用者，主流程与钩子互等即死锁。
+3. **组合逻辑归内核，判定归各自机制**（retryplan 的立论）。
+   每个宿主各写一遍组合逻辑，必然各判一套，漂移到没人发现为止。
+   组合逻辑里恰好藏着必须全局一致的判定——本例是「这次重试到底原样
+   重发，还是走幂等键重放」。
+README / AI-GUIDE 同步：
+- 包数 27 → 28（新增 retryplan），AI-GUIDE 分组表补「组合机制」一组
+  （retryplan 与 sidetest 同属非机制面，但性质不同：sidetest 是判据，
+  retryplan 是决策机制）。
+- 「工程底座」表校准：生产代码 14,806 行 / 84 文件，测试 111 个文件，
+  覆盖率 86.1%，依赖方向 28 包。
+- README 的「下游升级须知」表已由 v0.8.0 行覆盖（911c874 定的 minor：
+  Store 接口新增方法是源码不兼容变更）。
+注：README 里 sandbox 设计文档的导航行由并发工作线加入，随 README
+一并提交（共享文件无法拆分）。本次未触碰并发工作线的 ptc/ptc.go 与
+docs/SANDBOX-DESIGN-20261021.md。
+
+
 ## [v0.8.0] — 2026-10-21
 
 ### 新增(harness)：新增 retryplan 重试处置决策 + sideeffect/sidetest 续期与拒收契约
