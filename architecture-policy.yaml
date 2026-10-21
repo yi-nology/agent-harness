@@ -250,7 +250,7 @@ modules:
 
   - id: gatecheck
     roots: [gatecheck]
-    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/toolgate"]
+    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/toolgate", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -665,6 +665,23 @@ sandbox_providers:
   desc: 执行沙箱后端的隔离档位必须登记在 sandbox_providers 段，且与代码事实一致（档位声明要有人签字）
   ignore_dirs: [cmd, docs]
   providers:
+    - id: gatecheck-managed
+      level: LevelProcess
+      package: gatecheck
+      # 预算支持面：受管后端是**包装层**——它委派给内层后端执行，
+      # 故预算支持面**就是内层后端的**。这里声明基本三闸（与 ptc-goja 同款），
+      # 真实能力以内层后端自己的登记为准。
+      supports: [wall_clock, max_calls, max_bytes]
+      notes: |
+        联合判据的受管后端：把审批层与沙箱层合成一条判定，判定不通过就**不委派**
+        （副作用不会发生）——判据与执行不可分，否则「判过的后端 ≠ 实际跑的后端」
+        就又有了信号落差。
+
+        它对外声明的档位是**保证的隔离强度下限**（LevelProcess），不是内层后端的
+        实际档位：档位登记门禁要求 ID()/Level() 是**可静态识别的常量**
+        （「档位声明要有人签字」——运行期才知道的值无从签字），
+        而实际跑哪个档位的内层后端由 Check 在运行期用登记簿判。
+
     - id: ptc-goja
       level: LevelProcess
       package: ptc

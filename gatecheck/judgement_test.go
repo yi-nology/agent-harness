@@ -1,5 +1,7 @@
 package gatecheck
 
+// 本文件钉住**包级判据**的合成规则：审批 × 档位的四档结论与它们的优先级次序。
+
 import (
 	"context"
 	"testing"
@@ -8,47 +10,9 @@ import (
 	"github.com/oagentkit/toolgate/policy"
 )
 
-// gateOf 造一个裁决固定的审批门。
 //
-// # 为什么用「例外规则」而不是 arbiter
-//
-// 上游 `Gate.Decide` 的判定顺序是：**例外规则 → 矩阵层 → 兜底**，
-// 而 `Arbiter` 只在**灰区规则**（verdict=unknown）命中时才被调用。
-// 矩阵层对 `OpToolCall`（非变异）恒判 auto ⇒ 用 arbiter 根本控不住。
-//
-// 故用 `Policy.Rules`（例外规则，**首个命中即裁决**，优先于矩阵层）把结论固定下来。
-// 这也更贴近真实用法：宿主的安全策略本来就是用规则表达的。
-func gateOf(v policy.Verdict) *policy.Gate {
-	p := policy.DefaultPolicy()
-	p.Rules = []policy.Rule{{
-		ID:      "test_fixed_verdict",
-		OpTypes: []string{string(policy.OpToolCall), string(policy.OpExecuteStep), string(policy.OpPlanSubmit)},
-		Verdict: v,
-		Reason:  "测试固定裁决",
-	}}
-	return policy.NewGate(p, nil)
-}
-
-// fakeProvider 一个自称某个档位的后端（只实现接口，测试不真执行）。
-type fakeProvider struct {
-	level sandbox.Level
-}
-
-func (f fakeProvider) ID() string           { return "fake" }
-func (f fakeProvider) Level() sandbox.Level { return f.level }
-func (f fakeProvider) Exec(context.Context, sandbox.Request) (sandbox.Outcome, error) {
-	return sandbox.Outcome{OK: true}, nil
-}
-
-// registryOf 造一个登记了指定档位后端的登记簿。
-func registryOf(levels ...sandbox.Level) *sandbox.Registry {
-	reg := sandbox.NewRegistry()
-	for i, lv := range levels {
-		_ = reg.Register(fakeProvider{level: lv})
-		_ = i
-	}
-	return reg
-}
+// 本文件钉住**包级判据**的合成规则：
+// 审批 × 档位的四档结论与它们的优先级次序。
 
 // TestBothAgreeProceeds 钉住最基本的一条：审批放行 + 档位选得到 ⇒ 放行。
 func TestBothAgreeProceeds(t *testing.T) {

@@ -81,6 +81,11 @@ const (
 	OutcomeLevelShort
 	// OutcomePlanOnly 计划模式：只审不执行。
 	OutcomePlanOnly
+	// OutcomeExecutionFailed 两层都同意、但执行本身失败。
+	//
+	// 它**独立**于前面的几态：不是「不该执行」而是「执行了但没成」——
+	// 宿主的处置是「看错误决定要不要重试」，与「需人审」完全不同。
+	OutcomeExecutionFailed
 )
 
 func (o Outcome) String() string {
@@ -95,6 +100,8 @@ func (o Outcome) String() string {
 		return "level_short"
 	case OutcomePlanOnly:
 		return "plan_only"
+	case OutcomeExecutionFailed:
+		return "execution_failed"
 	default:
 		return "unknown"
 	}
@@ -128,6 +135,10 @@ type Request struct {
 	//
 	// 零值表示不要求任何预算上限。
 	Budget sandbox.Budget
+	// Program 要执行的程序体（语义由后端定，见 sandbox.Provider）。
+	//
+	// 只有 ExecuteAndRun 用它；纯判定（Check）不看它。
+	Program string
 }
 
 // Check 做一次联合判定。
@@ -201,4 +212,95 @@ func Check(ctx context.Context, gate *policy.Gate, registry *sandbox.Registry, r
 	d.Provider = provider
 	d.Reason = "两层都同意"
 	return d
+}
+
+// Guard 是「审批门 + 执行后端登记簿」的组合件：宿主装配一次，之后每次执行
+// 走同一套联合判据。
+//
+// # 为什么需要它（而不是让宿主每次手写 Check + ExecuteAndRun）
+//
+// 装配是**宿主的事**（上游 sandbox 明确「本包只认协议，不认装配」），
+// 但**装配的形态若不固定，各宿主就会各接一遍**——于是同一条联合判据
+// 在 A 宿主是「审批→档位→执行」，在 B 宿主是「档位→审批→执行」，
+// 合成规则的次序就漂移了（这正是本包要消灭的东西）。
+//
+// Guard 把「次序」固化在**一处**，宿主只提供零件：
+//
+//	g := gatecheck.NewGuard(gate, registry)
+//	out, dec := g.Run(ctx, gatecheck.Request{...})
+//
+// # 零值不可用
+//
+// 零值 Guard（门与登记簿都 nil）⇒ 审批缺失 ⇒ 按需人审（fail-closed），
+// 与 `Check` 的语义一致——不会因为忘了装配就放行。
+type Guard struct {
+	gate     *policy.Gate
+	registry *sandbox.Registry
+}
+
+// NewGuard 组装组合件。gate 为 nil 时按需人审（fail-closed）；
+// registry 为 nil 时「要求了档位但兑现不了」⇒ 拒绝。
+func NewGuard(gate *policy.Gate, registry *sandbox.Registry) *Guard {
+	return &Guard{gate: gate, registry: registry}
+}
+
+// Check 只判定，不执行（与包级 Check 同语义）。
+func (g *Guard) Check(ctx context.Context, req Request) Decision {
+	if g == nil {
+		return Check(ctx, nil, nil, req)
+	}
+	return Check(ctx, g.gate, g.registry, req)
+}
+
+// Run 判定并执行（与包级 ExecuteAndRun 同语义）。
+func (g *Guard) Run(ctx context.Context, req Request) (sandbox.Outcome, Decision) {
+	if g == nil {
+		return ExecuteAndRun(ctx, nil, nil, req)
+	}
+	return ExecuteAndRun(ctx, g.gate, g.registry, req)
+}
+
+// ExecuteAndRun 做一次联合判定，**通过则就地执行**。
+//
+// # 为什么不能只有 Check
+//
+// `Check` 判完把后端放进 `Decision.Provider`，**但不执行**。于是调用方得自己
+// 拿那个 provider 去 `Exec`——中间任何一步走错（拿了别的 provider、
+// 重新 Resolve 了一次、抄错了字段），就产生「**判过的后端 ≠ 实际跑的后端**」
+// 的落差。而「声明与实际之间没有信号」正是本包要消灭的东西：
+// 判据一旦与执行分离，它就退化成一个可绕过的建议。
+//
+// 故这里把两者**焊在一起**：判定通过就用**判出来的那一个** provider 执行，
+// 调用方没有「换一个后端跑」的机会。
+//
+// # 与上游 sandbox.Execute 的分工
+//
+// 上游 `sandbox.Execute(ctx, reg, min, req)` = `Resolve` + `Exec`，
+// **只管档位×预算**。本包管的是**审批 × 档位**的联合：
+// 审批那一层上游没有（`toolgate/policy` 与 `guardx/sandbox` 互不知情），
+// 而本包在**执行前**把两层都判完。
+//
+// 重复的部分（Resolve）是有意的：它让「判出来的 provider」与「跑起来的
+// provider」是**同一个**，而不是两次独立解析的结果。
+//
+// # 审批判定在执行前，失败即不执行
+//
+// 审批层判 need_human / deny / plan_only 时**根本不执行**——
+// 尤其 deny：执行了再判「已拒绝」是没有意义的（副作用已经发生）。
+func ExecuteAndRun(ctx context.Context, gate *policy.Gate, registry *sandbox.Registry, req Request) (sandbox.Outcome, Decision) {
+	d := Check(ctx, gate, registry, req)
+	if d.Outcome != OutcomeProceed {
+		return sandbox.Outcome{}, d
+	}
+	// 用**判出来的那个** provider 执行——不给调用方换后端的机会。
+	out, err := d.Provider.Exec(ctx, sandbox.Request{
+		Program: req.Program,
+		Budget:  req.Budget,
+	})
+	if err != nil {
+		d.Outcome = OutcomeExecutionFailed
+		d.Reason = "执行失败：" + err.Error()
+		return sandbox.Outcome{}, d
+	}
+	return out, d
 }
