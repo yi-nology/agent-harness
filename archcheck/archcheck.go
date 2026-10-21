@@ -166,6 +166,21 @@ func Run(root string, pol *Policy) (*Result, error) {
 		res.Violations = append(res.Violations, vs...)
 	}
 
+	// 执行路径门禁：执行必须经 sandbox 登记簿（execution.go）。
+	//
+	// 段缺省也算开启——「执行必须经登记簿」是默认要求，不是「登记了才管」。
+	execPaths := ExecutionPaths{}
+	if pol.ExecutionPaths != nil {
+		execPaths = *pol.ExecutionPaths
+	}
+	if execPaths.on() {
+		vs, err := executionPathViolations(root, execPaths)
+		if err != nil {
+			return nil, err
+		}
+		res.Violations = append(res.Violations, vs...)
+	}
+
 	// policy 自校验：门禁自己也得能被检查（规则没有执行体、id 重复、
 	// 阈值判定面漏包、例外指向不存在的规则……）。详见 selfcheck.go。
 	res.Violations = append(res.Violations, selfCheckViolations(root, pol)...)
@@ -191,6 +206,9 @@ func Run(root string, pol *Policy) (*Result, error) {
 	}
 	if sbox.on() {
 		sevOf[sandboxProviderRuleID] = sevOrError(sbox.Severity)
+	}
+	if execPaths.on() {
+		sevOf[executionPathRuleID] = sevOrError(execPaths.Severity)
 	}
 	// 自校验恒为 error：policy 结构有问题时，门禁必须响亮失败，
 	// 而不是「其他规则都绿就当通过」——那正是它要防的那种静默失效。
@@ -251,6 +269,13 @@ func Run(root string, pol *Policy) (*Result, error) {
 			ID:       sandboxProviderRuleID,
 			Desc:     sandboxProviderDesc(sbox),
 			Severity: sevOf[sandboxProviderRuleID],
+		})
+	}
+	if execPaths.on() {
+		res.Rules = append(res.Rules, RuleInfo{
+			ID:       executionPathRuleID,
+			Desc:     executionPathsDesc(execPaths),
+			Severity: sevOf[executionPathRuleID],
 		})
 	}
 	res.Rules = append(res.Rules, RuleInfo{

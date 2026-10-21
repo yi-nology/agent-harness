@@ -728,6 +728,25 @@ sandbox_providers:
         判定环与宿主工具留在父侧，故子进程形态**不弱化门禁**。
         宿主接入成本一行：main 开头调 ptc.MaybeRunChild()。
 
+# ── 执行路径门禁（execution_paths 段）──
+#
+# 执行必须经 sandbox 登记簿：绕开登记簿直接调裸执行入口，档位下限、
+# 预算可兑现性与审批门三层会**同时**失效——而这三条正是宿主据以做风险判断的依据。
+# 声明还在，强制没了，门禁全绿。
+execution_paths:
+  enabled: true
+  severity: error
+  desc: 执行必须经 sandbox 登记簿（sandbox.Execute），不得直接调用裸执行入口
+  ignore_dirs: [cmd, docs]
+  # 本仓自己的裸执行入口登记在**判据执行体的内置表**里
+  # （archcheck/execution.go 的 builtinRawEntries）——那是本仓的 API 事实，
+  # 让每个仓各登记一份就是**两份真相**（宿主改了登记、本仓没改，两边各判一套，
+  # 漂移到没人发现为止，且没有任何信号：门禁都绿）。
+  #
+  # 这里只登记**别的仓**的裸入口（宿主自己的）。本仓没有——本仓的裸入口只有
+  # ptc.Run 一条，且它只在本仓的 ptc 包内部被调用（无限定符 ⇒ 不是绕过）。
+  raw_entries: []
+
 # ── 全局阈值 ──
 thresholds:
   max_file_lines: 400

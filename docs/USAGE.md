@@ -1944,7 +1944,58 @@ rules:
 > 要消灭的——前缀放行等于**静默放宽整棵依赖树**。故写成前缀时它不匹配任何具体
 > import 路径，让写错的人看到「豁免没生效」，而不是误以为整棵树放行了。
 
-### 4.4 在本仓加新包的正确顺序
+### 4.4 执行必须经登记簿：`execution_paths`
+
+上游 `sandbox` 的核心语义是「选不到满足档位的后端即拒绝，**绝不降级**」，
+且「兜不住预算的后端不被选中」——这两条由 `Registry.Resolve` 保证。
+
+但**执行路径**可以完全绕开登记簿：直接调后端的裸执行入口（`ptc.Run`）。
+于是档位下限、预算可兑现性、审批门三层**同时**失效，而**门禁全绿**——
+说谎的不是档位表，是**执行路径**。
+
+本仓的 `archcheck` 提供这条门禁的**可复用执行体**（宿主仓复用同一份，不必各写一遍）：
+
+```yaml
+# 宿主仓的 architecture-policy.yaml
+execution_paths:
+  enabled: true
+  severity: error
+  desc: 执行必须经 sandbox 登记簿（sandbox.Execute），不得直接调用裸执行入口
+  ignore_dirs: [cmd, docs]
+  # 本仓自己的裸执行入口登记在**判据执行体的内置表**里
+  # （agent-harness/archcheck/execution.go 的 builtinRawEntries）——
+  # 那是本仓的 API 事实，让每个仓各登记一份就是两份真相。
+  # 这里只登记**宿主自己的**裸入口。
+  raw_entries: []
+```
+
+**宿主侧要做的接线**（本仓 `ptc.Run` 是内置表登记的裸入口）：
+
+```go
+// 之前：绕过登记簿 ⇒ 档位下限 / 预算可兑现性 / 审批门三层全被跳过
+res := ptc.Run(ctx, program, bindings, opts)
+
+// 之后：走登记簿。Resolve 选不出满足要求的后端就**拒绝**（绝不降级）。
+reg := sandbox.NewRegistry()
+_ = reg.Register(ptc.Provider{Bindings: bindings, Stages: stages})
+out, err := sandbox.Execute(ctx, reg, wantLevel, sandbox.Request{
+    Program: program,
+    Budget:  budget,
+})
+```
+
+**判据的判定面与边界**
+
+- 扫**生产代码**里的**限定符调用** `pkg.Fn(...)`；命中裸入口登记 ⇒ 违规。
+- **改 import 别名绕不过去**：判据按 import 路径的**最后一段**（包名）匹配，
+  不按限定符（限定符是调用方随手起的）。
+- **同包内的调用不算绕过**（没有限定符，压根不会被扫到）。
+- **陈旧登记当天即红**：登记的符号在仓内不存在 ⇒ 报出来（否则「这条执行路径
+  没人管」会**看起来有人管过**）。
+- **判不了的**：持有后端实例直接调 `provider.Exec(...)`——那要判**接收者的静态类型**，
+  而 AST 拿不到变量的类型（要 `go/types`）。这类绕过靠人工 review 与接线纪律兜。
+
+### 4.5 在本仓加新包的正确顺序
 
 **先改 policy 再写代码。**
 
@@ -1960,7 +2011,7 @@ rules:
 不登记则 `architecture-check` 立刻红。判定面**只含生产代码**（跳过 `_test.go`）：
 依赖方向决定交付物里出现什么，测试依赖是临时的。
 
-### 4.5 结构阈值
+### 4.6 结构阈值
 
 `max_file_lines: 400`，`thresholds.enforce: true`，超限即非零退出。
 
