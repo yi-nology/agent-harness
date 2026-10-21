@@ -24,8 +24,8 @@
 //	go list -m github.com/oagentkit/llm github.com/oagentkit/obs \
 //	        github.com/oagentkit/textx github.com/oekit/core
 //
-//	llm   v0.15.0 ← 领先 agent 声明的地板
-//	obs   v0.9.4  ← 领先 agent 声明的地板
+//	llm   v0.15.2 ← 领先 agent 声明的地板
+//	obs   v0.9.5  ← 领先 agent 声明的地板
 //	textx v0.6.2  ← 领先 agent / llm 声明的地板
 //	core  v0.11.0 ← 领先 logx 声明的地板
 //
