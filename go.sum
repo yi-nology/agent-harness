@@ -107,8 +107,8 @@ github.com/nikolalohinski/gonja v1.5.3 h1:GsA+EEaZDZPGJ8JtpeGN78jidhOlxeJROpqMT9
 github.com/nikolalohinski/gonja v1.5.3/go.mod h1:RmjwxNiXAEqcq1HeK5SSMmqFJvKOfTfXhkJv6YBtPa4=
 github.com/oagentkit/agent v0.10.1 h1:JDFpVzF6RQ6L9VUp0vxU0e/4XaxVSwRW/qvwLfaupY4=
 github.com/oagentkit/agent v0.10.1/go.mod h1:rqyPCXEoSh9/iihPihwBkzvH+u8Z0kbYYc7ujdqh704=
-github.com/oagentkit/guardx v0.9.0 h1:usy/A8nI0OtTcMwoWBUzs1k3nOVW4gdEeAjC/8sGsTY=
-github.com/oagentkit/guardx v0.9.0/go.mod h1:ikfRV1/EWC8XLU6e8zgUV8UG6d2YXq6C1cGOAE+uf+w=
+github.com/oagentkit/guardx v0.10.0 h1:Y5cWYogUjUgIRFEGRib4OfzRC8qcK9wTjVn/T1ZWQD0=
+github.com/oagentkit/guardx v0.10.0/go.mod h1:ikfRV1/EWC8XLU6e8zgUV8UG6d2YXq6C1cGOAE+uf+w=
 github.com/oagentkit/llm v0.14.2 h1:hkYDCHCS7F2j/2IY0D3JxmbwyK8CfQYIrzYXPWGK2B8=
 github.com/oagentkit/llm v0.14.2/go.mod h1:tUGXLd/EStNhJahtMsSyD0qYVjHttGdb+zLnJ+u3wW4=
 github.com/oagentkit/mcpkit v0.8.3 h1:FdBt3jBrC+JwcrF/D2x5S5UpVQ+mBr9W9XX6QLepDKs=

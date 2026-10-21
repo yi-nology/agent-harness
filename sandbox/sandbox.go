@@ -48,6 +48,13 @@ type (
 	Failure = upstream.Failure
 	// Registry 后端登记簿。
 	Registry = upstream.Registry
+	// Capable 可选能力面：后端能否兑现某组预算。
+	//
+	// **不实现 Capable 的后端只兑现基本三闸、不兑现内存**——漏声明得到的是
+	// 「兜不住」，不是「兜得住」。方向与安全语义一致。
+	Capable = upstream.Capable
+	// CapableFunc 把普通函数适配成 Capable。
+	CapableFunc = upstream.CapableFunc
 )
 
 // 档位常量别名。
@@ -71,6 +78,21 @@ func NewRegistry() *Registry { return upstream.NewRegistry() }
 func ParseLevel(s string) (Level, error) { return upstream.ParseLevel(s) }
 
 // Execute 按要求档位选后端并执行一次程序。
+//
+// 预算要求从 req.Budget 取——它**同时用于选后端**：否则「要求了内存兜底而后端
+// 兜不住」这件事就只在执行期暴露，而选后端这一步本可以拦下它。
 func Execute(ctx context.Context, reg *Registry, min Level, req Request) (Outcome, error) {
 	return upstream.Execute(ctx, reg, min, req)
 }
+
+// SupportsBasic 是一个 Capable：只兑现基本三闸（墙钟 / 调用数 / 输出字节），
+// **不兑现内存**。
+//
+// 进程内解释器后端用它——Go 运行时没有「只给一个 VM 限内存」的开关，
+// 解释器本身也没有内存限制 API，故这类后端**如实**只能兑现三闸。
+func SupportsBasic(b Budget) bool { return upstream.SupportsBasic(b) }
+
+// SupportsAll 是一个 Capable：兑现全部预算项（含内存）。
+//
+// 只有**真能**兜住内存的后端（子进程 + 内核 rlimit 之类）才能用它。
+func SupportsAll(b Budget) bool { return upstream.SupportsAll(b) }

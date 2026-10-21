@@ -67,6 +67,9 @@ type sandboxDecl struct {
 	level    string
 	file     string // 相对仓库根的文件路径
 	line     int
+	// hasSupports 该后端是否实现了 Supports 方法（上游 guardx/sandbox 的
+	// Capable 可选接口）。按**方法指纹**判定——门禁不能 import 被判的包。
+	hasSupports bool
 }
 
 // pkgIndex 一个包目录的索引：类型的方法集 + 包级字符串常量。
@@ -125,6 +128,9 @@ func sandboxProviderViolations(root string, cfg SandboxProviders) ([]Violation, 
 				continue
 			}
 			d.level = level
+			// 预算支持面：后端实现了 Supports 方法 ⇒ 它自报了「能兑现哪些预算项」。
+			// 没有该方法 ⇒ 只能兑现基本三闸（上游 Capable 的缺省语义）。
+			_, d.hasSupports = methods["Supports"]
 			found[rel] = append(found[rel], d)
 		}
 	}
@@ -172,6 +178,7 @@ func sandboxProviderViolations(root string, cfg SandboxProviders) ([]Violation, 
 					"（登记那一行要有人 review，它就是档位声明的签字处）", p.ID, p.Level, matched.level),
 			})
 		}
+		out = append(out, supportsViolations(p, matched)...)
 	}
 
 	// 反向：代码里有、登记里没有。未登记的后端不是错，但它的档位声明

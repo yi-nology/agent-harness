@@ -155,7 +155,22 @@ type SandboxProvider struct {
 	ID      string `yaml:"id"`
 	Level   string `yaml:"level"`
 	Package string `yaml:"package"`
-	Notes   string `yaml:"notes"`
+	// Supports 登记该后端能兑现哪些预算项。
+	//
+	// 取值是上游 `guardx/sandbox` 的预算项名：wall_clock / max_calls /
+	// max_bytes / max_memory。缺省（未填）= 只兑现基本三闸——
+	// 与上游「不实现 Capable 的后端只兑现三闸、不兑现内存」的缺省语义一致。
+	//
+	// 为什么登记这一维：档位（Level）答的是「能力面多强」，预算支持面答的是
+	// 「资源兜底兑现哪几项」。两者**正交**——进程内解释器的能力面与
+	// LevelProcess 同级，却兜不住内存。少了这一维，「要求了内存兜底而后端
+	// 兜不住」这件事在声明面是隐形的，宿主只能在运行期才发现。
+	//
+	// 门禁核对的是「登记与代码事实一致」：后端**没有** `Supports` 方法 ⇒ 只能
+	// 登记基本三闸；后端**有** `Supports` 方法 ⇒ 可以登记含 max_memory。
+	// 判据同样走 `go/ast` 的方法指纹（门禁不能 import 被判的包）。
+	Supports []string `yaml:"supports"`
+	Notes    string   `yaml:"notes"`
 }
 
 // SandboxProviders 是 sandbox_providers 段的配置：开关、级别、受忽略目录与登记清单。

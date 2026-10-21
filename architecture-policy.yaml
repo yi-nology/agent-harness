@@ -652,6 +652,18 @@ sandbox_providers:
     - id: ptc-goja
       level: LevelProcess
       package: ptc
+      # 预算支持面：只兑现基本三闸，**不兑现内存**。
+      #
+      # 为什么如实写「不兑现」：进程内 goja VM 跑在宿主进程里，而 Go 运行时没有
+      # 「只给一个 VM 限内存」的开关，goja 公开 API 也没有内存限制（只有
+      # SetMaxCallStackSize，那是栈深）。故它**真兜不住**内存——一个快速分配的
+      # 程序能在 deadline 到点之前把宿主进程撑爆，而宿主里还跑着编排引擎。
+      #
+      # 上游 Capable 的缺省语义是「不实现即只兑现三闸」，本包如实落在缺省那一侧：
+      # 宿主若要求 MaxMemory，登记簿**不会选中本后端**（要求与实际之间不允许有
+      # 静默落差）。真要兜住内存只能把执行搬出宿主进程——设计见
+      # docs/SANDBOX-DESIGN-20261021.md。
+      supports: [wall_clock, max_calls, max_bytes]
       notes: |
         进程内 goja 解释器：能力面靠 JS 子集 + 绑定白名单裁剪，资源面靠三重预算。
         这层约束由**解释器自己执行**，不是内核强制——故档位是 LevelProcess 而非
