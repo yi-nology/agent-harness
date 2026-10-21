@@ -41,8 +41,9 @@ const (
 	childCallReqFDEnv = "AGENT_HARNESS_PTC_CALL_REQ_FD"
 	// childCallRespFDEnv 调用响应管道读端的 fd 号。
 	childCallRespFDEnv = "AGENT_HARNESS_PTC_CALL_RESP_FD"
-	// childMemLimitEnv 父侧要求的内存上限（字节）。0 = 不要求。
-	childMemLimitEnv = "AGENT_HARNESS_PTC_MEM_LIMIT"
+	// 注：**没有**「内存上限」环境变量——上限由父侧通过 cgroup 施加，
+	// 不经环境变量传给子进程（子进程自己设 rlimit 这条路已被实测否掉，
+	// 见 memlimit_linux.go 的包头）。
 )
 
 // MaybeRunChild 若本进程是执行沙箱的子进程，则跑完子进程主循环并退出；
@@ -74,15 +75,18 @@ func runChild() error {
 	if callW == nil || callR == nil {
 		return errors.New("ptc: 子进程调用管道 fd 无效")
 	}
-	// 内存上限：父侧要求多少，这里就设多少。**设不上就拒绝执行**——
-	// 「以为兜住了、实际没有」正是这套机制要消灭的东西。
-	memLimit, err := strconv.ParseInt(os.Getenv(childMemLimitEnv), 10, 64)
-	if err != nil {
-		return fmt.Errorf("ptc: 子进程内存上限参数无效: %w", err)
-	}
-	if err := applyMemoryLimit(memLimit); err != nil {
-		return err
-	}
+	// 内存上限：**子进程侧不再设任何上限**。
+	//
+	// 上限由**父侧**通过 cgroup v2 的 memory.max 施加（见 memlimit_linux.go），
+	// 子进程被放进那个 cgroup 即受约束。子进程自己设 rlimit 这条路已被实测否掉：
+	// RLIMIT_AS / RLIMIT_DATA 限的是**虚拟地址空间**，而 Go runtime 的虚拟 arena
+	// 预留远超任何有意义的内存帽——上限设小了 runtime 自己起不来（fatal error），
+	// 设大了兜底形同虚设。两条路都错。
+	//
+	// 故此处**不**再解析 childMemLimitEnv、**不**再设上限：
+	// 父侧要么把子进程放进了带 memory.max 的 cgroup（受约束），
+	// 要么根本不给它上限（父侧已保证不会要求一个兜不住的上限）。
+	// 子进程在这里自己设一遍，只会出现「两边都设、语义还不一样」的夹缝。
 
 	// 启动通道：stdin 读 Start、stdout 回 Result。
 	runner := wire.NewRunner(&stdioRW{in: os.Stdin, out: os.Stdout})

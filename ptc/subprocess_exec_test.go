@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -36,12 +35,20 @@ func sandboxRequest() sandbox.Request {
 	return sandbox.Request{Program: ""}
 }
 
+// requireMemoryLimitSupport 当前环境兜不住内存时跳过，并**说清为什么**。
+//
+// 跳过理由必须写明「本环境兜不住」——不能让一条恒跳过的用例看起来像「测过了」。
+// CI 跑 ubuntu-24.04（cgroup v2 默认开启），故真兜底那条在 CI 上是**真跑**的。
+func requireMemoryLimitSupport(t *testing.T) {
+	t.Helper()
+	if !ptc.MemoryLimitSupported() {
+		t.Skip("本环境建不出带 memory.max 的 cgroup（内存兜底不可用），该场景在此环境无法验证")
+	}
+}
+
 // buildChildProgram 编译一个「子进程形态」的小程序，返回可执行文件路径。
 func buildChildProgram(t *testing.T) string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("子进程后端依赖 Unix 的地址空间上限（RLIMIT_AS），Windows 上不适用")
-	}
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.go")
 	prog := `package main
@@ -105,7 +112,17 @@ func TestSubprocessExecutesProgram(t *testing.T) {
 // ⇒ 被内核杀掉 ⇒ 父侧收到「执行域异常终止」，而**宿主进程存活**。
 //
 // 这是 P1 的核心验收：不兜住的形态是「一个不可信程序能杀掉宿主」。
+//
+// # 平台约束：内存兜底靠 cgroup v2，故只在能建出 cgroup 的环境真跑
+//
+// 非 Linux（macOS / Windows）没有 cgroup；Linux 上若当前 cgroup 不可写
+// （容器里没委派 memory 控制器），同样建不出来。
+//
+// 此时**跳过**而不是让用例红——但跳过的理由必须写明「本环境兜不住」，
+// 不能让它看起来像「测过了」。CI 跑 ubuntu-24.04（cgroup v2 默认开启），
+// 故这条用例在 CI 上是**真跑**的，不是恒跳过。
 func TestSubprocessMemoryLimitKillsChild(t *testing.T) {
+	requireMemoryLimitSupport(t)
 	bin := buildChildProgram(t)
 	// 上限给 256MB：足够跑起 Go 运行时与 goja，但程序申请 1GB 时必被杀。
 	const memLimit = 256 << 20

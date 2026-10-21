@@ -38,7 +38,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
 	"time"
 
 	"github.com/oagentkit/guardx/invoke"
@@ -46,6 +45,7 @@ import (
 	"github.com/oagentkit/guardx/toolfail"
 	"github.com/oagentkit/guardx/wire"
 	"github.com/oekit/concurrency/async"
+	"github.com/oekit/pkg/errors"
 )
 
 // SubprocessProviderID 子进程后端的标识（登记在 policy 的 sandbox_providers 段）。
@@ -102,10 +102,27 @@ func (p *SubprocessProvider) Level() sandbox.Level { return sandbox.LevelProcess
 
 // Supports 实现 sandbox.Capable。
 //
-// 本后端**能兑现内存上限**（子进程 + RLIMIT_AS），故 MaxMemory > 0 时也支持。
+// 本后端**能兑现内存上限**（子进程 + cgroup v2 的 memory.max），故 MaxMemory > 0 时也支持。
 // 进程内后端**不实现** Capable（兜不住），两者在登记簿里由此区分。
+//
+// **判据是「当前环境兜不兜得住」，不是「配没配上限」**：
+// 要求了内存上限而当前环境建不出带 memory.max 的 cgroup（如 macOS——
+// 它没有 cgroup，seatbelt 裁的是能力面不裁内存）⇒ **不支持**。
+// 若这里报支持，登记簿就会选中本后端，然后 Exec 里因建不出 cgroup 而失败——
+// 宿主等到的却是「选了它却用不了」这种最难排查的形态。
+//
+// 方向是**保守的**：兜不住就报兜不住，不报「大概能兜」。
 func (p *SubprocessProvider) Supports(b sandbox.Budget) bool {
-	return b.MaxMemory <= 0 || p.opts.MaxMemory > 0
+	if b.MaxMemory <= 0 {
+		// 不要求内存上限 ⇒ 本后端支持（能力面与进程内同级，资源面没额外要求）。
+		return true
+	}
+	if p.opts.MaxMemory <= 0 {
+		// 宿主要求了内存上限，但本后端没配 ⇒ 支持不了。
+		return false
+	}
+	// 配了上限 ⇒ 还须当前环境真的兜得住（探测，不是按平台猜）。
+	return memLimitSupported()
 }
 
 // Exec 实现 sandbox.Provider：起子进程、跑一次程序、收结果。
@@ -188,16 +205,49 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 	child.Stdout = startWriteW
 	// fd3 = 调用请求写端（子进程发 Request），fd4 = 调用响应读端（子进程读 Response）。
 	child.ExtraFiles = []*os.File{callReqW, callRespR}
+	// 接住子进程的 stderr：**死因就在这里**（例：fatal error: runtime: out of memory）。
+	// 不接住的话，父侧从管道 EOF 只看得到「没了」。
+	// 只留末尾（tailBuffer 有上限）——子进程可能狂写日志，
+	// 无界缓冲会把父进程内存也吃进去，那正是这个后端要防的形态。
+	stderrTail := &tailBuffer{limit: childStderrLimit}
+	child.Stderr = stderrTail
 	child.Env = append(os.Environ(),
 		childModeEnv+"=1",
 		childCallReqFDEnv+"=3",
 		childCallRespFDEnv+"=4",
-		childMemLimitEnv+"="+strconv.FormatInt(p.opts.MaxMemory, 10),
 	)
 
+	// 内存兜底：父侧建 cgroup，子进程进去即受约束（见 memlimit_linux.go）。
+	//
+	// MaxMemory <= 0 = 不要求上限 ⇒ 不建 cgroup（不是「建一个没有上限的 cgroup」）。
+	//
+	// 建不出带 memory.max 的 cgroup ⇒ **拒绝执行**（fail closed）：
+	// 「以为兜住了、实际没有」正是这套机制要消灭的东西。
+	cg, err := p.openMemoryGate()
+	if err != nil {
+		closeAll(startReadR, startReadW, startWriteR, startWriteW, callReqR, callReqW, callRespR, callRespW)
+		return wire.Result{}, err
+	}
+
 	if err := child.Start(); err != nil {
+		cg.release()
 		closeAll(startReadR, startReadW, startWriteR, startWriteW, callReqR, callReqW, callRespR, callRespW)
 		return wire.Result{}, fmt.Errorf("ptc: 起子进程失败: %w", err)
+	}
+
+	// 把子进程放进 cgroup：**必须在它开始跑程序之前**完成。
+	//
+	// 时机是安全的：子进程在收到 Start 帧之前不执行任何程序，
+	// 故这里不存在「子进程已经吃掉内存」的竞态。
+	//
+	// attach 失败 ⇒ 杀掉子进程并回收 cgroup，**不放它裸跑**：
+	// 它会带着「以为自己受约束」的前提去执行一个不受约束的程序。
+	if err := cg.attach(child.Process.Pid); err != nil {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+		cg.release()
+		closeAll(startReadR, startReadW, startWriteR, startWriteW, callReqR, callReqW, callRespR, callRespW)
+		return wire.Result{}, errors.Wrap(err, "把子进程放进内存受限的执行环境失败")
 	}
 	// 父侧关掉**自己那份**副本——子进程要用的是另一个端（startReadR / startWriteW /
 	// callReqW / callRespR 已交给子进程，exec 在 Start 之后会关闭父侧副本）。
@@ -232,16 +282,39 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 	}
 	res, startErr := starter.Start(ctx, start)
 
-	// 收尾：终止子进程（无论成功失败），并等调用通道的服务循环退出。
+	// 收尾顺序：**先取状态，再收刀**。
+	//
+	// 为什么不能反：我们自己 Kill 掉的子进程与被内核 OOM-killer 杀掉的子进程，
+	// 退出状态**都是**「信号终止」。只有当子进程**自己先结束**时，
+	// 取到的才是真死因。故取状态必须先于收刀——否则「内存兜底生效了」
+	// 与「我们自己收的刀」分不开，前者（预期行为）会被误报成故障。
+	//
+	// 但注意：**startErr 非 nil 说明子进程没交回结果**（管道 EOF），
+	// 此时子进程**已经自己结束了**（否则管道不会 EOF）⇒ 可以安全地取它的状态，
+	// 那就是真死因（被内核杀 = 兜底生效；非零退出 = 启动失败）。
+	waitErr := child.Wait()
+
+	// 收刀（无论成功失败）并等调用通道的服务循环退出。
 	_ = child.Process.Kill()
-	_ = child.Wait()
 	<-serveDone
 	closeAll(startWriteR, startReadW, callReqR, callRespW)
+
+	// 回收 cgroup：子进程已退出，cgroup 空了才删得掉。
+	cg.release()
 
 	if startErr != nil {
 		// 管道 EOF（子进程被内核杀掉）在这里显现——它是「执行域异常终止」，
 		// 不是「程序返回空」。这正是内存兜底生效时的形态。
-		return wire.Result{}, startErr
+		//
+		// 归类成结构化错误（ExecutionAborted）：宿主据此能分清
+		// 「被内核杀掉（兜底生效了，预期行为）」与
+		// 「自己非零退出（启动失败，故障）」——这两者的处置完全不同，
+		// 合成一句话的话，宿主只能一律当故障处理。
+		aborted := abortedError(waitErr, startErr)
+		if ae, ok := aborted.(*ExecutionAborted); ok {
+			ae.Stderr = stderrTail.String()
+		}
+		return wire.Result{}, aborted
 	}
 	return res, nil
 }

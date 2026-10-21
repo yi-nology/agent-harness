@@ -27,14 +27,56 @@ func TestSubprocessProviderBasics(t *testing.T) {
 	}
 }
 
-// TestSubprocessProviderWithMemoryConfigured 配了上限才声明支持。
+// TestSubprocessProviderWithMemoryConfigured 配了上限**且当前环境兜得住**才声明支持。
+//
+// 判据是「当前环境兜不兜得住」而不是「配没配上限」：
+// 要求了内存上限而当前环境建不出带 memory.max 的 cgroup（macOS 没有 cgroup；
+// Linux 容器里没委派 memory 控制器也没有）⇒ **不支持**。
+//
+// 若这里报支持，登记簿就会选中本后端，然后 Exec 因建不出 cgroup 而失败——
+// 宿主等到的却是「选了它却用不了」这种最难排查的形态。
 func TestSubprocessProviderWithMemoryConfigured(t *testing.T) {
 	p := NewSubprocessProvider(SubprocessOptions{MaxMemory: 256 << 20})
-	if !p.Supports(sandbox.Budget{MaxMemory: 1 << 20}) {
-		t.Error("配了内存上限且本后端能兑现，应声明支持")
-	}
+	// 零要求 → 支持（不要求内存上限就不受兜底能力约束）。
 	if !p.Supports(sandbox.Budget{}) {
 		t.Error("零要求应视为支持")
+	}
+	// 配了上限 → 是否支持取决于当前环境兜不兜得住。
+	want := memLimitSupported()
+	if got := p.Supports(sandbox.Budget{MaxMemory: 1 << 20}); got != want {
+		t.Errorf("配了上限时的支持判定=%v，应等于当前环境兜不兜得住=%v", got, want)
+	}
+}
+
+// TestSubprocessProviderWithoutMemoryConfigured 没配上限却要求兜底 ⇒ 不支持。
+//
+// 这是「不撒谎」的方向：宿主要内存兜底，而本后端没配 ⇒ 明确说兜不住，
+// 让登记簿去选能兜的后端，而不是选一个装样子的。
+//
+// # 一条环境性事实：本条在「兜不住」的环境上无法区分两个分支
+//
+// `Supports` 的两个返回 false 的分支是：
+//   - **没配上限**（配置问题）——本条要抓的；
+//   - **配了上限但当前环境兜不住**（环境问题）。
+//
+// 在 macOS（无 cgroup）这类兜不住的环境上，两者**返回值相同**（都 false），
+// 故「没配上限」这个缺陷在此环境**不可观测**——不是用例没写对，
+// 是这两条分支在结果上无法区分。
+//
+// ⇒ 本条的区分力**依赖 Linux + 可写 cgroup 的环境**（CI 的 ubuntu-24.04）：
+// 那里 `memLimitSupported()` 为 true，「没配」与「配了但兜不住」才分得开。
+// 反向对照见 TestSubprocessProviderWithMemoryConfigured。
+func TestSubprocessProviderWithoutMemoryConfigured(t *testing.T) {
+	p := NewSubprocessProvider(SubprocessOptions{})
+	if p.Supports(sandbox.Budget{MaxMemory: 1 << 20}) {
+		t.Error("没配内存上限却声称能兑现，是撒谎")
+	}
+	// 反向对照：配了上限时的判定**只**取决于当前环境兜不兜得住。
+	// 在兜得住的环境（Linux + 可写 cgroup）上，这两条分支才分得开。
+	p2 := NewSubprocessProvider(SubprocessOptions{MaxMemory: 256 << 20})
+	got := p2.Supports(sandbox.Budget{MaxMemory: 1 << 20})
+	if got != memLimitSupported() {
+		t.Errorf("配了上限时的判定=%v，应等于当前环境能力=%v", got, memLimitSupported())
 	}
 }
 
