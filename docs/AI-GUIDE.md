@@ -41,7 +41,7 @@
 > **编排是代码，LLM 只做单环节。**
 
 本仓只提供**确定性编排的机制面**（报告协议、环节状态机、事件总线、派发守卫、
-审计策略、溢出存档、PII 脱敏、出站守卫等 27 个包），**不认识任何领域概念**。
+审计策略、溢出存档、PII 脱敏、出站守卫等 28 个包），**不认识任何领域概念**。
 
 ### 1.2 判定口诀（改任何代码前先问这一句）
 
@@ -54,12 +54,13 @@
 2. **展示文案归宿主。** 标题、兜底、品牌词一律走 `RenderOptions` 注入。
 3. **测试夹具用合成数据。** 夹具是契约的示例，示例带领域味等于把契约钉死在某个领域上。
 
-### 1.3 27 个包分三组
+### 1.3 28 个包分三组
 
 | 组 | 包 | 特征 |
 |---|---|---|
 | **机制面**（22 个） | `protocol` `statemachine` `contract` `eventbus` `spill` `budget` `offload` `toolfail` `tooldisclose` `toolname` `guardset` `sandbox` `ptc` `watchdog` `checkpoint` `commitgate` `delta` `pending` `drain` `pii` `netguard` `sideeffect` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
 | **契约套件**（1 个） | `sidetest` | 判「宿主的实现是否满足契约」的**判据**，不是能力本身。只给「怎么判」，不给「一份能用的实现」——见 AGENTS.md「共享契约测试套件」那条纪律。 |
+| **组合机制**（1 个） | `retryplan` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。它不重新判定任何东西，只回答「该走哪条路径」。 |
 | **门面**（3 个） | `dispatch` `policy` `reminder` | **只能有四种声明**：类型别名、常量别名、单条上游转发函数、允许集合内的 import。加真逻辑三者必居其一 → 门禁红。核心在 `oagentkit/*`。 |
 | **门禁执行体**（1 个 + 2 个 CLI） | `archcheck` / `cmd/archcheck` `cmd/docsync` | policy 的可执行面。可导入包，宿主可复用同一套判据。 |
 
@@ -100,7 +101,7 @@
 cd /Users/zhangyi/my_project/agent-harness
 
 make test                 # 全量单测（当前 102 个测试文件，~35s）
-make architecture-check   # 架构门禁（当前 8 规则 + 5 门包 + 27 包依赖方向全绿）
+make architecture-check   # 架构门禁（当前 8 规则 + 5 门包 + 28 包依赖方向全绿）
 ```
 
 **上手第一步就跑一次**，这样后面每次红都知道是自己造成的，不是本来就红的。
@@ -347,7 +348,7 @@ make check
 | `lint` | golangci-lint（未安装时**明确报错退出**，不静默跳过） | `brew install golangci-lint`；CI 钉 v2.14.0 |
 | `test` | 全量单测 | 看失败断言 |
 | `cover-gate` | 覆盖率 < 60%（当前实测 86.6%） | 补测试，别降阈值 |
-| `architecture-check` | 8 条规则 + 5 门包 + 27 包依赖方向 | 见下表 |
+| `architecture-check` | 8 条规则 + 5 门包 + 28 包依赖方向 | 见下表 |
 | `docsync` | README **包表** ↔ 仓库实际（包名 / 行数 / 依赖列 / 职责列）| 重算行数与依赖，改 README 包表。**注意「工程底座」表不在判定面内**，那几个数字要自己手算 |
 | `modreplace` | go.mod 含 `replace` | 改用 `make devlink` |
 | `modwork` | go.work / go.work.sum 被跟踪 | `git rm --cached` |
@@ -642,6 +643,7 @@ make devunlink                        # 断开
 | [AGENTS.md](../AGENTS.md) | 在本仓干活的工作纪律（含每条纪律的事故来源） | 活文档 |
 | [docs/USAGE.md](USAGE.md) | **宿主开发者**：怎么把 harness 接进自己产品 | 活文档 |
 | [docs/OAGENTKIT-OVERLAP.md](OAGENTKIT-OVERLAP.md) | 本仓与上游 `oagentkit` 的能力边界 | 活文档 |
+| [docs/SANDBOX-DESIGN-20261021.md](SANDBOX-DESIGN-20261021.md) | 执行沙箱的下一层：跨域执行与资源兜底（设计推导 + 与上游 guardx 的分工） | 活文档 |
 | [docs/CHECKPOINT.md](CHECKPOINT.md) | 续跑契约的细节（设计推导 + 跨进程闸） | 活文档 |
 | [architecture-policy.yaml](../architecture-policy.yaml) | 门禁声明面（模块拓扑 / 规则 / 阈值） | 活文档（机器判定）|
 | [CHANGELOG.md](../CHANGELOG.md) | 版本历史与破坏性变更 | 活文档（按 tag 切段生成）|

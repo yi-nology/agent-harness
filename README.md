@@ -25,6 +25,7 @@
 > | [architecture-policy.yaml](architecture-policy.yaml) | 门禁**声明面**：模块拓扑 / 规则 / 阈值 / 例外 | 活文档（机器判定）|
 > | [CHANGELOG.md](CHANGELOG.md) | 版本历史与破坏性变更 | 活文档（按 tag 切段生成）|
 > | [docs/OAGENTKIT-OVERLAP.md](docs/OAGENTKIT-OVERLAP.md) | 本仓与上游 `oagentkit` 的能力边界：哪些该做、哪些上游已有 | 活文档 |
+> | [docs/SANDBOX-DESIGN-20261021.md](docs/SANDBOX-DESIGN-20261021.md) | 执行沙箱的下一层：跨域执行与资源兜底（发现「内存无兜底」真缺陷 + 与上游 guardx 的分工）| 活文档 |
 | [docs/HARNESS-BENCHMARK-20261021.md](docs/HARNESS-BENCHMARK-20261021.md) | 对标 Codex / DSH / Octop / Coze 五家：借鉴了什么、什么归宿主、什么本轮没做 | 活文档 |
 > | [docs/CHECKPOINT.md](docs/CHECKPOINT.md) | 续跑契约的设计推导、三条不变量与跨进程闸 | 活文档 |
 > | [docs/SPLIT_PLAN.md](docs/SPLIT_PLAN.md) | 从宿主仓拆分的分层依据（L1/L2/L3）| **历史快照**（2026-10-17 写于 10 个包时）|
@@ -171,11 +172,11 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 14,790 行 / 84 文件（不含 `_test.go`） |
+| 生产代码 | 14,806 行 / 84 文件（不含 `_test.go`） |
 | 测试 | 111 个测试文件 |
 | 覆盖率 | **86.1%**（门槛 60%，真阈值不是摆设） |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
-| 门禁 | 8 条规则（`rules` 段）+ 3 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 27 包依赖方向 + README 包表一致性 |
+| 门禁 | 8 条规则（`rules` 段）+ 3 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 28 包依赖方向 + README 包表一致性 |
 | 例外登记 | **0** |
 
 > ⚠️ **上表不在 `docsync` 的判定面内**——`docsync` 只校验下面那张「包清单」表的
