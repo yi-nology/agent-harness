@@ -111,21 +111,54 @@ RECORD 375 条 0 条含 test）。版本差为补丁级，以下均为**行为**
 
 ## 四、结论：本仓该守什么
 
-**该守（上游不可能有，因为它们是编排语义而非通用原语）**：
-`checkpoint`（续跑而非重放）、`budget`（压实计划骨架 + 就地改账）、`offload`（两阶段外置）、
-`tooldisclose`（渐进披露 + 两类失败二分）、`netguard`（逐跳重验 + 按名拦截 + DNS 解析层）。
+### 本仓 → 上游的完整映射（2026-10-21 实测复核后的定论）
+
+**先看这张表**——「某个包归谁」的第一入口在这，别去翻散文。
+
+| 本仓包 | 归属 | 核心位置 | 形态 |
+|---|---|---|---|
+| `dispatch` | 上游 | `oagentkit/agent/dispatch` | 门面（类型别名） |
+| `policy` | 上游 | `oagentkit/toolgate/policy` | 门面（转发） |
+| `reminder` | 上游 | `oagentkit/guardx/injectband` | 门面（转发） |
+| `toolfail` | 上游 | `oagentkit/guardx/toolfail` | 门面（类型别名 + 常量别名 + 转发） |
+| `sandbox` | 上游 | `oagentkit/guardx/sandbox` | 门面（类型别名 + 常量别名 + 转发） |
+| `delta` | 上游基础机制 | `oagentkit/runtime/pacer` | 本仓在其上叠编排层（(kind,iteration) 键控 + 收口扫序） |
+| `eventbus` | 上游基础机制 | `oagentkit/runtime/progress` | 本仓在其上叠事件面 |
+| `pii` | 本仓 | — | 个人信息**价值面**脱敏；上游 `guardx/logredact` 是**凭据**脱敏（互补） |
+| `netguard` | 本仓 | IP 策略单源 `guardx/egress` | 本仓的解析层 + 名字层 + 拨号层闭窗是真差异化（上游 `egress` **不解析 DNS**） |
+| `budget` | 本仓 | — | 分段计量 + 上限计算 + 压实计划骨架（职责面与上游 `textx/compact` 不重叠，见下） |
+| `tooldisclose` | 本仓 | — | 渐进披露 + 两类失败二分（模型面；上游 `mcpkit.Catalog` 是 server 面） |
+| `offload` | 本仓 | — | 两阶段外置（sha 去重 + 首次标记后续替换） |
+| `checkpoint` | 本仓 | — | 续跑而非重放 + 跨进程 CAS 存取契约 |
+| `commitgate` | 本仓 | — | 环节终态独占提交闸（凭令牌释放） |
+| `contract` | 本仓 | — | 编排引擎 ↔ 宿主状态的唯一边界 |
+| `protocol` | 本仓 | — | Report 契约 + 容错解析 + 白名单校验 + 渲染 |
+| `statemachine` | 本仓 | — | 环节状态机（纯谓词） |
+| `ptc` | 本仓 | — | 程序化工具编排沙箱（goja VM，三重预算） |
+| `guardset` | 本仓 | 接上游 `guardx/invoke` | 守卫装配契约（多守卫合成一条拒绝） |
+| `watchdog` | 本仓 | — | 被动配对不变量监视（只告警不裁决） |
+| `pending` | 本仓 | — | 反问/消歧挂起态载体 |
+| `drain` | 本仓 | — | 优雅排水（经 `Turns` 接口） |
+| `spill` | 本仓 | — | 输出溢出存档平面 |
+| `toolname` | 本仓 | — | 工具名 → JS 标识符的单一真相（被 `tooldisclose` + `ptc` 共用） |
+| `archcheck` | 本仓 | — | 架构门禁执行体（可被宿主复用） |
+
+**已下沉的 5 个门面**由 `harness-facade-stays-facade` 门禁守着（policy 的 `facades` 段登记），
+「核心归上游、门面留本仓」有机器约束，不只靠本文。
 
 **该让（上游已覆盖或本就属宿主/运行时）**：bashguard 式规则 DSL、permgate、fence、
 澄清/合议/复审/路由、工具调度与限流、tokenizer 估算、provider 消息块形态识别。
 
-### 2026-10-21 更正：`toolfail` 已下沉，本仓转门面
+### 2026-10-21：`toolfail` 与 `sandbox` 已下沉，本仓转门面
 
 本文 §四 的初稿把 `toolfail` 列在「该守」一侧（**失败分类契约**）。该判断**已过时**，
 本轮实测复核后推翻：
 
 - 失败分类与处置判定是**跨宿主一致的语义**，与编排无关——各宿主各判一套必然漂移，
   漂移的后果是重试策略静默错乱（对永久失败死循环重试，或对瞬时失败一次就放弃）。
-- 它与 `invoke`（调用链）、`permgate`（许可判定）同族，都是「要求 vs 实际」的判定语义，
+- 隔离档位同理：档位若各宿主各定一套，「宿主声明的强度」与「实际执行的强度」之间
+  就没有信号——**降级了没人知道**。
+- 两者与 `invoke`（调用链）、`permgate`（许可判定）同族，都是「要求 vs 实际」的判定语义，
   故归 `github.com/oagentkit/guardx`（tier 0 安全层）。
 
 **已处置**：
@@ -135,7 +168,8 @@ RECORD 375 条 0 条含 test）。版本差为补丁级，以下均为**行为**
 | 上游 `guardx/toolfail` | ✅ 已落地（PR oagentkit/guardx#14），随 **v0.9.0** 发布 |
 | 本仓 `toolfail` | ✅ 转门面（类型别名 + 常量别名 + 单条上游转发），调用面**逐字兼容**——宿主 bianque 的 `internal/engine/scheduler/experts/dispatch.go` 零改动 |
 | 本仓 `sandbox` | ✅ 同样下沉（PR oagentkit/guardx#15），转门面；档位声明门禁（`harness-sandbox-provider-declared`）留在本仓，因为它核对的是**本仓 policy 的登记面** |
-| 矩阵登记 | ✅ `matrix-tools/modules.json` + 站点 `llms.txt` / `versions.json` 已重生成 |
+| 矩阵登记 | ✅ `matrix-tools/modules.json` + 站点 `llms.txt` / `versions.json` 已重生成（PR matrix-tools#53、站点#24） |
+| 门禁判据修复 | ✅ matrix-tools#54：门面符号门禁的枚举基准从「矩阵的全部包」改为「门面实际转发的包」——否则矩阵每新增一个包就要求门面跟着长（而门面早已废弃） |
 
 **门禁同步**：本仓 `facades` 段从 3 条扩到 **5 条**（新增 `toolfail`、`sandbox`），
 门包不可变门禁（`harness-facade-stays-facade`）开始管这两个包——
@@ -155,8 +189,25 @@ RECORD 375 条 0 条含 test）。版本差为补丁级，以下均为**行为**
 
 | 包 | 状态 | 理由 |
 |---|---|---|
-| `budget` | **重叠但不下沉** | 上游 `textx/compact`（916 行）已覆盖窗口口径（`EffectiveWindow`）、够不够压（`HasEnoughToCompact`）、保留哪几组（`Select`）；本仓 `budget` 多出的是**分段计量**（system/tools/rules/skills/mcp/conversation）与**宿主接口**（摘要生成 / 原文落盘各留一个接口）。两层可映射但不等价，强行合并会把「分段计量」这个编排侧概念塞进上游纯函数集 |
-| `tooldisclose` | **部分重叠** | 上游 `mcpkit/mcp` 有 `Catalog`（工具目录 + 差异比对），但没有**渐进披露**（确定性打分检索）与**两类失败二分**（未加载可重试 / 不在目录禁绕过）。目录层可对齐，披露机制是本仓的真差异化 |
+| `budget` | **不下沉**（2026-10-21 实测复核） | 上游 `textx/compact` 判的是「**该压缩了吗**」（阈值/熔断/token 三轨），本仓 `budget` 答的是「**输入侧可用上限是多少**」+「**压实计划怎么执行**」——**职责面不重叠**（本仓 `budget` 包内没有「该压了」的阈值判定，那正是上游的职责）。「窗口 − 预留」这一层两边是**同一条算式**，实测唯一差异是地板值（本仓 1 / 上游 0），且本仓有明确理由（地板 1 让后果由 `Overflow` / `Classify(critical)` 这类**看得见的信号**承接，而不是抛错把两种病因混成一个）。本仓多出的是**分段计量**（system/tools/rules/skills/mcp/conversation）与**宿主接口**（摘要生成 / 原文落盘各留一个接口）——强行合并会把编排侧概念塞进上游纯函数集 |
+| `tooldisclose` | **不下沉**（2026-10-21 实测复核） | 上游 `mcpkit/mcp.Catalog` 是「**某个 server 声明了哪些工具名**」——`NewCatalog(server, tools []string)` + `Contains` + `Diff`（期望 vs 实际的差异）。本仓 `Catalog` 是「**模型可见的渐进披露目录**」——带 `Description` 与 `Schema`、有并发加载集（`loaded`）、有检索上限（`DefaultSearchLimit`/`MaxSearchLimit` 钳到 [1,5]）、有重名 first-wins 规则。**两者不是同一层**：上游那个是「server 面」，本仓这个是「模型面」。且上游**没有**渐进披露（确定性打分检索）与**两类失败二分**（未加载可重试 / 不在目录禁绕过）——那是本仓的真差异化 |
+
+### 2026-10-21 更正：本节此前写着一句不实断言
+
+初稿在这一节写过「**同一个上下文窗口在两处算出两个阈值**」。实测评数值后**该断言不成立**，
+已删除。错在哪：
+
+1. **对照方式本身错了**。初稿拿上游 `EffectiveWindow()`（纯窗口口径）与本仓
+   `MaxInput()`（含「自设上限」的最终可用上限）直接比大小——**不是同一个东西**。
+   正确的对照是拿本仓的「窗口−预留」推导分支（`baseInput <= 0`）去比，两边这才是
+   同一条算式。
+2. **职责面本就不同**。上游 `ShouldCompact` 答「该压了吗」，本仓 `budget` 答「上限是多少
+   + 计划怎么执行」——本仓包内**没有**「该压了」的阈值判定。
+
+> 教训与本节开头那条同源：**结论表比事实表更容易腐烂**，而这次腐烂的是**我自己写的
+> 结论**。写「两个实现算出两个阈值」这种断言时，**必须先跑数值对照**——
+> 判据对不对，要看输入相同、输出不同；只读代码注释是看不出口径差的。
+
 
 ## 五、遗留限制（如实记录）
 
