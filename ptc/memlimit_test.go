@@ -169,6 +169,12 @@ func TestNoCgroupWhenNoMemoryLimit(t *testing.T) {
 	}
 }
 
+// childBinEnvPkg 预编译子进程二进制的路径（包内测试用）。
+//
+// 与外部测试包的同名常量对应——两份各写一遍是刻意的：
+// 跨包共享测试夹具要把它导出成公开 API，那会把测试细节泄进生产面。
+const childBinEnvPkg = "AGENT_HARNESS_PTC_CHILD_BIN"
+
 // errAttachFailed 造一个「attach 失败」形态的错误。
 func errAttachFailed() error { return exec.ErrNotFound }
 
@@ -180,6 +186,13 @@ func errAttachFailed() error { return exec.ErrNotFound }
 // 那会把内部机制暴露出去，不值当。
 func buildChildProgramInPkg(t *testing.T) string {
 	t.Helper()
+	// 预编译子进程（目标环境无 Go 工具链时用）。
+	if pre := os.Getenv(childBinEnvPkg); pre != "" {
+		if _, err := os.Stat(pre); err != nil {
+			t.Fatalf("指定的预编译子进程不可用（%v）", err)
+		}
+		return pre
+	}
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.go")
 	prog := `package main

@@ -47,8 +47,25 @@ func requireMemoryLimitSupport(t *testing.T) {
 }
 
 // buildChildProgram 编译一个「子进程形态」的小程序，返回可执行文件路径。
+//
+// # 预编译子进程：给没有 Go 工具链的目标环境用
+//
+// 默认现场编译（需要目标环境有 go）。但「目标环境没有 Go、只有编译好的二进制」
+// 是常见形态（受限的生产机、交叉验证），故支持用环境变量指定一个**预编译**的
+// 子进程二进制：
+//
+//	AGENT_HARNESS_PTC_CHILD_BIN=/path/to/child
+//
+// 这让同一份测试二进制能在**没有 Go 的 Linux 机器**上跑内存兜底的端到端验收
+// （那正是唯一能建出子 cgroup 的环境形态）。
 func buildChildProgram(t *testing.T) string {
 	t.Helper()
+	if pre := os.Getenv(childBinEnv); pre != "" {
+		if _, err := os.Stat(pre); err != nil {
+			t.Fatalf("指定的预编译子进程不可用（%v）", err)
+		}
+		return pre
+	}
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.go")
 	prog := `package main
@@ -70,6 +87,9 @@ func main() {
 	}
 	return bin
 }
+
+// childBinEnv 预编译子进程二进制的路径（环境变量）。
+const childBinEnv = "AGENT_HARNESS_PTC_CHILD_BIN"
 
 // TestSubprocessExecutesProgram 跨进程执行闭环：程序在子进程里跑，工具调用
 // 经管道往返到父侧执行。
