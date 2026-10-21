@@ -13,6 +13,7 @@ jobs:
   probe:
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v7
       - name: 探测 cgroup v2 与 memory 控制器
         run: |
           echo "--- /proc/self/cgroup ---"
