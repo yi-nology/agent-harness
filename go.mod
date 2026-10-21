@@ -22,7 +22,7 @@ require (
 	github.com/oagentkit/textx v0.6.1
 	github.com/oagentkit/toolgate v0.12.0
 	github.com/oekit/concurrency v0.18.0
-	github.com/oekit/core v0.10.0
+	github.com/oekit/core v0.11.0
 	github.com/oekit/logx v0.7.1
 	github.com/oekit/pkg v0.18.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
