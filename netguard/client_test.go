@@ -19,28 +19,43 @@ import (
 	"time"
 )
 
-// echoListener 起一个本机回环监听器，返回地址。
+// echoListener 起一个本机回环 HTTP 服务器，返回地址。
+//
+// # 为什么用 http.Server 而不是裸 TCP
+//
+// 早先的夹具是裸 TCP：accept 到连接后手写一行
+// `HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n` 然后立刻 close。
+// 但那行响应**没有 `Connection: close` 头**——按 HTTP/1.1 语义它是 keep-alive，
+// 客户端读完会把连接放回空闲池，而服务端已经把它关了。
+//
+// 于是池里可能躺着一条「客户端以为可复用、实际已关或还带着残留字节」的连接：
+// 下一次复用时 Go transport 先 peek 它，peek 到**响应**（而非 EOF）就报
+// `Unsolicited response received on idle HTTP channel`——CI 上偶发红
+// （2026-10-21 实测：netguard 的 TestNewClientAttachesGuard）。
+//
+// 用 http.Server 则由标准库负责 keep-alive 与关闭语义，客户端与服务端对
+// 「这条连接还能不能用」的判断一致，从根上消除这类协议不一致。
+//
+// # 仍然要回一个合法响应
+//
+// 只关连接的话客户端读到 EOF，失败形态会与「被守卫拦住」混在一起
+// （两者都表现为 Get 出错）——那这条用例就分不清「守卫拦了」与「服务端没回话」。
 func echoListener(t *testing.T) string {
 	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// 最小合法响应：200 + 零长度 body。
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := &http.Server{Handler: mux}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			// 回一个最小的合法响应：只关连接的话客户端读到 EOF，
-			// 失败形态会与「被守卫拦住」混在一起（两者都表现为 Get 出错）。
-			go func(c net.Conn) {
-				defer func() { _ = c.Close() }()
-				_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
-			}(c)
-		}
-	}()
+	t.Cleanup(func() {
+		_ = srv.Close()
+	})
+	go func() { _ = srv.Serve(ln) }()
 	return ln.Addr().String()
 }
 
