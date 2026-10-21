@@ -323,7 +323,7 @@ if res.HasBlocking() {
    | `forwarding_shell_max_chars: 0` | 关闭该区分，所有方法都算实质方法，判定逐字退回旧行为 |
    | `forwarding_shell_max_chars: <N>` | 自定义刻度（方法体有效长度 ≤ N 才算壳）|
 
-7. **泛型实例化各自成条**（v0.8.5 起）。按 Go 规范，按实例特化的方法
+7. **泛型实例化各自成条**（v0.9.0 起）。按 Go 规范，按实例特化的方法
    （`func (m *Manager[int]) C()`）**只属于 `Manager[int]`**，不是 `Manager` 的方法。
    剥掉实参会把它并进基类型——两个实例化各挂 20 个特化方法就被判成
    「Manager 有 40 个方法」，而它其实不胖（**方向是虚高 ⇒ 假红**）。
@@ -503,7 +503,7 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 | 本仓版本 | 变更 | 下游要做什么 |
 |---|---|---|
-| **v0.8.5** | **依赖地板追平矩阵本轮新版本**（`oagentkit/agent` v0.10.2→v0.10.4、`llm` v0.15.0→v0.15.2、`obs` v0.9.4→v0.9.5、`toolgate` v0.12.1→v0.12.4、`mcpkit` v0.8.4→v0.8.5）；**无代码变更** | **`go mod tidy`**——地板抬高对下游是隐式破坏性变更：不跑就报 `updates to go.mod needed`，且报错不提真正原因。**无行为差异**：这 5 个上游版本**全部是纯依赖地板追平**（各仓自身代码零改动；llm v0.15.1/v0.15.2 是「只修发布说明」的一版），逐仓核对见 [CHANGELOG.md](CHANGELOG.md) 的 v0.8.5 段 |
+| **v0.9.0** | **新增 `gatecheck` 包**（审批层 × 沙箱层的**联合判据**：两层都同意才放行，含 `ExecuteAndRun` 与受管后端 `Managed`——判据与执行不可分）；**新增 `guardset.Assembly`**（守卫集合的装配面：撤销 = **换整份**，链不用重接）；**`policy` 门面新增 `Stage`**（审批门接进判定环的唯一入口）；**`archcheck` 新增 `import_exempt`**（import 路径级**精确**例外，可放行被禁依赖树里的某个具体子包）；**`ptc` 修复「子进程不回结果时父侧永久挂死」**（上游 `guardx/wire` 的 `Starter.Start` 收了 ctx 却不用它，本仓改为取 ctx deadline 与墙钟预算较早者）+ 内存兜底改用 cgroup v2（原 RLIMIT_AS 会把 Go runtime 一起掐死）+ 执行异常终止的**死因分类**；**依赖地板追平**（`oagentkit/agent` v0.10.2→v0.10.4、`llm` v0.15.0→v0.15.2、`obs` v0.9.4→v0.9.5、`toolgate` v0.12.1→v0.12.4、`mcpkit` v0.8.4→v0.8.5） | **`go mod tidy`**——地板抬高对下游是隐式破坏性变更，不跑就报 `updates to go.mod needed`，且报错不提真正原因。**其余全是新增 API，无接口变更**：不接 `gatecheck` / `guardset.Assembly` / `policy.Stage` / `archcheck` 的 `import_exempt` 的宿主代码**逐字不变**（policy 不写新字段即按旧行为生效）。**一处行为变化需知**：`ptc` 现在尊重 ctx deadline——此前父侧可能在子进程不回结果时**永久挂死**，现在到点收刀并报错；若你依赖「父侧一直等」请显式给足 deadline |
 | **v0.8.4** | **依赖地板追平矩阵本轮新版本**（`oagentkit/agent` v0.10.1→v0.10.2、`obs` v0.9.3→v0.9.4、`runtime` v0.7.1→v0.7.2、`textx` v0.6.1→v0.6.2、`toolgate` v0.12.0→v0.12.1、`mcpkit` v0.8.3→v0.8.4）；**无代码变更** | **`go mod tidy`**——地板抬高对下游是隐式破坏性变更：不跑就报 `updates to go.mod needed`，且报错不提真正原因。**无行为差异**：这 6 个上游版本**全部是纯依赖地板追平**（各仓自身代码零改动，只抬 `oekit/pkg` / `oekit/concurrency` / `guardx` / `llm` 四类地板之一），逐仓核对见 [CHANGELOG.md](CHANGELOG.md) 的 v0.8.4 段 |
 | **v0.8.3** | **依赖地板追平上游本轮新版本**（`oagentkit/llm` v0.14.2→v0.15.0、`oekit/concurrency` v0.18.0→v0.19.0）；**无代码变更** | **`go mod tidy`**——地板抬高对下游是隐式 breaking：不跑就报 `updates to go.mod needed`，且报错不提真正原因。**无行为差异**：llm v0.15.0 只新增了一个**可选**字段 `OpenAIProviderConfig.HTTPClient`（缺省 nil 时行为逐字不变），本仓只用 llm 的空导入（`tools.go` 的工具依赖登记），不碰其 API。**顺带值得知道**：llm v0.15.0 起宿主可注入自己的 `*http.Client` → 配合本仓 `netguard.NewClient` 把出站守卫挂到 `Transport.DialContext`（写面校验拦不住 DNS rebinding，守卫必须在拨号层）——接线形态见 [llm v0.15.0](https://github.com/oagentkit/llm/releases/tag/v0.15.0) |
 | **v0.8.2** | **依赖地板追平上游本轮新版本**（`oekit/pkg` v0.18.0→v0.20.0、`oagentkit/guardx` v0.13.0→v0.13.1）；**无代码变更** | **`go mod tidy`**——地板抬高对下游是隐式 breaking：不跑就报 `updates to go.mod needed`，且报错不提真正原因。两处抬升**均无行为差异**（`guardx` v0.13.1 只改 `go.mod`/`go.sum`；`oekit/pkg` v0.20.0 相对 v0.18.0 是纯增量 + 一处退避溢出修复），逐项核对见 [CHANGELOG.md](CHANGELOG.md) 的 v0.8.2 段 |
