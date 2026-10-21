@@ -134,7 +134,7 @@ RECORD 375 条 0 条含 test）。版本差为补丁级，以下均为**行为**
 | `contract` | 本仓 | — | 编排引擎 ↔ 宿主状态的唯一边界 |
 | `protocol` | 本仓 | — | Report 契约 + 容错解析 + 白名单校验 + 渲染 |
 | `statemachine` | 本仓 | — | 环节状态机（纯谓词） |
-| `ptc` | 本仓 | — | 程序化工具编排沙箱（goja VM，三重预算） |
+| `ptc` | 本仓 | 跨进程协议用上游 `guardx/wire` | 程序化工具编排沙箱（goja VM，三重预算）。**两种执行形态**：进程内（`Run`，兜不住内存）与**子进程**（`NewSubprocessProvider`，内核地址空间上限兑现 `MaxMemory`；程序被内核杀掉时父侧从管道 EOF 认出「执行域异常终止」）|
 | `guardset` | 本仓 | 接上游 `guardx/invoke` | 守卫装配契约（多守卫合成一条拒绝） |
 | `watchdog` | 本仓 | — | 被动配对不变量监视（只告警不裁决） |
 | `pending` | 本仓 | — | 反问/消歧挂起态载体 |

@@ -206,8 +206,13 @@ type Capable interface {
 
 ### P0｜上游 `guardx`：预算面 + 支持面
 
-> **已提 issue**：[oagentkit/guardx#17](https://github.com/oagentkit/guardx/issues/17)
-> 「sandbox: 预算面缺「内存兜底」这一项，且后端缺「支持面」声明——进程内后端兜不住时没有信号」
+> **✅ 已完成（2026-10-21）**：上游 [guardx#19](https://github.com/oagentkit/guardx/pull/19)
+> （`Budget.MaxMemory` + 可选能力面 `Capable` + `Resolve` 按支持面过滤），随 **v0.10.0** 发布。
+> 本仓同步：门面加 `Capable` 别名；档位登记门禁扩「预算支持面」一维（`supports` 登记项，
+> 核对「登记 ↔ 代码事实」）；`ptc-goja` 如实登记「只兑现三闸」、`ptc-subprocess` 登记
+> 「兑现内存」。矩阵登记：matrix-tools#57、#62。
+>
+> 原 issue：[oagentkit/guardx#17](https://github.com/oagentkit/guardx/issues/17)（已随实现关闭）
 
 - `Budget` 加 `MaxMemory`；新增可选接口 `Capable`；`Resolve` 按 `Supports` 过滤。
 - 验收：要求 `MaxMemory` 而候选后端不支持 ⇒ `Resolve` 返回 `ErrNoProvider`；
@@ -217,8 +222,14 @@ type Capable interface {
 
 ### P1｜上游 `guardx`：`wire` 协议 ＋ 本仓 `ptc`：子进程后端
 
-> **已提 issue**：[oagentkit/guardx#18](https://github.com/oagentkit/guardx/issues/18)
-> 「sandbox: 缺跨进程绑定调用协议——程序一旦出宿主进程，工具回调就够不着了」
+> **✅ 已完成（2026-10-21）**：上游 [guardx#20](https://github.com/oagentkit/guardx/pull/20)
+> （wire 协议，v0.11.0）→ [#21](https://github.com/oagentkit/guardx/pull/21)（补 Start/Result 帧
+> 与「两条通道 × 四个角色」，v0.12.0）→ [#22](https://github.com/oagentkit/guardx/pull/22)
+> （wire 移到仓根，import 路径变更，v0.13.0）；本仓 [v0.8.1](https://github.com/yi-nology/agent-harness/releases/tag/v0.8.1)
+> 落地子进程后端。真兜底用例已进仓并通过：子进程申请超限内存 ⇒ 被内核杀掉 ⇒
+> 父侧收到「执行域异常终止」，**宿主进程存活**。
+>
+> 原 issue：[oagentkit/guardx#18](https://github.com/oagentkit/guardx/issues/18)（已随实现关闭）
 
 - 上游：帧格式、`Transport`、父侧服务端循环、子侧客户端。
 - 本仓：`ptc` 的子进程后端（子进程跑 goja + 管道绑定 + `rlimit` 兑现 `MaxMemory`）。
