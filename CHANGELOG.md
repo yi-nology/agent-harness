@@ -2,6 +2,59 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.7.0] — 2026-10-21
+
+### 重构(harness)：toolfail 与 sandbox 下沉上游 guardx，本仓转门面
+
+# 一、本次下沉（agent-harness → oagentkit/guardx）
+## 背景
+复核实测上游 8 个模块的全部子包后，发现本仓有两处包属于「跨宿主必须一致的判定
+语义」而非「编排语义」——它们留在本仓，处置口径就会各宿主各判一套：
+- `toolfail`：失败分类与处置判定。判定口径必须全局一致，否则重试策略静默错乱
+  （对永久失败死循环重试，或对瞬时失败一次就放弃）。
+- `sandbox`：隔离档位与执行后端协议。档位若各宿主各定一套，「宿主声明的强度」
+  与「实际执行的强度」之间就没有信号——降级了没人知道。
+两者与 `invoke`（调用链）、`permgate`（许可判定）同族，都是「要求 vs 实际」的
+判定语义，故归 guardx（tier 0 安全层，零外部依赖）。
+## 上游
+| 仓 | PR | 内容 |
+|---|---|---|
+| oagentkit/guardx | #14 | 新增 `toolfail`（99.0% 覆盖） |
+| oagentkit/guardx | #15 | 新增 `sandbox`（100.0% 覆盖） |
+| oagentkit/matrix-tools | #53 | 矩阵登记（modules.json 单一数据源） |
+| oagentkit/oagentkit.github.io | #24 | 重生成 llms.txt / versions.json |
+guardx 已发 **v0.9.0**。issue：oagentkit/mcpkit#17（errclass 与 toolfail 的层级
+关系：协议层 vs 处置层，互补不重复）。
+## 本仓
+- `toolfail` / `sandbox` 转**门面**：类型别名 + 常量别名 + 单条上游转发。
+  **调用面逐字兼容**——宿主 bianque 的 `internal/engine/scheduler/experts/dispatch.go`
+  在真实使用 `toolfail`，类型别名是编译期同一类型，其 `errors.As` 判定链继续有效。
+- 实现层测试归上游（99%/100% 覆盖），本仓只留**门面契约测试**（类型同一性 /
+  导出符号齐全 / 调用形态不变 / 核心语义不弱化）。同一机制的两份测试会各自漂移。
+- policy `facades` 段从 3 条扩到 **5 条**——「核心归上游、门面留本仓」从此有机器
+  约束（`harness-facade-stays-facade`），不只是散文。
+- 依赖地板：guardx v0.8.2 → v0.9.0，llm v0.14.1 → v0.14.2，agent v0.10.0 → v0.10.1
+  （后两者均为修复类，无破坏性变更落在本仓用到的原语上）。
+- 文档：`docs/OAGENTKIT-OVERLAP.md` §四 的结论已更正（初稿把 `toolfail` 列在
+  「该守」一侧，该判断已过时）；README 包表与「工程底座」三处数字同步。
+## 门禁自检
+```
+fmt-check ✅  vet ✅  test ✅  cover-gate ✅（85.9%）
+architecture-check ✅（8 条规则 + 5 个门包 + 27 包依赖方向，无阻断级违反）
+docsync ✅（README 包表与仓库一致，27 个包）
+modreplace ✅  modwork ✅
+```
+转门面时门禁当场报出 3 处违规（两处 stdlib errors、一处 context 未登记
+allowed_imports）——门禁是活的，修法与既有 `policy` 包登记 `io/fs` 同款。
+# 二、并发会话的在制品（本提交一并纳入，原因见下）
+`sandbox` 包 / `sideeffect` / `sidetest` / `archcheck/sandbox.go` /
+`ptc/provider.go` 等改动由另一条工作线产出，不出自本次下沉。
+**为何一并提交**：本仓 policy 里 `sandbox` 包的登记（并发会话）与 `sandbox`
+转门面（本次下沉）在**同一个文件的同一处**，拆开提交会产生「中间状态门禁红」
+——`sandbox` 门包已登记但包目录未被 modules 段覆盖。当前状态自洽且门禁全绿。
+`sideeffect` / `sidetest` 的 lint 告警（unused 辅助方法）未修：`sidetest` 的
+`ClockedStore` 契约与 `sideeffect` 的 `useClock` 尚未接上，属那条工作线的在途项。
+
 ## [v0.6.5] — 2026-10-20
 
 - 文档：校准 USAGE.md 与 README 的三处漂移（版本号 / 包数 / 覆盖率）
