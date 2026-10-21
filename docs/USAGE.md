@@ -65,6 +65,8 @@ harness 提供的是确定性编排的**机制面**：环节状态怎么流转�
 | 个人信息怎么脱敏 | `pii` | 阻断决策（内核只回报信号） |
 | 多工具聚合怎么省往返 | `ptc` | 工具绑定、判定环切片 |
 | 执行的隔离强度怎么声明与保证 | `sandbox` | 执行后端（可选）、每次执行的档位要求 |
+| 副作用怎么保证只做一次 | `sideeffect` + `retryplan` | `Store` 实现（跨进程原子）、幂等键、下游拒收契约 |
+| 我的存储实现守没守住契约 | `sidetest` | 让实现支持注入时钟，然后跑一次套件 |
 
 ### 0.3 三个必须先知道的约束
 
@@ -1389,7 +1391,172 @@ func guardOutflow(userMsg, modelAns string, toolResult any) error {
 
 ---
 
-### 3.10 门面三件：`dispatch` + `policy` + `reminder`
+### 3.10 副作用只做一次：`retryplan` + `sideeffect` + `sidetest`
+
+这三个包是一条链上的三段：**`retryplan` 判「该怎么重试」→ `sideeffect`
+保证「重试了不会重复施加」→ `sidetest` 验收「你的存储实现守住了契约」**。
+
+**什么时候需要它们**：你的编排会**对外部系统施加动作**（改配置、发布、重启、
+写数据库），而这些动作**重复执行会出事**。纯读取的编排不需要。
+
+#### 3.10.1 `retryplan`：该走哪条重试路径
+
+上游 `toolfail` 判「该不该重试、能不能原样重发」，但它对超时类只说
+「**先确认上一次调用是否已经生效**」——**没说什么怎么做到**。
+`retryplan` 把两问合成一条可执行结论：
+
+```go
+import "github.com/yi-nology/agent-harness/retryplan"
+
+d := retryplan.Decide(err, retryplan.Options{})
+switch d.Path {
+case retryplan.PathNone:
+    // 不重试。d.Retryable 仍可能为 true（值得重试但没有安全路径），
+    // 按 d.NeedsOperator / d.Reason 决定是找人工还是改参数。
+case retryplan.PathDirect:
+    // 原样重发安全，直接重试。
+case retryplan.PathReplayed:
+    // 值得重试但原样重发不安全 —— **必须走幂等键重放**（见 3.10.2）。
+}
+```
+
+**三档路径的由来**：
+
+| 情形 | 路径 | 为什么 |
+|---|---|---|
+| 不可重试 | `PathNone` | 终态，换处置路径 |
+| 可重试 + 原样重发安全 | `PathDirect` | 直接重发 |
+| 可重试 + 原样重发不安全 + **有**幂等键 | `PathReplayed` | 走幂等键重放 |
+| 可重试 + 原样重发不安全 + **无**幂等键 | `PathNone` | **不许猜着重试** |
+
+最后一行是本包的关键取舍：「值得重试但不确定能不能重发」+「没有幂等键兜底」
+= **不能重试**。此时正确处置是如实失败交上层降级/人工——赌一次的代价是一次
+重复副作用，正是这套机制要防的那件事。
+
+**你该提供什么**：把 `Options.WithoutIdempotency` 按实际能力填。
+你有幂等键就留 false（缺省），没有就置 true——**别谎报有**。
+
+#### 3.10.2 `sideeffect`：幂等键 + 租约 + 栅栏
+
+本包提供「对外部世界施加的一次动作**至多一次**」的跨进程契约。
+你实现 `Store` 接口（落库），内核给判据。
+
+```go
+import "github.com/yi-nology/agent-harness/sideeffect"
+
+runner := sideeffect.NewRunner(myStore, 30*time.Second)
+
+act := sideeffect.Action{
+    Key:      sideeffect.Key("run-42/step-7/restart"),
+    Resource: "node-a",        // 独占粒度：同一资源同一时刻至多一个持有者
+    Payload:  payloadBytes,
+}
+
+outcome, res, err := runner.ExecuteWith(ctx, act, sideeffect.Effect{
+    // 准备阶段：算结果、构造请求，**不施加副作用**。
+    Prepare: func(ctx context.Context) (any, error) { return buildRequest(ctx), nil },
+    // 施加阶段：真正对外部世界动手。
+    Apply: func(ctx context.Context, prepared any) (sideeffect.Result, error) {
+        return sideeffect.Result{Payload: doIt(ctx, prepared)}, nil
+    },
+})
+```
+
+**三个必须知道的点**：
+
+1. **`Key` 是幂等键，同一逻辑动作的所有重试必须用同一个**。用不同 Key 重试
+   等于声明「这是两个不同的动作」，本包不拦（那是你的语义错误）。
+2. **`ExecuteWith` 拆成三段是为了在施加前检查持有资格**。准备阶段可能很慢，
+   而租约可能在这段时间里到期被别人接管——若不加检查就施加，就是**两份闸
+   同时开着**，副作用施加两次。`Execute`（单段）也做这个检查。
+3. **执行失败不记账**（没做成的不能记成做成了），但**会释放闸**（否则失败残留的
+   闸把后续重试全挡成「别人占着」，动作从此做不成）。
+
+**下游资源侧要拒收陈旧写入**：若你的目标系统能被并发写入，实现
+`FencedSink`——它钉了两件必须全局一致的事：比较口径（**小于**已见过的最大令牌
+才算陈旧，等于合法）与**原子性**（比较与写入须同一次原子操作）。
+写成「先读已见最大 → 判断 → 再写入」三步的话，两个持有者会同时读到同一个旧值，
+双双通过检查，然后**更旧的那次写入反而后落**——更新的数据被旧的覆盖。
+
+**承诺边界**：本包承诺「**至多一次**」，**不承诺 exactly-once**。
+后者要求**下游也接受幂等键**（把 Key 传到下游写入请求里），那是你的接线责任。
+把上界说成 exactly-once 是本包明确拒绝的一种失真。
+
+**你该提供什么**：`Store` 的实现（Redis / PostgreSQL / etcd 皆可）。
+`Acquire` **必须是存储侧的一次原子操作**（一条带条件的 UPDATE / 一个 Lua 脚本 /
+一个 CAS 事务）——拆成「读闸 → 判 → 写闸」三步，去重就失效了。
+
+#### 3.10.3 `sidetest`：给你的存储实现一份验收标准
+
+`Store` 的正确性无法靠「看起来对」保证，而**每家宿主都会自己写一遍存储实现**。
+`sidetest` 把「宿主实现必须满足什么」固化成 10 条可复跑的子测试：
+
+```go
+import "github.com/yi-nology/agent-harness/sidetest"
+
+func TestMyStore(t *testing.T) {
+    sidetest.Run(t, func(t *testing.T, clock *sidetest.FakeClock) sidetest.ClockedStore {
+        return newMyStore(clock)   // 你的实现要支持注入时钟
+    })
+}
+```
+
+**你的实现须实现 `ClockedStore`**（在 `Store` 之上加一个 `UseClock(now func() time.Time)`）。
+这不是可选的：过期场景若读真实时间就恒不触发，套件会退化成一组**空断言**——
+全绿，但什么都没验。
+
+**套件硬失败，不静默跳过**：显式接入套件＝声明「我这个实现要满足副作用闸的契约」，
+此时跳过一个场景等于把「我没测过」伪装成「我通过了」。
+
+**范式沿用上游 `oekit/pkg/cache/cachetest` 与 `pkg/singleflighttest`**（同家族的做法）。
+
+**注意**：本包**不提供**参考实现。一份「正确的内存实现」会被当成生产可用的存储，
+而它恰恰**不具备本包最核心的那条性质**（跨进程）——单进程内存实现无法提供
+「Acquire 是跨进程原子操作」，拿它上生产＝以为自己去重了，实际两个进程各做一次。
+
+#### 3.10.4 接线范式：`retryplan` → `sideeffect`
+
+前两节是分开的，宿主真正要连的是这一段：**决策说要走幂等键路径，
+那就用同一个幂等键再跑一次**。
+
+```go
+// 第一次尝试
+outcome, res, err := runner.ExecuteWith(ctx, act, effect)
+if err == nil {
+    return res, nil
+}
+
+// 失败了：问该不该重试、该怎么重试。
+d := retryplan.Decide(err, retryplan.Options{})
+switch d.Path {
+case retryplan.PathNone:
+    return sideeffect.Result{}, err          // 不重试，如实失败
+case retryplan.PathDirect:
+    // 原样重发安全：直接重发（不用幂等键）。
+    return doRaw(ctx, act)
+case retryplan.PathReplayed:
+    // 走幂等键重放：**用同一个 act.Key** 再跑一次。
+    // 若第一次其实已生效，这次会取回既有结果（OutcomeReplayed），
+    // 而不会重复施加。
+    out2, res2, err2 := runner.ExecuteWith(ctx, act, effect)
+    if err2 != nil {
+        return sideeffect.Result{}, err2
+    }
+    if out2 == sideeffect.OutcomeContended {
+        // 别人正占着这个资源：退避后重试整个流程。
+        return sideeffect.Result{}, errContended
+    }
+    return res2, nil
+}
+```
+
+**接线的核心不变量**：走 `PathReplayed` 时**必须用同一个 `act.Key`**。
+换了 Key 就是两个不同的动作，去重失效——这正是本包要防的事。
+
+**退避**：`d.Backoff` 与 `d.RetryAfter` 给了退避建议（限流类必须退避：
+立刻重试只会立刻再被限流，把一次退避能吸收的拥塞放大成重试风暴）。
+
+### 3.11 门面三件：`dispatch` + `policy` + `reminder`
 
 这三个包是**门面**，核心都在 `oagentkit`。**不要在本仓加实现**——
 `harness-facade-stays-facade` 门禁（error 级，走 `go/ast`）会拦下新类型、
