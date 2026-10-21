@@ -25,8 +25,8 @@
 //	        github.com/oagentkit/textx github.com/oekit/core
 //
 //	llm   v0.15.0 ← 领先 agent 声明的地板
-//	obs   v0.9.3  ← 领先 agent 声明的地板
-//	textx v0.6.1  ← 领先 agent / llm 声明的地板
+//	obs   v0.9.4  ← 领先 agent 声明的地板
+//	textx v0.6.2  ← 领先 agent / llm 声明的地板
 //	core  v0.11.0 ← 领先 logx 声明的地板
 //
 // **钉子重新领先于上游地板了**，原因与 2026-10-19 那次「不再领先」相反：
