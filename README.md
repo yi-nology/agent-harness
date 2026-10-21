@@ -171,9 +171,9 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 14,541 行 / 83 文件（不含 `_test.go`） |
-| 测试 | 108 个测试文件 |
-| 覆盖率 | **85.9%**（门槛 60%，真阈值不是摆设） |
+| 生产代码 | 14,790 行 / 84 文件（不含 `_test.go`） |
+| 测试 | 111 个测试文件 |
+| 覆盖率 | **86.1%**（门槛 60%，真阈值不是摆设） |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
 | 门禁 | 8 条规则（`rules` 段）+ 3 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 27 包依赖方向 + README 包表一致性 |
 | 例外登记 | **0** |
@@ -476,7 +476,7 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 | 本仓版本 | 变更 | 下游要做什么 |
 |---|---|---|
-| **v0.7.1（未发版）** | **`sideeffect.Store` 新增 `Renew` 方法**（续期 + 校验持有资格），并新增 `sideeffect.FencedSink` 契约（下游拒收陈旧写入）；新增 `retryplan` 包（重试处置决策） | **接口层面的破坏性变更**：宿主若已实现 `sideeffect.Store`，需补上 `Renew(ctx, act, lease, ttl) (Lease, error)` 方法——语义见包头注释（**续期必须同时校验令牌仍是最新代**，否则是「假续期」）。宿主若已实现下游栅栏拒收，可改用 `FencedSink` 契约对齐比较口径与原子性要求。`FencedSink` 与 `retryplan` 是**新增**的，不影响既有代码 |
+| **v0.8.0** | **`sideeffect.Store` 新增 `Renew` 方法**（续期 + 校验持有资格），并新增 `sideeffect.FencedSink` 契约（下游拒收陈旧写入）；新增 `retryplan` 包（重试处置决策） | **接口层面的破坏性变更**：宿主若已实现 `sideeffect.Store`，需补上 `Renew(ctx, act, lease, ttl) (Lease, error)` 方法——语义见包头注释（**续期必须同时校验令牌仍是最新代**，否则是「假续期」）。宿主若已实现下游栅栏拒收，可改用 `FencedSink` 契约对齐比较口径与原子性要求。`FencedSink` 与 `retryplan` 是**新增**的，不影响既有代码 |
 | **v0.7.0** | **`toolfail` 与 `sandbox` 下沉上游 `oagentkit/guardx`（v0.9.0）**，本仓转**门面**（类型别名 + 常量别名 + 单条上游转发）；依赖地板抬到上游本轮新版本（`guardx` v0.8.2→v0.9.0、`llm` v0.14.1→v0.14.2、`agent` v0.10.0→v0.10.1）| **调用面逐字兼容，宿主代码不用改**——类型别名是编译期同一类型，宿主现有的 `errors.As` / `errors.Is` 判定链继续有效。**但必须 `go mod tidy`**：地板抬高对下游是隐式 breaking，不跑就报 `updates to go.mod needed`，且报错不提真正原因。下游若直接 import 过 `github.com/yi-nology/agent-harness/toolfail` 或 `.../sandbox` 的**具体实现**（如自造 `*Failure`、注册自定义 Provider），请改 import 上游路径 `github.com/oagentkit/guardx/toolfail` / `.../sandbox`——门面只保转发，不提供实现。逐版差异见 [CHANGELOG.md](CHANGELOG.md) 的 v0.7.0 段 |
 | **v0.6.5** | **依赖地板追平上游本轮新版本**（`oekit/pkg` v0.17.0→v0.18.0、`oagentkit/obs` v0.9.2→v0.9.3、`oagentkit/mcpkit` v0.8.2→v0.8.3）；**`archcheck` 的 god object 判据改比「实质方法数」**（方法总数 − 转发壳数），policy 新增可选字段 `forwarding_shell_max_chars` | **`go mod tidy`**——地板抬高对下游是隐式 breaking：不跑就报 `updates to go.mod needed`，且报错不提真正原因。**判据变更对下游无感**：policy 不写新字段即按缺省 140 生效；若宿主要保持旧语义（方法总数），在自己 policy 里显式写 `forwarding_shell_max_chars: 0` 即可逐字退回旧行为。逐模块版本差异与判据推导见 [CHANGELOG.md](CHANGELOG.md) 的 v0.6.5 段 |
 | **v0.6.4** | 纯文档：新增 `docs/AI-GUIDE.md`（面向 AI 代理的操作手册），并校准 README「工程底座」表的三处漂移 | 无（无 API 变更、无地板抬高）|
