@@ -2,6 +2,43 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.8.4] — 2026-10-21
+
+- 杂务(deps)：依赖地板追平矩阵本轮新版本（6 块）
+
+## 下游要做什么
+**`go mod tidy`**。地板抬高对下游是隐式 breaking：不跑就报
+`updates to go.mod needed`，且报错不提真正原因（**不是本仓的 API 变了**）。
+本仓**自身代码零改动**——只看本仓的 diff 看不出这是一次地板抬高。
+## 抬了哪 6 块、为什么无行为差异
+```
+oagentkit/agent    v0.10.1 → v0.10.2    oagentkit/runtime  v0.7.1 → v0.7.2
+oagentkit/obs      v0.9.3  → v0.9.4     oagentkit/textx    v0.6.1 → v0.6.2
+oagentkit/toolgate v0.12.0 → v0.12.1    oagentkit/mcpkit   v0.8.3 → v0.8.4（间接）
+```
+**这 6 个上游版本全部是「纯依赖地板追平」——各仓自身代码零改动**，只抬了
+`oekit/pkg`（v0.18.0→v0.20.0）、`oekit/concurrency`（v0.18.0→v0.19.0）、
+`oagentkit/guardx`（v0.13.0→v0.13.1）、`oagentkit/llm`（v0.14.2→v0.15.0）
+四类地板之一，没有一行业务代码变更。
+四类上游地板本身也已逐项核过：
+- `oekit/pkg`：`errors` 纯增量（新增 `Errorf`）、`httpjson` 退避溢出修复
+  （正常 attempt 下逐字相同）、`urlguard` 新增可选 `WithExactHosts`、
+  `stringx` 仅注释、`pathx` 新包。
+- `oekit/concurrency`：`retry` 抖动 panic 修复 + `syncx` 新增 `Gate`；
+  **`breaker` 与 `async` 一字未动**（本仓只用 `async`）。
+- `oagentkit/guardx` v0.13.1：上游只改 `go.mod`/`go.sum`，**无 Go 源码变更**。
+- `oagentkit/llm` v0.15.0：新增**可选**字段 `OpenAIProviderConfig.HTTPClient`
+  （缺省 nil 时行为逐字不变）。本仓只用 llm 的空导入，不碰其 API。
+## 门禁
+```
+make check        ✅ 全绿（lint 0 issues / 28 包测试过 / 覆盖率 84.1% / 架构门禁通过）
+```
+> 注：门禁在**独立 worktree** 上跑的——主工作区里有并行工作线**在途未提交**的
+> \`ptc/*\` 新文件（cgroup 内存上限 + 子进程 stderr 截断），它们尚未接线完，
+> 在主工作区跑 lint 会因「未使用」报红。那些文件不是本次改动的一部分，
+> 本次提交只含 \`go.mod\` / \`go.sum\` / \`tools.go\` / \`README.md\`。
+
+
 ## [v0.8.3] — 2026-10-21
 
 - 杂务(deps)：依赖地板追平——llm v0.15.0、oekit/concurrency v0.19.0
