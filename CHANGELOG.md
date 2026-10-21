@@ -2,6 +2,54 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.10.0] — 2026-10-22
+
+### 新增(guardset)：装配面对齐 netguard 的整份原子交换 —— 修两处静默失效
+
+v0.9.0 的装配面只借了 netguard 的**名字**，没借它的**机制**。本轮把它对齐，
+过程中发现第一版有两处**静默失效**（门禁绿、构建绿、测试绿，而机制已不成立）。
+## 对齐了 netguard 的四处机制
+| netguard | 本包 |
+|---|---|
+| `curPolicy atomic.Pointer[Policy]` | `current atomic.Pointer[assemblyState]` |
+| 代次住在指针目标里（`Policy.gen`），`PolicyGeneration()` 是**投影** | 代次住在 `assemblyState.gen`，`Assembly.Generation()` 是**投影** |
+| `swapPolicy(mutate)` 走 **CAS 循环** | `SwapFunc(mutate)` 走 **CAS 循环** |
+| 订阅表 copy-on-write + 锁外通知 + 逐个 recover | 同款 |
+各写一套必然各判一套，漂移到没人发现为止——故刻意沿用既有先例。
+## 两处静默失效（已修）
+1. **并发换分丢更新 ⇒ 撤销被撤销**。
+   第一版 `Swap(next)` 收的是**预先构造好**的一份：两个并发撤销者（A 撤 g1、
+   B 撤 g2）各自从同一份旧算出新的一份，后写者把先写者**静默盖掉**
+   ⇒ **g1 悄悄复活**，没有任何东西会提示。
+   修法：`SwapFunc(ctx, mutate)` 走 CAS 循环——mutate 从**观察到的**旧值算出下一份，
+   CAS 失败则重来（mutate 重新看到最新那份）。
+   并把 `Swap(ctx, next)` 的语义**显式**为「整份替换，不基于当前那一份」，
+   两个口语义不同，用错就丢更新。
+2. **通知期回调 panic 把已落地的换份说成失败**。
+   换份**已经落地**（指针已换），此时让某个订阅者/留痕回调抛异常，
+   就把整次变更说成失败——把已经发生的事实改写成没发生。
+   修法：逐个 recover（与 netguard 的 `callSubscriber` 同款）。
+## 新增能力
+- **代次**：`Assembly.Generation()`（当前份的**投影**，单调不回卷）、
+  `Snapshot()`（集合与代次**一次读出**，分开读会得到自相矛盾的一对）、
+  `Outcome.Generation`（审计能回答「这次判定是按第几代守卫做的」）。
+- **订阅**：`Subscribe`/`Unsubscribe`——换份真正落地的那一刻把新记录推给订阅者
+  （当场生效的「换成了什么」），运行期可增删。
+## 拆分（按职责，不是为凑行数）
+`assembly.go` 598 行超了 `max_file_lines: 400` ⇒ 拆成三个关注点：
+`assembly.go`（装配面本体）/ `assembly_subscribe.go`（订阅与通知）/
+`without.go`（撤销一条的纯函数）；求值与接链并入 `stage.go`
+（它与 `Stage(*Set)` 是同一件事：把守卫接成判定环上的一环）。
+## 反向验证
+12 条变异全部打红（代次两个真相 / CAS 退化成 Store / 通知不 recover /
+不通知订阅者 / 退订不删 / 判定不填代次 / 原地覆盖旧份 / 允许 nil / 不跑闸门 /
+`Without` 三条）。并发用例一律**确定性构造**（通道握手 + mutate 内嵌嵌套换分
+制造 CAS 失败），不靠时序去撞；`-race` 亦通过。
+## 对下游
+新增 API，**无破坏性变更**：`Swap`/`WithSwapGate`/`WithSwapRecorder` 签名不变，
+`SwapRecord`/`Outcome` 只**新增**字段；`Set` 仍只读，`guardset.Stage(set)` 仍可用。
+唯一要留意：按 v0.9.0 示例用 `Swap(next)` 做读改写的，请改用 `SwapFunc`。
+
 ## [v0.9.0] — 2026-10-22
 
 ### 新增(guardset)：装配面 Assembly —— 撤销的归属明确化（换整份，不改其中一条）
