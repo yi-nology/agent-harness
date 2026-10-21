@@ -34,6 +34,11 @@
 //  7. stale_release_rejected  过期持有者的 Release 被拒（不能放掉新持有者的闸）
 //  8. release_does_not_done  Release 不把 Key 标记为已完成
 //
+// 另有两场景在 **renew.go**（续期一族，与「结果判据」是不同语义）：
+//
+//  9. renew_extends_lease             Renew 延长有效期且不换令牌
+//  10. renew_after_takeover_rejected   闸已易主后 Renew 被拒（假续期的封口）
+//
 // # 时钟
 //
 // 租约过期需要可控时钟，否则只能靠 sleep（慢且 flaky）。
@@ -109,6 +114,8 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("stale_complete_rejected", func(t *testing.T) { runStaleCompleteRejected(t, factory) })
 	t.Run("stale_release_rejected", func(t *testing.T) { runStaleReleaseRejected(t, factory) })
 	t.Run("release_does_not_done", func(t *testing.T) { runReleaseDoesNotDone(t, factory) })
+	t.Run("renew_extends_lease", func(t *testing.T) { runRenewExtendsLease(t, factory) })
+	t.Run("renew_after_takeover_rejected", func(t *testing.T) { runRenewAfterTakeoverRejected(t, factory) })
 }
 
 // newStore 构造被测实现并注入假时钟。

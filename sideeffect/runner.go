@@ -10,9 +10,6 @@ import (
 // ErrInvalidAction 动作定义不完整（缺 Key 或 Resource）。
 var ErrInvalidAction = errors.New("副作用动作定义不完整")
 
-// ErrFenceStale 令牌已不是当前最新代（过期持有者的迟到写入）。
-var ErrFenceStale = errors.New("栅栏令牌已过期")
-
 // ErrNoStore 未装配存储。这是显式失败，不是静默成功——
 // 「没接存储也返回 nil」会让调用方以为动作已施加。
 var ErrNoStore = errors.New("未装配存储，无法执行副作用")
@@ -25,17 +22,29 @@ var ErrNoStore = errors.New("未装配存储，无法执行副作用")
 // 不是让下游自己挑一个默认值**。
 var ErrUnknownOutcome = errors.New("副作用闸返回未知结论")
 
-// Runner 副作用闸的编排器：把「抢闸 → 执行 → 记账 → 释放」固化成一次调用。
+// ErrLeaseLost 续期时发现闸已易主（本次持有资格已失效）。
 //
-// 存在的理由与 checkpoint.Committer 同源：四步顺序本身是机制，
+// 与 ErrFenceStale 分开是为了让调用方能区分两件事：
+//   - ErrFenceStale：**你刚才的写入**被拒（迟到写）；
+//   - ErrLeaseLost：**你不再持有**这道闸（该停止动作了）。
+//
+// 两者都指向「本次动作不该继续」，但一个发生在事后（写被拒），
+// 一个发生在事前（还能悬崖勒马）。事前那个更值钱——它让宿主
+// 有机会**在施加副作用之前**收手。
+var ErrLeaseLost = errors.New("租约持有资格已失效")
+
+// Runner 副作用闸的编排器：把「抢闸 → 检查 → 执行 → 记账 → 释放」固化成一次调用。
+//
+// 存在的理由与 checkpoint.Committer 同源：步骤顺序本身是机制，
 // 每个宿主手抄一遍就会有一个抄漏的。
 //
-// 最容易抄漏的三处：
+// 最容易抄漏的四处：
 //   - **Complete 时忘了传 Fence** → 过期持有者的迟到结果能覆盖新结果；
 //   - **执行失败后仍 Complete** → 一个没做成的动作被记成「做过」，
 //     后续重试拿到的是空结果，而真相是「没做过」；
 //   - **执行失败后不释放闸** → 失败的那次把资源占住直到 TTL，
-//     后续重试全被挡成「别人占着」，动作永远做不成。
+//     后续重试全被挡成「别人占着」，动作永远做不成；
+//   - **施加副作用前不检查持有资格** → 闸已易主时仍施加，与新持有者重复。
 //
 // 零值不可用，请用 NewRunner。
 type Runner struct {
@@ -51,6 +60,26 @@ type Runner struct {
 // 零值被判为非法（见 ErrInvalidAction）。
 func NewRunner(store Store, ttl time.Duration) *Runner {
 	return &Runner{store: store, ttl: ttl}
+}
+
+// Effect 动作的执行体。
+//
+// 拆成「准备」与「施加」两段，是为了在**两者之间**插入持有资格检查：
+// 准备阶段可能很慢（调外部接口、算结果），而闸的有效期可能在这段时间里
+// 到期被别人接管。此时若不加检查就进入施加阶段，就是**两份闸同时开着**
+// ——本次动作与新持有者做同一件事，副作用施加两次。
+//
+// 两段各自可失败：
+//   - prepare 失败 → 动作没开始，**未施加任何副作用**（可安全重试）；
+//   - apply 失败 → 副作用**可能已部分生效**（不可假定「没发生」）。
+//
+// apply 返回的 Result 只在 apply 成功时才有意义。
+type Effect struct {
+	// Prepare 准备阶段：算结果、构造请求，但**不施加副作用**。
+	// 可为 nil（不需要准备阶段）。
+	Prepare func(ctx context.Context) (any, error)
+	// Apply 施加阶段：真正对外部世界动手。prepared 是 Prepare 的产出。
+	Apply func(ctx context.Context, prepared any) (Result, error)
 }
 
 // Execute 执行一次副作用，保证「至多一次」。
@@ -76,7 +105,47 @@ func NewRunner(store Store, ttl time.Duration) *Runner {
 // **执行失败时仍释放闸**：失败的那次已经把资源占住了，不释放的话
 // 后续重试会被自己的残留闸挡成「别人占着」——动作从此再也做不成。
 // 释放的是**自己这次**的闸（凭令牌），不会放掉别人的。
+//
+// Execute 是 ExecuteWith 的单段特例（无准备阶段、无资格检查）。
+// **动作耗时可能超过 TTL 时，请改用 ExecuteWith**——见那里关于
+// 「危险窗口」的说明。
 func (r *Runner) Execute(ctx context.Context, act Action, fn func(ctx context.Context) (Result, error)) (Outcome, Result, error) {
+	return r.ExecuteWith(ctx, act, Effect{Apply: func(ctx context.Context, _ any) (Result, error) {
+		return fn(ctx)
+	}})
+}
+
+// ExecuteWith 执行一次带「准备 / 施加」两段与**持有资格检查**的副作用。
+//
+// # 为什么要在施加前检查
+//
+// 单段执行有一个**危险窗口**：从抢闸到施加副作用之间，如果准备耗时超过
+// TTL，闸就过期并被别人接管。此时本次调用若继续施加，就是
+// **两份闸同时开着**——本次动作与新持有者做同一件事，副作用施加两次。
+//
+// 而这个窗口**无法靠 Complete 时的令牌校验堵住**：Complete 被拒只说明
+// 「你没记上账」，**副作用早已施加**。事后补救不了已发生的事。
+//
+// 所以检查必须落在**施加之前**：那时若发现闸已易主，本次动作还能
+// 干净地放弃（未施加任何副作用），下一个持有者可以重做。
+//
+// # 检查做了什么
+//
+// 调用 `Store.Renew`：它同时做「延长有效期」与「校验令牌仍是最新代」。
+// 只做前者的续期是**假续期**——闸已易主时延长的其实是别人的闸。
+//
+// 检查失败（ErrLeaseLost）时：**不施加任何副作用**，释放闸（如有），
+// 返回 OutcomeContended + ErrLeaseLost。这是可重试的拒绝：
+// 动作没做，闸已易主，宿主应当退避后**重试整个动作**
+// （新一轮会重新抢闸，且幂等键保证若上次已施加则取回既有结果）。
+//
+// # 两段的失败语义不同
+//
+//   - Prepare 失败 → **未施加任何副作用**，可安全重试；
+//   - Apply 失败 → 副作用**可能已部分生效**，不可假定「没发生」。
+//     此时本包**不记账**（动作没记成做过），但也不会假装它没发生——
+//     错误原样透出，由宿主按自己的语义决定怎么办。
+func (r *Runner) ExecuteWith(ctx context.Context, act Action, eff Effect) (Outcome, Result, error) {
 	if r == nil || r.store == nil {
 		return OutcomeContended, Result{}, ErrNoStore
 	}
@@ -88,8 +157,8 @@ func (r *Runner) Execute(ctx context.Context, act Action, fn func(ctx context.Co
 		// 因为它会让一道闸要么永远关着、要么立刻过期，两个都不是意图。
 		return OutcomeContended, Result{}, errors.Wrap(ErrInvalidAction, "租约有效期必须为正", "ttl", r.ttl.String())
 	}
-	if fn == nil {
-		return OutcomeContended, Result{}, errors.Wrap(ErrInvalidAction, "副作用动作缺执行体")
+	if eff.Apply == nil {
+		return OutcomeContended, Result{}, errors.Wrap(ErrInvalidAction, "副作用动作缺施加阶段")
 	}
 
 	outcome, lease, prior, err := r.store.Acquire(ctx, act, r.ttl)
@@ -112,7 +181,33 @@ func (r *Runner) Execute(ctx context.Context, act Action, fn func(ctx context.Co
 		return OutcomeContended, Result{}, errors.Wrap(ErrUnknownOutcome, "存储侧返回了未知判定", "outcome", outcome.String())
 	}
 
-	res, execErr := fn(ctx)
+	// 准备阶段：可失败，且失败时**未施加任何副作用**。
+	var prepared any
+	if eff.Prepare != nil {
+		prepared, err = eff.Prepare(ctx)
+		if err != nil {
+			// 准备失败：动作没开始，释放闸（不记账——没做过的不能记成做过）。
+			_ = r.store.Release(ctx, act, lease)
+			return OutcomeContended, Result{}, err
+		}
+	}
+
+	// 施加前的持有资格检查：这是 ExecuteWith 存在的核心理由。
+	// 准备阶段可能耗时超过 TTL，闸可能已易主——此刻收手还来得及。
+	renewed, err := r.store.Renew(ctx, act, lease, r.ttl)
+	if err != nil {
+		// 闸已易主（或续期失败）：**不施加任何副作用**，干净放弃。
+		// 释放闸——但那多半已经不是自己的闸了（故 Release 可能被拒，
+		// 那是正确的：不能放掉新持有者的闸）。
+		_ = r.store.Release(ctx, act, lease)
+		if errors.Is(err, ErrFenceStale) {
+			return OutcomeContended, Result{}, errors.Wrap(ErrLeaseLost, "施加前检查发现闸已易主，本次动作放弃", "resource", act.Resource)
+		}
+		return OutcomeContended, Result{}, err
+	}
+	lease = renewed
+
+	res, execErr := eff.Apply(ctx, prepared)
 	if execErr != nil {
 		// 执行失败：**不记账**，让下一个持有者能重做。
 		// 但**要释放闸**——否则这次失败把资源占住，后续重试全被挡成 contended。

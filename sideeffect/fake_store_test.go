@@ -145,3 +145,17 @@ func (s *fakeStore) Release(_ context.Context, act Action, lease Lease) error {
 	delete(s.holders, act.Resource)
 	return nil
 }
+
+func (s *fakeStore) Renew(_ context.Context, act Action, lease Lease, ttl time.Duration) (Lease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur, ok := s.holders[act.Resource]
+	if !ok || cur.lease.Fence != lease.Fence {
+		// 资格校验与续期在同一次原子操作里：校验不过就不续期。
+		return Lease{}, errors.Wrap(ErrFenceStale, "栅栏令牌已不是最新代", "resource", act.Resource)
+	}
+	cur.expires = s.clockLocked().Add(ttl)
+	cur.lease.TTL = ttl
+	s.holders[act.Resource] = cur
+	return cur.lease, nil
+}

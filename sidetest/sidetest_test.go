@@ -106,6 +106,21 @@ func (m *memStore) Release(_ context.Context, act sideeffect.Action, lease sidee
 	return nil
 }
 
+func (m *memStore) Renew(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, ttl time.Duration) (sideeffect.Lease, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cur, ok := m.holders[act.Resource]
+	if !ok || cur.lease.Fence != lease.Fence {
+		// 资格校验与续期在同一次原子操作里：校验不过就不续期。
+		return sideeffect.Lease{}, errors.Wrap(sideeffect.ErrFenceStale, "栅栏令牌已不是最新代", "resource", act.Resource)
+	}
+	cur.expires = m.nowLocked().Add(ttl)
+	cur.lease.TTL = ttl
+	m.holders[act.Resource] = cur
+	return cur.lease, nil
+}
+
 // TestContract 跑共享契约套件：这份实现按契约写，应当全绿。
 //
 // 宿主接套件的方式就是把这一行写进自己的测试里。
