@@ -2,6 +2,81 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.8.0] — 2026-10-21
+
+### 新增(harness)：新增 retryplan 重试处置决策 + sideeffect/sidetest 续期与拒收契约
+
+# 一、本次下沉带来的下游消费（并发工作线产出）
+`retryplan` 把「该不该重试」与「重试会不会重复施加」两问合成一条可执行结论
+（三档路径：不重试 / 原样重发 / 走幂等键重放）。判定来自上游 `guardx/toolfail`
+（处置层语义），幂等键由 `sideeffect` 保证「至多一次」——本包对 `sideeffect`
+**零代码依赖**，两者是契约上的衔接而非耦合。
+它消费的是本轮下沉的 `guardx/toolfail`，且**直接 import 上游路径**（不走本仓门面）——
+这恰好验证了「门面只保转发」的用法：直接引上游与走本仓门面在行为上不可区分
+（本轮实测两侧判定链六种场景全同，含错误链穿透）。
+`sideeffect` / `sidetest` 同期补齐续期（renew）与下游拒收契约。
+# 二、本轮我做的三件事
+1. **复核并更正 `docs/OAGENTKIT-OVERLAP.md` §四**（提交 105dee5）：
+   删掉一句**不实断言**——我上一轮写的「同一上下文窗口在两处算出两个阈值」。
+   实测才发现：① 对照方式本身错了（拿上游纯窗口口径与本仓含自设上限的最终上限
+   直接比大小，不是同一个东西）；② 职责面本就不同（上游判「该压了吗」，本仓答
+   「上限是多少 + 计划怎么执行」，本仓包内没有「该压了」的阈值判定）。
+   正确对照下「窗口−预留」是同一条算式，唯一差异是地板值（本仓 1 / 上游 0），
+   且本仓有明确理由。同时把 §四 补成一张**完整的「本仓 → 上游」映射表**
+   （26 个包逐个列归属、核心位置、形态），作为后来人查「某个包归谁」的第一入口。
+2. **policy 登记 `retryplan`**（modules 段 + `scan_roots`）：
+   未登记的包对本门禁**隐形**——任何模块都能 import 它而不判违规；不在
+   `scan_roots` 里则「超长文件」「god object」两条阈值对它从来不生效。
+3. **两处 stdlib `errors` → `oekit/pkg/errors`**：
+   本仓只允许一套 errors 包（类型同一性红线：混用会打断 BizError 的 As/Is 判定）。
+   涉及 `retryplan/retryplan_test.go` 与 `sideeffect/sink_contract_test.go`。
+# 三、门禁
+```
+fmt-check ✅  vet ✅  test ✅  cover-gate ✅
+architecture-check ✅（8 条规则 + 5 个门包 + 28 个包的依赖方向）
+docsync ✅（README 包表与仓库一致）
+golangci-lint ✅ 0 issues
+```
+> 过程中抓到一次真实的测试 hang（`sideeffect` 的续期用例，CPU 0% 空等 10 分钟
+> 被 Go 超时打断），已由并发工作线修复，复跑 0.3s 通过。
+
+- 文档(release)：下一版定为 v0.8.0（minor）——Store 接口新增方法是源码不兼容变更
+
+原写 v0.7.1（patch）。按家族明文规则（上游 guardx AGENTS.md：「SemVer。
+0.x 阶段 minor 允许 breaking」），patch 号留给兼容修复；**给宿主实现的接口
+新增必填方法 = 源码不兼容**，宿主实现缺 Renew 就编不过，属 minor 范畴。
+本版的破坏性变更：sideeffect.Store 新增 Renew(ctx, act, lease, ttl) (Lease, error)。
+其余（sideeffect.FencedSink 契约、retryplan 包）是新增，不影响既有代码。
+（升级须知的正文沿用并发工作线已写好的内容，只改版本号与判定依据。）
+
+- 文档(overlap)：复核并更正 §四 的结论——补完整映射表，删掉一句不实断言
+
+上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一个上下文窗口在两处算出两个
+阈值」。**实测评数值后该断言不成立**，本轮更正。
+## 断言错在哪
+1. **对照方式本身错了**：拿上游 `EffectiveWindow()`（纯窗口口径：窗口−预留）与
+   本仓 `MaxInput()`（含「自设上限」的最终可用上限）直接比大小——不是同一个东西。
+   正确对照是本仓的「窗口−预留」推导分支（baseInput<=0）去比，两边这才是同一条算式。
+   正确对照下：**唯一差异是地板值**（本仓 1 / 上游 0），且本仓有明确理由
+   （地板 1 让后果由 Overflow / Classify(critical) 这类看得见的信号承接，
+   而不是抛错把「窗口小」和「预留大」两种病因混成一个错误）。
+2. **职责面本就不同**：上游 `textx/compact.ShouldCompact` 答「该压了吗」（阈值/熔断/
+   token 三轨），本仓 `budget` 答「输入侧可用上限是多少」+「压实计划怎么执行」——
+   **本仓 budget 包内没有「该压了」的阈值判定**，那正是上游的职责。
+## 本轮另做的一件事
+§四 原本是散文式的「该守/该让」两段清单。补成一张**完整的「本仓 → 上游」映射表**
+（本仓 26 个包逐个列归属、核心位置、形态），作为后来人查「某个包归谁」的第一入口。
+顺带把 `tooldisclose` 的判定从「部分重叠」改为「不下沉」并给出实测依据：
+上游 `mcpkit/mcp.Catalog` 是「某个 server 声明了哪些工具名」（NewCatalog(server, tools)
++ Contains + Diff），本仓 `Catalog` 是「模型可见的渐进披露目录」（带 Description/Schema、
+并发加载集、检索上限、重名 first-wins）——**server 面 vs 模型面，不是同一层**。
+## 教训
+与本节开头那条同源：**结论表比事实表更容易腐烂**，而这次腐烂的是我自己写的结论。
+写「两个实现算出两个阈值」这类断言时，**必须先跑数值对照**——判据对不对，
+要看输入相同、输出不同；只读代码注释是看不出口径差的。
+（本提交只改 docs/OAGENTKIT-OVERLAP.md，不含并发工作线的新增包。）
+
+
 ## [v0.7.0] — 2026-10-21
 
 ### 重构(harness)：toolfail 与 sandbox 下沉上游 guardx，本仓转门面
@@ -54,6 +129,16 @@ allowed_imports）——门禁是活的，修法与既有 `policy` 包登记 `io
 ——`sandbox` 门包已登记但包目录未被 modules 段覆盖。当前状态自洽且门禁全绿。
 `sideeffect` / `sidetest` 的 lint 告警（unused 辅助方法）未修：`sidetest` 的
 `ClockedStore` 契约与 `sideeffect` 的 `useClock` 尚未接上，属那条工作线的在途项。
+
+- 文档(release)：下游升级须知补 v0.7.0 行
+
+本次是「依赖地板抬高 + 转门面」两件事叠在一起，对下游的处置要写清：
+- 调用面逐字兼容（类型别名是编译期同一类型），宿主既有 errors.As 判定链继续有效；
+- 但地板抬高必须 go mod tidy，否则报 updates to go.mod needed 且不提真正原因；
+- 且若下游直接 import 过本仓 toolfail / sandbox 的具体实现（自造 *Failure、
+  注册自定义 Provider），要改 import 上游路径——门面只保转发，不提供实现。
+这行是下游读发布说明的入口（tag 注解会沉进 git 历史，README 不会）。
+
 
 ## [v0.6.5] — 2026-10-20
 
