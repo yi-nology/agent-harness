@@ -15,7 +15,7 @@ require (
 	github.com/cloudwego/eino v0.9.21
 	github.com/dop251/goja v0.0.0-20261010130053-73dc7edc278f
 	github.com/oagentkit/agent v0.10.1
-	github.com/oagentkit/guardx v0.13.0
+	github.com/oagentkit/guardx v0.13.1
 	github.com/oagentkit/llm v0.14.2
 	github.com/oagentkit/obs v0.9.3
 	github.com/oagentkit/runtime v0.7.1
@@ -24,7 +24,7 @@ require (
 	github.com/oekit/concurrency v0.18.0
 	github.com/oekit/core v0.11.0
 	github.com/oekit/logx v0.7.1
-	github.com/oekit/pkg v0.18.0
+	github.com/oekit/pkg v0.20.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	gopkg.in/yaml.v3 v3.0.1
 )

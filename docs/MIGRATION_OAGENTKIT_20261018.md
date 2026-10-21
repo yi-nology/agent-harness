@@ -6,8 +6,8 @@
 > 门禁两条规则收紧并反向验证 ✅ / `make check` 全绿（覆盖率 83.1%，门槛 60%）。
 >
 > ⚠️ **本文是历史快照。** 里面的版本号（`oekit/pkg v0.13.0`、四个 oagentkit 模块的
-> 当时版本）是**迁移当时**的值；本仓当前钉的版本已远高于此（`oekit/pkg v0.18.0`、
-> `agent v0.10.0`、`guardx v0.8.2`、`toolgate v0.12.0` 等，见 `go.mod`），
+> 当时版本）是**迁移当时**的值；本仓当前钉的版本已远高于此（`oekit/pkg v0.20.0`、
+> `agent v0.10.1`、`guardx v0.13.1`、`toolgate v0.12.0` 等，见 `go.mod`），
 > 且此后上游又搬过家（`toolgate/invoke` → `guardx/invoke`、`obs/obsx` → `llm/obsx`）。
 > **当前事实以 `go.mod` + [README 包表](../README.md) 为准。**
 > 本文保留的价值是**踩坑记录**：§1.5 的 sonic build tag 坑（报错完全指不到真实原因）、
