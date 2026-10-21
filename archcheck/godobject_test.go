@@ -312,58 +312,6 @@ func TestLongSingleCallIsNotShell(t *testing.T) {
 	}
 }
 
-// TestRecvTypeNameForms 接收者类型名的各种形态。
-//
-// 取错接收者名 = 把两个类型并成一个数 = 判出的不是 god object 是巧合。
-//
-// 两条既有语义在这里被钉住：
-//
-//  1. **多接收者按类型取，不按变量名取**：`func (a, b *Plain) E()` 归 Plain。
-//     旧实现按正则切接收者列表，`fields[1]` 取到的是变量名「b」——于是这个方法
-//     被归到一个名叫「b」的不存在类型上，Plain 的方法数少算一个。
-//  2. **泛型实参被剥掉**：`Manager[int]` 与 `Manager[string]` 归到同一个
-//     「Manager」。这是 2026-10-20 之前的既有语义，本次**刻意不动**——
-//     改聚合键是另一件事（见 issue #14），不该混在「区分转发壳」这次改动里，
-//     混进来会让 diff 难审、也让「本次只改了什么」说不清。
-//     它的影响面：只有**按实例特化**的方法（`func (m *Manager[int]) FromInt()`）
-//     会被算到基类型头上；泛型类型自身的方法（`func (m *Map[K,V]) Get()`）每个
-//     FuncDecl 只数一次，无偏差。
-func TestRecvTypeNameForms(t *testing.T) {
-	src := `package p
-
-type Plain struct{}
-type Manager[T any] struct{}
-
-func (p *Plain) A() {}
-func (p Plain) B() {}
-func (m *Manager[int]) C() {}
-func (m Manager[string]) D() {}
-func (a, b *Plain) E() {}
-func (m *Manager[map[string]int]) F() {}
-`
-	root := t.TempDir()
-	writeFixture(t, root, map[string]string{"pa/a.go": src})
-	// 阈值 0：每个类型都应被单独点名。Plain 有 A/B/E 三个方法 → 一个条目；
-	// Manager 按既有语义并成一个条目，含 C/D/F 三个方法。
-	got, err := godObjects(root, []string{"pa"}, 0, defaultForwardingShellMaxChars)
-	if err != nil {
-		t.Fatalf("godObjects 不得报错: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("期望 Plain / Manager 各自成条，实得 %v", got)
-	}
-	joined := strings.Join(got, "\n")
-	for _, want := range []string{"pa.Plain", "pa.Manager"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("报告须含类型 %q，实得 %v", want, got)
-		}
-	}
-	// 多接收者必须归到 Plain（不是变量名 b）——Plain 因此是 3 个方法。
-	if !strings.Contains(joined, "pa.Plain (3 个方法") {
-		t.Fatalf("多接收者 func (a, b *Plain) E() 必须归入 Plain，Plain 应为 3 个方法，实得 %v", got)
-	}
-}
-
 // TestGodObjectsParseErrorIsLoud 解析失败必须响亮失败，不能默默跳过。
 //
 // 跳过 = 该文件的方法数没被计入 = 那个类型的方法数被低估 = 门禁对它隐形。

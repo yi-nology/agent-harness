@@ -123,7 +123,7 @@ func godObjects(root string, scanRoots []string, limit, shellLimit int) ([]strin
 				if !ok || fn.Recv == nil {
 					continue // 普通函数，不是方法
 				}
-				recv := recvTypeName(fn.Recv)
+				recv := recvFullTypeName(fn.Recv)
 				if recv == "" {
 					continue
 				}
@@ -174,21 +174,68 @@ func recvTypeName(recv *ast.FieldList) string {
 	return baseTypeName(recv.List[0].Type)
 }
 
-// baseTypeName 剥掉指针与泛型实参，取基类型名。
-func baseTypeName(expr ast.Expr) string {
+// recvFullTypeName 取接收者的**完整**类型名（保留泛型实参）。
+//
+// # 为什么要有它（与 baseTypeName 的区别）
+//
+// `baseTypeName` 剥掉泛型实参：`Manager[int]` 与 `Manager[string]` 都变成
+// `Manager`。但按 Go 规范，**按实例特化的方法只属于该实例化**
+// （`func (m *Manager[int]) C()` 是 `Manager[int]` 的方法，不是 `Manager` 的）。
+//
+// 于是剥掉实参会把**三个不同的类型**并成一个计数——两个实例化各挂 20 个
+// 特化方法就被判成「Manager 有 40 个方法」，而它其实不胖。**方向是虚高**
+// ⇒ 假红（issue #14）。
+//
+// # 形态
+//
+//   - 非泛型：与 baseTypeName **逐字相同**（`Plain` → `Plain`）——
+//     这条必须成立，否则这条变更会波及所有宿主，而不只是泛型用户；
+//   - 单实参：`Manager[int]`；
+//   - 多实参：`Manager[K, V]`（实参各自的形态保留，如 `map[string]int`）。
+//
+// 报告里因此会出现方括号（`pa.Manager[int]`）——这是**刻意的**：
+// 它让「哪个实例化胖」一眼可见，而不是被并成一个假象。
+func recvFullTypeName(recv *ast.FieldList) string {
+	if recv == nil || len(recv.List) == 0 {
+		return ""
+	}
+	return fullTypeName(recv.List[0].Type)
+}
+
+// fullTypeName 保留泛型实参的类型名。
+func fullTypeName(expr ast.Expr) string {
 	switch t := expr.(type) {
 	case *ast.Ident:
 		return t.Name
 	case *ast.StarExpr:
-		return baseTypeName(t.X)
+		return fullTypeName(t.X)
 	case *ast.IndexExpr: // Manager[T]
-		return baseTypeName(t.X)
+		return fullTypeName(t.X) + "[" + fullTypeName(t.Index) + "]"
 	case *ast.IndexListExpr: // Manager[K, V]
-		return baseTypeName(t.X)
+		return fullTypeName(t.X) + "[" + fullTypeName(t.Indices[0]) + ", " + fullTypeName(t.Indices[1]) + "]"
 	case *ast.SelectorExpr: // pkg.T —— 接收者不可能是跨包的，形态上兜住
 		return t.Sel.Name
+	case *ast.ArrayType: // [N]T
+		return "[]" + fullTypeName(t.Elt)
+	case *ast.MapType: // map[K]V
+		return "map[" + fullTypeName(t.Key) + "]" + fullTypeName(t.Value)
 	}
 	return ""
+}
+
+// baseTypeName 剥掉指针与泛型实参，取基类型名。
+//
+// 实现是「先取完整名，再剥实参」——**一条真相**：
+// 两套独立的 switch 迟早会漂移（新增一种形态时改了一处忘了另一处），
+// 而漂移的后果是「同一类型在两个判据里算成两个」或「并成一个」。
+//
+// 剥实参的实现：完整名里的方括号及其内容整体去掉。
+func baseTypeName(expr ast.Expr) string {
+	full := fullTypeName(expr)
+	if i := strings.IndexByte(full, '['); i >= 0 {
+		return full[:i]
+	}
+	return full
 }
 
 // isForwardingShell 判一个方法是不是「转发壳 / 访问器」。
