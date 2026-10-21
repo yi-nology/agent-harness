@@ -2,6 +2,33 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.8.3] — 2026-10-21
+
+- 杂务(deps)：依赖地板追平——llm v0.15.0、oekit/concurrency v0.19.0
+
+## 下游要做什么
+**`go mod tidy`**。地板抬高对下游是隐式 breaking：不跑就报
+`updates to go.mod needed`，且报错不提真正原因（**不是本仓的 API 变了**）。
+本仓**自身代码零改动**——只看本仓的 diff 看不出这是一次地板抬高。
+## 抬了哪两块、为什么无行为差异
+**`github.com/oagentkit/llm` v0.14.2 → v0.15.0**
+上游新增 `OpenAIProviderConfig.HTTPClient`（**可选**字段）：宿主可注入自己的
+`*http.Client`，把出站守卫挂到 `Transport.DialContext` 上——写面校验（按 URL 判）
+拦不住 DNS rebinding（两次解析之间权威 DNS 可以改口），守卫必须在拨号层。
+缺省 nil 时行为**逐字不变**。
+本仓只用 llm 的**空导入**（`tools.go` 的工具依赖登记），不碰其 API。
+**`github.com/oekit/concurrency` v0.18.0 → v0.19.0**（随 llm 传递而来）
+本仓只用 `concurrency/async`（GoSafe）——该包在 v0.18.0→v0.19.0 之间**一字未动**
+（改动在 `retry` 的抖动 panic 修复与 `syncx` 的新原语，本仓不 import）。
+## 顺带：docs/ 与 tools.go 里的版本钉子（散文，需手改）
+`tools.go` 的「钉的是哪个版本」段落已回改（llm v0.14.2 → v0.15.0），并在段首
+保留了「散文不受机器管、改地板后要手工回来改」的警示与核对命令。
+## 门禁
+```
+make check        ✅ 全绿（lint 0 issues / 28 包测试过 / 覆盖率 84.1% / 架构门禁通过）
+```
+
+
 ## [v0.8.2] — 2026-10-21
 
 - 杂务(deps)：依赖地板追平上游本轮新版本——oekit/pkg v0.20.0、guardx v0.13.1
