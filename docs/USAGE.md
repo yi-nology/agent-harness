@@ -559,6 +559,65 @@ stages := []invoke.Stage{
 - **审批与执行后端是两层**：审批判「该不该做」，`sandbox` 的档位判「在哪跑」。
   两者要**一起同意**才放行——那正是 `gatecheck` 包做的事（见 §3.11）。
 
+#### 3.3.5 撤销的归属：`guardset.Assembly`
+
+`guardset.Set` 构造后只读——那是它的**不变量**（并发共享下的可变集合就是竞态源，
+且会让「当前有哪些守卫」出现两个真相）。但只读有代价：**运行期想临时停掉某条守卫**
+（应急降级、灰度、误伤止损），只能**整个进程重启**。
+
+解法不是「让 `Set` 可变」，而是**换整份**：
+
+```go
+import (
+	"github.com/oagentkit/guardx/invoke"
+	"github.com/yi-nology/agent-harness/guardset"
+)
+
+// 装配面：持有「当前这一份」，并提供整份换掉的能力。
+asm, err := guardset.NewAssembly(initialSet,
+	guardset.WithSwapGate(func(ctx context.Context, next *guardset.Set) error {
+		return authorizeSwap(ctx, next) // 授权是宿主的事，本包只提供接入点
+	}),
+	guardset.WithSwapRecorder(func(r guardset.SwapRecord) {
+		audit("guard_swap", r) // 换了几次 / 换走了什么 / 换上了什么
+	}),
+)
+if err != nil {
+	return err
+}
+
+// 链上那一环指向**装配面**，不指向某一份 ⇒ 换份后不用重接链。
+stages := []invoke.Stage{asm.Stage(), tooldisclose.Stage(catalog)}
+
+// 撤销一条守卫：产出一份新的（去掉它），再整份换上去。
+next, err := asm.Current().Without("rate_limiter")
+if err != nil {
+	return err
+}
+if err := asm.Swap(ctx, next); err != nil {
+	return err // 换份失败 ⇒ 当前份保持不变
+}
+```
+
+**四个要点**
+
+- **撤销 = 换整份，不是改其中一条**。`Without` 是**纯函数**（返回新集合，原集合不变），
+  撤销发生在 `Swap` 上。
+- **换份是原子的**：在途判定跑在**旧份**上，下一次判定跑在新份上，没有中间态；
+  且**旧份不被修改**（它可能正被在途判定读着）。
+- **换份后不用重接链**：`asm.Stage()` 每次判定都取当前那一份。
+- **「全部撤销」不是降级，是失守**：换上去的那份永远非空。空集合在 `New` 那里就被拒绝，
+  `Without` 去掉最后一条会返回 `ErrEmptySet`；撤销不存在的守卫返回 `ErrUnknownGuard`
+  （**不静默忽略**——静默忽略会让宿主以为撤掉了某条守卫，实际那份集合里根本没有它）。
+
+| 符号 | 说明 |
+|---|---|
+| `NewAssembly` / `Current` / `Swap` | 装配面的三个基本动作：构造、读当前份、整份换 |
+| `Assembly.Stage` / `StageWithGuidance` | 接成 invoke 链一环，每次判定取当前份 |
+| `Set.Without` | 纯函数：产出少了指定守卫的**新**集合 |
+| `WithSwapGate` / `WithSwapRecorder` | 换份闸（授权接入点）与换份留痕 |
+| `ErrUnknownGuard` / `ErrEmptySet` | 撤销不存在的守卫 / 撤销到最后一条，都拒绝 |
+
 ---
 
 ### 3.4 程序化工具编排：`ptc`
@@ -1958,6 +2017,8 @@ tag 被删后条目仍留着直到缓存过期，而拿它当采购单会得到�
 | `make check` 报域词污染 | 领域资产漏进内核了——它该在宿主仓 |
 | 加了个新包门禁立刻红 | 没在 `architecture-policy.yaml` 的 `modules` 段登记 |
 | 本地全绿但 CI 报 checksum mismatch | 见 §5 的 tag 重写 / 缓存回退两条 |
+| 想临时停掉某条守卫，只能重启进程 | 你在用 `guardset.Stage(set)` 绑死了某一份——改用 `guardset.Assembly`，撤销 = `Without` + `Swap`（换整份，链不用重接）|
+| 撤销某条守卫后，宿主以为降级生效了，实际没有 | `Set.Without` 对不存在的名字**会报错**（`ErrUnknownGuard`）；若你绕过了它去改 `Set`，那是两个真相 |
 
 ---
 
