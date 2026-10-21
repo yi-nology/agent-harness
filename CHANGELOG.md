@@ -2,6 +2,70 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.8.2] — 2026-10-21
+
+- 杂务(deps)：依赖地板追平上游本轮新版本——oekit/pkg v0.20.0、guardx v0.13.1
+
+## 下游要做什么
+**`go mod tidy`**。地板抬高对下游是隐式 breaking：不跑就报
+`updates to go.mod needed`，且报错不提真正原因（不是本仓的 API 变了）。
+本仓**自身代码零改动**——只看本仓的 diff 看不出这是一次地板抬高。
+## 抬了哪两块、为什么无行为差异
+**`github.com/oagentkit/guardx` v0.13.0 → v0.13.1**
+上游 diff 只有 `go.mod` / `go.sum` / `CHANGELOG.md`——**没有 Go 源码变更**
+（内容是 `chore(deps): oekit/pkg 依赖地板抬到 v0.20.0`）。本仓的 `toolfail` 与
+`sandbox` 是它的门面（类型别名 + 常量别名 + 单条上游转发），转发面一字未动。
+**`github.com/oekit/pkg` v0.18.0 → v0.20.0**
+逐包核过本仓实际用到的 9 个子包（cache / encoding / errors / httpjson /
+jsonrepair / mathx / singleflighttest / stringx / urlguard）：
+- `errors`：**纯增量**——新增 `Errorf`（格式化 + `%w` 包装，nil-safe）。本仓用的
+  `New` / `As` / `Is` / `Wrap` 四个函数是同型透传，**一字未动**。
+- `httpjson`：**退避溢出修复**——旧写法 `base << (attempt-1)` 在 attempt 较大时
+  int64 溢出成负数，负数绕过 `MaxDelay` 封顶，`time.After(负数)` 立刻返回 ⇒
+  **该轮退避彻底消失**。改为乘法 + 饱和封顶。正常 attempt 数（1..20）下
+  结果**逐字相同**，差别只在溢出的病态路径。
+- `urlguard`：**纯增量**——新增 `WithExactHosts`（精确 host 白名单），未设置时
+  行为与既有完全一致。本仓 `netguard` 走的是自己的 egress 判据（IP 策略单源
+  egress），不换判据。
+- `stringx`：**仅注释**——补 `TruncEllipsis` 的 n 语义说明。本仓未使用该函数
+  （已 grep 确认生产代码无调用）。
+- `pathx`：新增包，本仓未使用。
+## 门禁
+```
+make check        ✅ 全绿（lint 0 issues / 28 包测试过 / 覆盖率 84.1% / 架构门禁通过）
+```
+另：文档里的版本号是散文、不受机器管，已手工回改
+`docs/MIGRATION_OAGENTKIT_20261018.md` 的「当前钉的版本」一句与 README 的
+「下游升级须知」表。
+
+
+- 文档：更正两处文档漂移——映射表补子进程后端，设计档标记 P0/P1 已完成
+
+## 1. OVERLAP §四 的映射表：ptc 行漏了子进程后端
+那行还写着「程序化工具编排沙箱（goja VM，三重预算）」——而 v0.8.1 起本仓有两种
+执行形态：进程内（兜不住内存）与子进程（内核地址空间上限兑现 MaxMemory）。
+这是「该让/该下沉」判定表，漏一维会误导后来人以为只有一种形态。
+## 2. 设计档 P0/P1 段还写着「已提 issue」
+实际两期都已实现并发布（P0 → guardx v0.10.0，P1 → v0.11.0/v0.12.0/v0.13.0 +
+本仓 v0.8.1）。文档停在「已提 issue」会让后来人以为还没做——而对应的 issue
+（guardx#17 / #18）其实已随实现关闭。改为「✅ 已完成」并列出实际 PR 与版本号。
+## 3. 依赖地板欠账：5 个仓的 guardx 地板 PR 已开
+矩阵的依赖地板时效门禁（matrix-tools 的 verify_dep_floors.py）会报「地板落后
+远端最新」。guardx 发了 v0.10.0 → v0.13.0 后，以下 5 个仓的 guardx 地板落后：
+| 仓 | 原 | 新 | PR |
+|---|---|---|---|
+| tools | v0.9.0 | v0.13.0 | oagentkit/tools#16 |
+| obs | v0.11.0 | v0.13.0 | oagentkit/obs#20 |
+| skillkit | v0.11.0 | v0.13.0 | oagentkit/skillkit#17 |
+| toolgate | v0.11.0 | v0.13.0 | oagentkit/toolgate#21 |
+| agentkit（门面） | v0.11.0 | v0.13.0 | oagentkit/agentkit#45 |
+**全是零行为差异**：这 5 个仓用的 guardx 包（logredact / fence / invoke / egress /
+injectband / permgate）在 v0.11.0 → v0.13.0 之间**未变**——那几版只加了 sandbox 的
+Capable 与 wire，而门面不转发这两个新包。门面那条属「只做别名转发与安全修复」
+范畴（不改变转发面，48 包集合不变）。
+门禁自检：fmt-check ✅ vet ✅ test ✅ cover-gate ✅ architecture-check ✅ docsync ✅
+
+
 ## [v0.8.1] — 2026-10-21
 
 ### 新增(ptc)：新增子进程执行后端——用内核地址空间上限兑现 MaxMemory
@@ -15,7 +79,7 @@
 本后端把执行搬出宿主进程：子进程里跑 goja，用**内核的地址空间上限**
 （RLIMIT_AS）兑现内存上限。
 # 三条设计决定
-## 1. 协议归上游（guardx/wire）
+## 1. 协议归上游（guardx/sandbox/wire）
 跨进程调用协议（帧格式 + 两条通道 × 四个角色）归上游 guardx——协议是最不该
 私有的东西（各后端各写一遍 ⇒ 换个后端就得换一套）。本仓只实现后端：
 起进程、连管道、跑程序。
