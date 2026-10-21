@@ -37,7 +37,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/oagentkit/guardx/invoke"
@@ -161,61 +160,11 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 		maxBytes = DefaultMaxBytes
 	}
 
-	// 四条单向管道：启动读/启动写/调用请求写/调用响应读（子进程侧视角）。
-	startReadR, startReadW, err := os.Pipe()
+	// 管道与子进程：见 childpipes.go（建立四条管道 + 装好子进程的那一侧）。
+	pipes, err := newChildPipes(exe)
 	if err != nil {
-		return wire.Result{}, fmt.Errorf("ptc: 建启动读管道失败: %w", err)
+		return wire.Result{}, err
 	}
-	startWriteR, startWriteW, err := os.Pipe()
-	if err != nil {
-		_ = startReadR.Close()
-		_ = startReadW.Close()
-		return wire.Result{}, fmt.Errorf("ptc: 建启动写管道失败: %w", err)
-	}
-	callReqR, callReqW, err := os.Pipe()
-	if err != nil {
-		_ = startReadR.Close()
-		_ = startReadW.Close()
-		_ = startWriteR.Close()
-		_ = startWriteW.Close()
-		return wire.Result{}, fmt.Errorf("ptc: 建调用请求管道失败: %w", err)
-	}
-	callRespR, callRespW, err := os.Pipe()
-	if err != nil {
-		_ = startReadR.Close()
-		_ = startReadW.Close()
-		_ = startWriteR.Close()
-		_ = startWriteW.Close()
-		_ = callReqR.Close()
-		_ = callReqW.Close()
-		return wire.Result{}, fmt.Errorf("ptc: 建调用响应管道失败: %w", err)
-	}
-
-	// 管道端在父子之间的归属（每个 os.Pipe 有一读一写两端）：
-	//
-	//	startReadR  父写→子读   Start 帧
-	//	startWriteR 子写→父读   Result 帧
-	//	callReqR   子写→父读   Request 帧（子进程发起）
-	//	callRespR  父写→子读   Response 帧
-	//
-	// 子进程拿四个端中的「读端或写端」各一：stdin/startReadR、stdout/startWriteW、
-	// fd3=callReqW、fd4=callRespR。
-	child := exec.Command(exe) //nolint:gosec // 子进程执行的是宿主自己的可执行文件（re-exec），路径不来自外部输入
-	child.Stdin = startReadR
-	child.Stdout = startWriteW
-	// fd3 = 调用请求写端（子进程发 Request），fd4 = 调用响应读端（子进程读 Response）。
-	child.ExtraFiles = []*os.File{callReqW, callRespR}
-	// 接住子进程的 stderr：**死因就在这里**（例：fatal error: runtime: out of memory）。
-	// 不接住的话，父侧从管道 EOF 只看得到「没了」。
-	// 只留末尾（tailBuffer 有上限）——子进程可能狂写日志，
-	// 无界缓冲会把父进程内存也吃进去，那正是这个后端要防的形态。
-	stderrTail := &tailBuffer{limit: childStderrLimit}
-	child.Stderr = stderrTail
-	child.Env = append(os.Environ(),
-		childModeEnv+"=1",
-		childCallReqFDEnv+"=3",
-		childCallRespFDEnv+"=4",
-	)
 
 	// 内存兜底：父侧建 cgroup，子进程进去即受约束（见 memlimit_linux.go）。
 	//
@@ -225,13 +174,13 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 	// 「以为兜住了、实际没有」正是这套机制要消灭的东西。
 	cg, err := p.openMemoryGate()
 	if err != nil {
-		closeAll(startReadR, startReadW, startWriteR, startWriteW, callReqR, callReqW, callRespR, callRespW)
+		closeAll(pipes.startReadR, pipes.startReadW, pipes.startWriteR, pipes.startWriteW, pipes.callReqR, pipes.callReqW, pipes.callRespR, pipes.callRespW)
 		return wire.Result{}, err
 	}
 
-	if err := child.Start(); err != nil {
+	if err := pipes.child.Start(); err != nil {
 		cg.release()
-		closeAll(startReadR, startReadW, startWriteR, startWriteW, callReqR, callReqW, callRespR, callRespW)
+		closeAll(pipes.startReadR, pipes.startReadW, pipes.startWriteR, pipes.startWriteW, pipes.callReqR, pipes.callReqW, pipes.callRespR, pipes.callRespW)
 		return wire.Result{}, fmt.Errorf("ptc: 起子进程失败: %w", err)
 	}
 
@@ -242,22 +191,22 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 	//
 	// attach 失败 ⇒ 杀掉子进程并回收 cgroup，**不放它裸跑**：
 	// 它会带着「以为自己受约束」的前提去执行一个不受约束的程序。
-	if err := cg.attach(child.Process.Pid); err != nil {
-		_ = child.Process.Kill()
-		_ = child.Wait()
+	if err := cg.attach(pipes.child.Process.Pid); err != nil {
+		_ = pipes.child.Process.Kill()
+		_ = pipes.child.Wait()
 		cg.release()
-		closeAll(startReadR, startReadW, startWriteR, startWriteW, callReqR, callReqW, callRespR, callRespW)
+		closeAll(pipes.startReadR, pipes.startReadW, pipes.startWriteR, pipes.startWriteW, pipes.callReqR, pipes.callReqW, pipes.callRespR, pipes.callRespW)
 		return wire.Result{}, errors.Wrap(err, "把子进程放进内存受限的执行环境失败")
 	}
-	// 父侧关掉**自己那份**副本——子进程要用的是另一个端（startReadR / startWriteW /
-	// callReqW / callRespR 已交给子进程，exec 在 Start 之后会关闭父侧副本）。
+	// 父侧关掉**自己那份**副本——子进程要用的是另一个端（pipes.startReadR / pipes.startWriteW /
+	// pipes.callReqW / pipes.callRespR 已交给子进程，exec 在 Start 之后会关闭父侧副本）。
 	//
-	// 父侧继续持有的是：startWriteR（写 Start）、startReadW（读 Result）、
-	// callReqR（读 Request）、callRespW（写 Response）。
-	closeAll(startReadR, startWriteW, callReqW, callRespR)
+	// 父侧继续持有的是：pipes.startWriteR（写 Start）、pipes.startReadW（读 Result）、
+	// pipes.callReqR（读 Request）、pipes.callRespW（写 Response）。
+	closeAll(pipes.startReadR, pipes.startWriteW, pipes.callReqW, pipes.callRespR)
 
 	// 调用通道：父侧应答子进程发来的工具调用（判定环 + 绑定执行都在这里）。
-	server := wire.NewServer(&pipeRW{r: callReqR, w: callRespW}, p.handler())
+	server := wire.NewServer(&pipeRW{r: pipes.callReqR, w: pipes.callRespW}, p.handler())
 	serveDone := make(chan struct{})
 	// 走 async.GoSafe 而非裸 go func：本 goroutine 跑的是判定环与宿主绑定
 	// （宿主代码可能 panic），裸 goroutine 的 panic **无法被外层 recover 捕获**，
@@ -267,8 +216,8 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 		_ = server.Serve(ctx)
 	})
 
-	// 启动通道：父侧发 Start（写 startReadW）、等 Result（读 startWriteR）。
-	starter := wire.NewStarter(&pipeRW{r: startWriteR, w: startReadW})
+	// 启动通道：父侧发 Start（写 pipes.startReadW）、等 Result（读 pipes.startWriteR）。
+	starter := wire.NewStarter(&pipeRW{r: pipes.startWriteR, w: pipes.startReadW})
 	start := wire.Start{
 		Program:  p.opts.Program,
 		Bindings: startBindings(p.opts.Bindings),
@@ -280,7 +229,7 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 		},
 		ResultID: "r-1",
 	}
-	res, startErr := starter.Start(ctx, start)
+	res, startErr := startWithDeadline(ctx, starter, start, timeout)
 
 	// 收尾顺序：**先取状态，再收刀**。
 	//
@@ -292,12 +241,26 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 	// 但注意：**startErr 非 nil 说明子进程没交回结果**（管道 EOF），
 	// 此时子进程**已经自己结束了**（否则管道不会 EOF）⇒ 可以安全地取它的状态，
 	// 那就是真死因（被内核杀 = 兜底生效；非零退出 = 启动失败）。
-	waitErr := child.Wait()
+	//
+	// **例外**：startWithDeadline 因**期限到了**而放弃时，子进程可能**还活着**
+	// （它没回结果、也没退出——典型是宿主忘了调 MaybeRunChild，子进程跑起了
+	// 宿主的完整 main）。那种情形下 `pipes.child.Wait()` 会**一直等它退出**，
+	// 于是「等结果有期限」变成「等退出没期限」——挂死从一处挪到另一处。
+	//
+	// 故这里的顺序是：**先非阻塞地试取状态**——
+	//   - 立刻拿到 ⇒ 子进程**自己已结束** ⇒ 那是真死因（被内核杀 / 自己退出）；
+	//   - 拿不到 ⇒ 子进程**还活着** ⇒ 先收刀再取（否则等它退出 = 挂死）。
+	//
+	// 注意这与上面「先取状态再收刀」**不矛盾**：那里的前提是
+	// 「管道 EOF ⇒ 子进程已自己结束」；这里多了一个前提——
+	// 「期限到了 ⇒ 子进程可能还活着」。两个前提要用**同一个动作**
+	// （取状态）分别验证，故用非阻塞探测。
+	waitErr := waitChildNonBlocking(pipes.child)
 
 	// 收刀（无论成功失败）并等调用通道的服务循环退出。
-	_ = child.Process.Kill()
+	_ = pipes.child.Process.Kill()
 	<-serveDone
-	closeAll(startWriteR, startReadW, callReqR, callRespW)
+	closeAll(pipes.startWriteR, pipes.startReadW, pipes.callReqR, pipes.callRespW)
 
 	// 回收 cgroup：子进程已退出，cgroup 空了才删得掉。
 	cg.release()
@@ -312,7 +275,7 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 		// 合成一句话的话，宿主只能一律当故障处理。
 		aborted := abortedError(waitErr, startErr)
 		if ae, ok := aborted.(*ExecutionAborted); ok {
-			ae.Stderr = stderrTail.String()
+			ae.Stderr = pipes.stderrTail.String()
 		}
 		return wire.Result{}, aborted
 	}
