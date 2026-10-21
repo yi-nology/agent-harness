@@ -589,31 +589,59 @@ if err != nil {
 // 链上那一环指向**装配面**，不指向某一份 ⇒ 换份后不用重接链。
 stages := []invoke.Stage{asm.Stage(), tooldisclose.Stage(catalog)}
 
-// 撤销一条守卫：产出一份新的（去掉它），再整份换上去。
-next, err := asm.Current().Without("rate_limiter")
+// 撤销一条守卫：**基于当前那一份**算下一份，再整份换上去。
+// 用 SwapFunc（不是 Swap）——它基于当前份做读改写，并发下不会丢更新。
+err = asm.SwapFunc(ctx, func(cur guardset.Snapshot) (*guardset.Set, error) {
+	return cur.Set.Without("rate_limiter")
+})
 if err != nil {
-	return err
-}
-if err := asm.Swap(ctx, next); err != nil {
 	return err // 换份失败 ⇒ 当前份保持不变
 }
 ```
 
-**四个要点**
+**六个要点**
 
 - **撤销 = 换整份，不是改其中一条**。`Without` 是**纯函数**（返回新集合，原集合不变），
-  撤销发生在 `Swap` 上。
+  撤销发生在换份上。
+- **撤销要用 `SwapFunc`，不要用 `Swap`**。两者语义不同：
+  - `SwapFunc(ctx, mutate)`：**基于当前那一份**的读改写（CAS 循环）⇒ 并发下**不丢更新**；
+  - `Swap(ctx, next)`：整份替换为 `next`，**不基于当前那一份**。
+
+  拿 `Swap` 做读改写会**丢更新**：两个并发撤销者拿到同一份旧，后写者把先写者盖掉 ⇒
+  **撤销被撤销**（被撤掉的守卫悄悄复活，没有任何东西会提示）。
 - **换份是原子的**：在途判定跑在**旧份**上，下一次判定跑在新份上，没有中间态；
   且**旧份不被修改**（它可能正被在途判定读着）。
-- **换份后不用重接链**：`asm.Stage()` 每次判定都取当前那一份。
+- **换份后不用重接链**：`asm.Stage()` 每次判定取当前那一份。
+- **代次回答「换过没有」**：`asm.Generation()` 是当前份的**投影**（不是另一个计数器），
+  单调递增、不回卷。判定结论里带 `Outcome.Generation` ⇒ 审计能回答
+  「这次判定是按第几代守卫做的」。要同时拿到集合与代次，用 `asm.Snapshot()`——
+  分开读会得到自相矛盾的一对。
 - **「全部撤销」不是降级，是失守**：换上去的那份永远非空。空集合在 `New` 那里就被拒绝，
   `Without` 去掉最后一条会返回 `ErrEmptySet`；撤销不存在的守卫返回 `ErrUnknownGuard`
   （**不静默忽略**——静默忽略会让宿主以为撤掉了某条守卫，实际那份集合里根本没有它）。
 
+**订阅**：换份真正落地的那一刻，把新记录推给订阅者（当场生效的「换成了什么」）。
+
+```go
+h, err := asm.Subscribe(func(r guardset.SwapRecord) {
+	audit("guard_swap", r) // 换了几次 / 换走了什么 / 换上了什么 / 第几代
+})
+// ...
+asm.Unsubscribe(h)
+```
+
+订阅表是**整份替换**（copy-on-write），通知在**锁外**逐个调用；
+某个订阅者 panic 会被吞掉——换份**已经落地**，让回调抛异常就把已经发生的事实
+改写成「没发生」。
+
 | 符号 | 说明 |
 |---|---|
-| `NewAssembly` / `Current` / `Swap` | 装配面的三个基本动作：构造、读当前份、整份换 |
+| `NewAssembly` / `Current` / `Snapshot` | 构造、读当前份、一次读出集合与代次 |
+| `Assembly.SwapFunc` | **基于当前那一份**的读改写（CAS，不丢更新）——撤销用这个 |
+| `Assembly.Swap` | 整份替换为给定的一份（**不**基于当前那一份） |
+| `Assembly.Generation` | 当前份的代次（投影，单调不回卷） |
 | `Assembly.Stage` / `StageWithGuidance` | 接成 invoke 链一环，每次判定取当前份 |
+| `Assembly.Subscribe` / `Unsubscribe` | 换份订阅与退订 |
 | `Set.Without` | 纯函数：产出少了指定守卫的**新**集合 |
 | `WithSwapGate` / `WithSwapRecorder` | 换份闸（授权接入点）与换份留痕 |
 | `ErrUnknownGuard` / `ErrEmptySet` | 撤销不存在的守卫 / 撤销到最后一条，都拒绝 |

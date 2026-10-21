@@ -92,6 +92,15 @@ var (
 	// ErrUnknownGuard 撤销一个不存在的守卫。**不静默忽略**：静默忽略会让宿主
 	// 以为「撤掉了某条守卫」，实际那份集合里根本没有它——撤销的是个不存在的东西。
 	ErrUnknownGuard = errors.New("guardset: 守卫名不在集合中")
+
+	// ErrNilMutate 换份的改写函数为 nil。传 nil 进来只能说明调用方漏了判断，
+	// 而漏判断的换份会「什么也不做」——静默无动作比报错更难查。
+	ErrNilMutate = errors.New("guardset: 换份的改写函数为空")
+
+	// ErrNilSubscriber 订阅回调为空。登记一个必然 panic 的订阅者毫无意义，
+	// 故直接报错并返回零句柄：调用方能**凭返回值**知道订阅没生效，
+	// 而不是等到第一次变更时才发现「原来一直没跟上」。
+	ErrNilSubscriber = errors.New("guardset: 换份订阅回调为空")
 )
 
 // Denial 一条拒绝。
@@ -122,6 +131,15 @@ type Outcome struct {
 	// Retryable 合成后的重试结论。语义见包注释「关键取舍一」：
 	// 只有**全部**拒绝都可重试时才为真。
 	Retryable bool
+
+	// Generation 判出这份结论时，守卫集合的**代次**。
+	//
+	// 它回答审计要问的第一个问题之一：「这次判定是按**第几代**守卫做的」。
+	// 撤销一条守卫后，早先已在途的判定仍按旧份走（那是设计，见 assembly.go）——
+	// 没有代次，这两件事在留痕里长得一模一样。
+	//
+	// 直接对 `Set` 求值时恒为 0（「不参与代次」）；经 `Assembly` 求值时是那一份的代次。
+	Generation uint64
 }
 
 // Reason 合并后的留痕依据：把全部拒绝按序拼成一行。

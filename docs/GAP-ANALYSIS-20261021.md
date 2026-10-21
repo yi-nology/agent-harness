@@ -227,7 +227,33 @@
 - **撤销不存在的守卫要报错**（`ErrUnknownGuard`），不静默忽略——
   静默忽略会让宿主以为「撤掉了某条守卫」，实际那份集合里根本没有它。
 
-**反向验证**：7 条单变异 + 1 条**组合**变异全部打红。其中组合变异值得单记：
+**形态对齐 netguard 的「整份原子交换」（不是借个名字另写一版）**
+
+本仓已有先例（`netguard` 的扩展名单整份原子交换），本包**沿用它的全部机制**——
+各写一套必然各判一套，漂移到没人发现为止：
+
+| netguard | 本包 |
+|---|---|
+| `curPolicy atomic.Pointer[Policy]` | `current atomic.Pointer[assemblyState]` |
+| 代次住在指针目标里（`Policy.gen`），`PolicyGeneration()` 是**投影** | 代次住在 `assemblyState.gen`，`Assembly.Generation()` 是**投影** |
+| `swapPolicy(mutate)` 走 **CAS 循环** | `SwapFunc(mutate)` 走 **CAS 循环** |
+| 订阅表 copy-on-write + 锁外通知 + 逐个 recover | 同款 |
+
+**对齐时才发现的两条真缺陷**（第一版装配面没做到，已修）：
+
+1. **并发换分丢更新 ⇒ 撤销被撤销**。第一版 `Swap(next)` 收的是**预先构造好**的一份，
+   两个并发撤销者拿到同一份旧，后写者把先写者静默盖掉 ⇒ 被撤掉的守卫悄悄复活，
+   **没有任何东西会提示**。`netguard` 的 `swapPolicy(mutate)` 正是为此存在：
+   mutate 从**观察到的**旧值算出下一份，CAS 失败则重来（mutate 重新看到最新那份）。
+   ⇒ 本包补 `SwapFunc(ctx, mutate)`，并把 `Swap(ctx, next)` 的语义**显式**为
+   「整份替换，不基于当前那一份」（两个口语义不同，用错就丢更新）。
+2. **通知期回调 panic 把已落地的换份说成失败**。第一版的留痕回调在换份内同步调用，
+   它 panic ⇒ 换份**已经落地**却被说成失败——把已经发生的事实改写成没发生。
+   ⇒ 逐个 recover（`netguard` 的 `callSubscriber` 同款）。
+
+**反向验证**：12 条变异全部打红（代次两个真相 / CAS 退化成 Store / 通知不 recover /
+不通知订阅者 / 退订不删 / 判定不填代次 / 原地覆盖旧份 / 允许 nil / 不跑闸门 /
+`Without` 三条）。另有 1 条**组合**变异值得单记：
 「换份原地覆盖旧份」与「求值时重读集合内容」**各自单独都不撕裂**
 （Go 的 `for _, g := range s.guards` 在循环开始就固定了切片头，
 所以原地改旧份也影响不到在途判定），**两者同时出现才真的撕裂**。
