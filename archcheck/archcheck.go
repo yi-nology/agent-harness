@@ -150,6 +150,22 @@ func Run(root string, pol *Policy) (*Result, error) {
 		res.Violations = append(res.Violations, vs...)
 	}
 
+	// 执行沙箱后端的档位登记：policy 的 sandbox_providers 段 ↔ 代码事实（sandbox.go）。
+	//
+	// 段缺省也算开启：**有后端实现却没登记**必须报出来——「没登记就当没这回事」
+	// 正是这条门禁要防的静默失效。
+	sbox := SandboxProviders{}
+	if pol.SandboxProviders != nil {
+		sbox = *pol.SandboxProviders
+	}
+	if sbox.on() {
+		vs, err := sandboxProviderViolations(root, sbox)
+		if err != nil {
+			return nil, err
+		}
+		res.Violations = append(res.Violations, vs...)
+	}
+
 	// policy 自校验：门禁自己也得能被检查（规则没有执行体、id 重复、
 	// 阈值判定面漏包、例外指向不存在的规则……）。详见 selfcheck.go。
 	res.Violations = append(res.Violations, selfCheckViolations(root, pol)...)
@@ -172,6 +188,9 @@ func Run(root string, pol *Policy) (*Result, error) {
 	}
 	if pol.DepDir.on() {
 		sevOf[depRuleID] = sevOrError(pol.DepDir.Severity)
+	}
+	if sbox.on() {
+		sevOf[sandboxProviderRuleID] = sevOrError(sbox.Severity)
 	}
 	// 自校验恒为 error：policy 结构有问题时，门禁必须响亮失败，
 	// 而不是「其他规则都绿就当通过」——那正是它要防的那种静默失效。
@@ -225,6 +244,13 @@ func Run(root string, pol *Policy) (*Result, error) {
 			ID:       depRuleID,
 			Desc:     depDirDesc(pol.DepDir),
 			Severity: sevOf[depRuleID],
+		})
+	}
+	if sbox.on() {
+		res.Rules = append(res.Rules, RuleInfo{
+			ID:       sandboxProviderRuleID,
+			Desc:     sandboxProviderDesc(sbox),
+			Severity: sevOf[sandboxProviderRuleID],
 		})
 	}
 	res.Rules = append(res.Rules, RuleInfo{

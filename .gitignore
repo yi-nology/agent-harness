@@ -23,6 +23,14 @@
 *.test
 *.out
 
+# 项目本地的 Go 缓存：以项目内 GOPATH/GOMODCACHE 跑 go 命令时生成（文档里的
+# 宿主侧验证命令就是这个形态，见 docs/SPLIT_PLAN.md）。
+# 是构建产物，不是源码——且它们**不被**上面的规则覆盖：`*.out` 匹配不到
+# `.gopath/`（目录），而漏掉就意味着 `git add -A` 会把一整个缓存树提交进库。
+/.gopath/
+/.gomodcache-mavis/
+/.gocache-mavis/
+
 # ── 编辑器 / 工具临时件 ──
 # Emacs 写文件留下的 `.<pid>.<name>`（本仓实例：.!36916!fuzz_test.go …）
 .!*

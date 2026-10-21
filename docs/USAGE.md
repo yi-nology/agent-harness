@@ -64,6 +64,7 @@ harness 提供的是确定性编排的**机制面**：环节状态怎么流转�
 | 出站请求怎么防 SSRF | `netguard` | 挂在自己的 `DialContext` 上 |
 | 个人信息怎么脱敏 | `pii` | 阻断决策（内核只回报信号） |
 | 多工具聚合怎么省往返 | `ptc` | 工具绑定、判定环切片 |
+| 执行的隔离强度怎么声明与保证 | `sandbox` | 执行后端（可选）、每次执行的档位要求 |
 
 ### 0.3 三个必须先知道的约束
 
@@ -606,6 +607,98 @@ return out;
 - **出站守卫（netguard）不在判定环上，这是有意的**：判定环判「这次调用要不要放行」，
   netguard 判「这个 URL 能不能发出去」，是两个执行点。
   分工前提是沙箱性质——**谁给 VM 加了 fetch，谁就得重新回答 netguard 该接在哪**。
+
+---
+
+#### 3.4.1 执行沙箱的档位与后端协议：`sandbox`
+
+`ptc` 是**一个**执行后端（进程内 goja 解释器，档位 `LevelProcess`）。
+`sandbox` 是**后端协议**：档位语义 + 登记簿 + 按要求档位选后端。
+宿主可以注册自己的后端（容器、microVM、受控子进程），内核不关心它们怎么实现。
+
+**为什么需要它**：「模型写的程序在哪跑、跑起来能触达什么」此前只有一个答案，
+而那个答案是**写死在调用点**的——没有档位概念，也没有「这次执行至少要多强」的表达。
+于是宿主想跑一段不可信程序时，「它跑在够强的隔离里吗」这件事无处声明，
+只能靠人记得别挑错后端。
+
+**档位**（`sandbox.Level`，序即强弱）：
+
+| 档位 | 含义 | 内置后端 |
+|---|---|---|
+| `LevelNone` | 无隔离：与宿主同权限 | 无（要显式登记才会被选中）|
+| `LevelProcess` | 进程内解释器边界：能力白名单 + 资源预算 | `ptc`（goja）|
+| `LevelOS` | 内核级强制（文件/网络/系统调用由内核策略裁剪）| 无 |
+| `LevelMachine` | 硬件虚拟化边界 | 无 |
+
+**接入自己的后端**（三步）：
+
+① 实现 `sandbox.Provider`：
+
+```go
+type Provider interface {
+    ID() string
+    Level() sandbox.Level
+    Exec(ctx context.Context, req sandbox.Request) (sandbox.Outcome, error)
+}
+```
+
+② 在**你自己的** policy 里登记它的档位（内核的 policy 只登记内核自己的后端）：
+
+```yaml
+sandbox_providers:
+  enabled: true
+  severity: error
+  providers:
+    - id: my-container-backend
+      level: LevelOS
+      package: internal/sandboxbackend
+      notes: |
+        容器后端：只读根文件系统、无网络、非 root、资源上限……
+        （这一行是「档位声明的签字处」——写清它凭什么说自己有这一档）
+```
+
+③ 登记 + 执行：
+
+```go
+reg := sandbox.NewRegistry()
+if err := reg.Register(ptc.Provider{Bindings: bindings}); err != nil { /* 标识重复等 */ }
+if err := reg.Register(myBackend); err != nil { /* 同上 */ }
+
+// 要求「至少进程内解释器级」——在满足要求的后端里取最弱的
+out, err := sandbox.Execute(ctx, reg, sandbox.LevelProcess, sandbox.Request{
+    Program: src,
+    Budget:  sandbox.Budget{WallClock: 30 * time.Second, MaxCalls: 50, MaxBytes: 256 << 10},
+})
+```
+
+**档位不足时的行为**：无满足者时 `Execute` 返回错误，**不降级**到弱后端。
+这是刻意的：降级会让「宿主声明的强度」与「实际执行的强度」之间没有信号——
+宿主写着「本次要内核级」、实际跑在进程内，而日志、审计、测试全绿。
+降级必须是宿主**有意识**的动作（补后端，或把要求降到自己承担得起的档位）。
+
+**档位声明的核对**：`archcheck` 的执行体是**可导入包**，宿主仓可以复用同一套判据
+（不必各写一遍——各写一遍必然各判一套，漂移到没人发现为止）：
+
+```go
+import "github.com/yi-nology/agent-harness/archcheck"
+
+pol, err := archcheck.Load("architecture-policy.yaml")
+res, err := archcheck.Run(root, pol)
+if res.HasBlocking() { os.Exit(1) }
+```
+
+**已知边界**：
+
+- **档位是后端自报的，内核不校验其真实性。** 门禁保证的是「声明可见（在 policy 里）、
+  不漂移（门禁核对）、有签字（人 review 时看到那一行）」，**不是**「隔离真的到位」。
+  宿主不信任某个后端，唯一办法是**不登记它**。
+- **档位零值取最弱一档**（`LevelNone`）：未声明档位的后端只会被「要求=none」选中，
+  任何更高要求都因「无满足者」而拒绝。方向是安全的那一侧——漏声明的后端拿到的是
+  最弱的选择，不是最强的豁免。
+- **本仓只提供一个后端**（`ptc`）。`LevelOS` / `LevelMachine` 档位**尚无内置后端**：
+  它们要么由宿主实现，要么等内核补上「容器内程序回调宿主工具」那条 RPC 通道——
+  程序在容器里要调宿主工具，就必须有一条跨进程的调用通道，那不是后端实现，
+  是另一个机制。
 
 ---
 

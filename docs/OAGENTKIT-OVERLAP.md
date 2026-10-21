@@ -113,16 +113,50 @@ RECORD 375 条 0 条含 test）。版本差为补丁级，以下均为**行为**
 
 **该守（上游不可能有，因为它们是编排语义而非通用原语）**：
 `checkpoint`（续跑而非重放）、`budget`（压实计划骨架 + 就地改账）、`offload`（两阶段外置）、
-`tooldisclose`（渐进披露 + 两类失败二分）、`toolfail`（失败分类契约）、`netguard`（逐跳重验 +
-按名拦截 + DNS 解析层）。
+`tooldisclose`（渐进披露 + 两类失败二分）、`netguard`（逐跳重验 + 按名拦截 + DNS 解析层）。
 
 **该让（上游已覆盖或本就属宿主/运行时）**：bashguard 式规则 DSL、permgate、fence、
 澄清/合议/复审/路由、工具调度与限流、tokenizer 估算、provider 消息块形态识别。
+
+### 2026-10-21 更正：`toolfail` 已下沉，本仓转门面
+
+本文 §四 的初稿把 `toolfail` 列在「该守」一侧（**失败分类契约**）。该判断**已过时**，
+本轮实测复核后推翻：
+
+- 失败分类与处置判定是**跨宿主一致的语义**，与编排无关——各宿主各判一套必然漂移，
+  漂移的后果是重试策略静默错乱（对永久失败死循环重试，或对瞬时失败一次就放弃）。
+- 它与 `invoke`（调用链）、`permgate`（许可判定）同族，都是「要求 vs 实际」的判定语义，
+  故归 `github.com/oagentkit/guardx`（tier 0 安全层）。
+
+**已处置**：
+
+| 项 | 状态 |
+|---|---|
+| 上游 `guardx/toolfail` | ✅ 已落地（PR oagentkit/guardx#14），随 **v0.9.0** 发布 |
+| 本仓 `toolfail` | ✅ 转门面（类型别名 + 常量别名 + 单条上游转发），调用面**逐字兼容**——宿主 bianque 的 `internal/engine/scheduler/experts/dispatch.go` 零改动 |
+| 本仓 `sandbox` | ✅ 同样下沉（PR oagentkit/guardx#15），转门面；档位声明门禁（`harness-sandbox-provider-declared`）留在本仓，因为它核对的是**本仓 policy 的登记面** |
+| 矩阵登记 | ✅ `matrix-tools/modules.json` + 站点 `llms.txt` / `versions.json` 已重生成 |
+
+**门禁同步**：本仓 `facades` 段从 3 条扩到 **5 条**（新增 `toolfail`、`sandbox`），
+门包不可变门禁（`harness-facade-stays-facade`）开始管这两个包——
+「核心归上游、门面留本仓」从此有机器约束，不只是散文。
+
+> 教训：**§一 的「上游现在提供了什么」是快照，不是事实**。本文自己在开头就标注过
+> 这一点（「上游能力仍在搬家」），但 §四 的结论没有跟着复核，于是同一份文档里
+> 「该让」清单与「该守」清单都成了可能过期的陈述。**结论表比事实表更容易腐烂**——
+> 事实表改了会有人注意到（它与代码对不上），结论表没人核对。
 
 **路线图影响**：`docs/SPLIT_PLAN.md` §二 的 L2 清单里，`intent.go`(→`agent/clarify`)、
 `judge.go`(→`agent/blackboard`)、`supervisor.go`(→`agent/reflection`) 已有上游对应物；
 `filterDisabled` 的卡点可能被 `runtime/hotplug.Plugboard` 解开。
 **L2 不该再按原清单推进**，应改为「先清点上游已覆盖，再定剩余缺口」。
+
+**仍未下沉的两处（2026-10-21 实测复核）**：
+
+| 包 | 状态 | 理由 |
+|---|---|---|
+| `budget` | **重叠但不下沉** | 上游 `textx/compact`（916 行）已覆盖窗口口径（`EffectiveWindow`）、够不够压（`HasEnoughToCompact`）、保留哪几组（`Select`）；本仓 `budget` 多出的是**分段计量**（system/tools/rules/skills/mcp/conversation）与**宿主接口**（摘要生成 / 原文落盘各留一个接口）。两层可映射但不等价，强行合并会把「分段计量」这个编排侧概念塞进上游纯函数集 |
+| `tooldisclose` | **部分重叠** | 上游 `mcpkit/mcp` 有 `Catalog`（工具目录 + 差异比对），但没有**渐进披露**（确定性打分检索）与**两类失败二分**（未加载可重试 / 不在目录禁绕过）。目录层可对齐，披露机制是本仓的真差异化 |
 
 ## 五、遗留限制（如实记录）
 

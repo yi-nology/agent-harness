@@ -136,6 +136,44 @@ type DependencyDirection struct {
 // on 报告依赖方向门禁是否启用（缺省启用）。
 func (d DependencyDirection) on() bool { return d.Enabled == nil || *d.Enabled }
 
+// SandboxProvider 是 sandbox_providers 段里的一条**档位登记**：一个执行后端
+// 自称提供哪一档隔离。
+//
+// # 为什么档位要登记在案，而不是只写在代码里
+//
+// 后端自报的档位若只存在于实现中，它有三重失效：review 时看不见、改了没人会响、
+// 标高了没人管。而档位是宿主做风险判断的依据——宿主据它决定「这次执行能不能
+// 碰不可信输入」。于是档位声明需要一个**签字处**，policy 这一段就是那个签字处。
+//
+// # level 填常量名而不是档位值
+//
+// 填 `LevelProcess` 而不是 `process`：门禁**不能 import 被判的包**（它必须是最
+// 底层的，否则「用它判别人」就变成「它自己也在被判定」，门禁的红绿会依赖它所判
+// 的代码），所以它拿不到档位名表，只能比对代码里可静态识别的那一面——常量名。
+// policy 侧填同一份常量名，两侧就共用一份真相。
+type SandboxProvider struct {
+	ID      string `yaml:"id"`
+	Level   string `yaml:"level"`
+	Package string `yaml:"package"`
+	Notes   string `yaml:"notes"`
+}
+
+// SandboxProviders 是 sandbox_providers 段的配置：开关、级别、受忽略目录与登记清单。
+//
+// 形态与 dependency_direction 段同构（配置 + 清单），因为两者都是「一段跨包的
+// 规则 + 一张逐条声明的表」。段缺省即启用——**未登记的后端会被报出来**，
+// 而不是「没登记就当没这回事」。
+type SandboxProviders struct {
+	Enabled    *bool             `yaml:"enabled"`
+	Severity   string            `yaml:"severity"`
+	Desc       string            `yaml:"desc"`
+	IgnoreDirs []string          `yaml:"ignore_dirs"`
+	Providers  []SandboxProvider `yaml:"providers"`
+}
+
+// on 报告档位登记门禁是否启用（缺省启用）。
+func (s SandboxProviders) on() bool { return s.Enabled == nil || *s.Enabled }
+
 // Policy 是 architecture-policy.yaml 的反序列化结果。
 type Policy struct {
 	Version    int                 `yaml:"version"`
@@ -145,6 +183,13 @@ type Policy struct {
 	DepDir     DependencyDirection `yaml:"dependency_direction"`
 	Thresholds Threshold           `yaml:"thresholds"`
 	Exceptions []Exception         `yaml:"exceptions"`
+
+	// SandboxProviders 是执行沙箱后端的档位登记段（声明面）。
+	//
+	// 指针而非值：段整体缺省时，**门禁仍然开启**——因为「本仓有后端实现却没登记」
+	// 必须报出来，而不是「没登记就当没这回事」。指针只用于区分「段不存在」与
+	// 「段存在但为空」，两者的判定结果相同（都要靠代码事实说话）。
+	SandboxProviders *SandboxProviders `yaml:"sandbox_providers"`
 
 	// Path 记录 policy 文件路径。自校验违规要指向它，而宿主仓的 policy
 	// 不一定叫 architecture-policy.yaml——写死文件名等于让复用方永远看到

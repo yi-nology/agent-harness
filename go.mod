@@ -14,9 +14,9 @@ go 1.27
 require (
 	github.com/cloudwego/eino v0.9.21
 	github.com/dop251/goja v0.0.0-20261010130053-73dc7edc278f
-	github.com/oagentkit/agent v0.10.0
-	github.com/oagentkit/guardx v0.8.2
-	github.com/oagentkit/llm v0.14.1
+	github.com/oagentkit/agent v0.10.1
+	github.com/oagentkit/guardx v0.9.0
+	github.com/oagentkit/llm v0.14.2
 	github.com/oagentkit/obs v0.9.3
 	github.com/oagentkit/runtime v0.7.1
 	github.com/oagentkit/textx v0.6.1

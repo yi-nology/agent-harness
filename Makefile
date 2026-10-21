@@ -61,7 +61,24 @@ cover:
 	go tool cover -func=coverage.out | tail -1
 
 cover-gate: ## 覆盖率阈值门禁（阈值应随内核成熟度上调，不设则门禁形同虚设）
-	$(EXPORT) $(GOENV) go test ./... -coverprofile=coverage.out -count=1 >/dev/null
+	@# 测试输出先落临时文件：成功时静默（与原口径一致），失败时把日志打出来。
+	@#
+	@# 原口径是 `go test ... >/dev/null`——**用例失败也只剩一句 "Error 1"**。
+	@# 红是红了，但看不出哪个用例、为什么红。而本仓的纪律是「门禁的失败形态
+	@# 是变红」：看不见原因的变红与「常红」同样会训练人忽略门禁。
+	@#
+	@# 为什么这个失败路径值得单独修：`make check` 里 `test` 目标先跑一遍同一套
+	@# 用例且**输出可见**，所以 cover-gate 自己失败只可能是「第一次绿、第二次红」
+	@# ——即**抖动**。而抖动是唯一一次能看见抖动用例的机会，输出被丢掉就再也
+	@# 没线索了（本轮实测撞到过一次）。
+	@log=$$(mktemp); \
+	$(EXPORT) $(GOENV) go test ./... -coverprofile=coverage.out -count=1 >"$$log" 2>&1 || { \
+	  echo "覆盖率测试未通过——失败详情："; \
+	  cat "$$log"; \
+	  rm -f "$$log"; \
+	  exit 1; \
+	}; \
+	rm -f "$$log"
 	@total=$$(go tool cover -func=coverage.out | tail -1 | awk '{print substr($$3, 1, length($$3)-1)}'); \
 	echo "harness 覆盖率: $$total% (门槛 $(COV_MIN)%)"; \
 	awk -v t="$$total" -v m="$(COV_MIN)" 'BEGIN { exit (t+0 >= m+0) ? 0 : 1 }' || \

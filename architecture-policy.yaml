@@ -141,7 +141,7 @@ modules:
 
   - id: toolfail
     roots: [toolfail]
-    requires: ["ext:github.com/oekit/pkg"]
+    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -158,10 +158,39 @@ modules:
   # 从未被执行过，连漂移都没人发现（执行体见 archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
-    requires: [toolname, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"] # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包
+    requires: [toolname, sandbox, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"] # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包；sandbox 是执行档位与后端协议
     owner: harness
     managed: true
     notes: 程序化工具编排沙箱（goja VM，三重预算替代 OS 沙盘）
+
+  # 2026-10-21 新增：执行沙箱的**档位语义**与**后端协议**。
+  #
+  # 为什么值得单开一个包：「模型写的程序在哪跑、跑起来能触达什么」此前在本仓只有
+  # 一个答案——ptc 的进程内 goja VM——而那个答案是**写死在调用点**的：没有档位概念，
+  # 也没有「这次执行至少要多强」的表达。于是宿主想跑一个不可信程序时，
+  # 「它跑在够强的隔离里吗」这件事无处声明，只能靠人记得别挑错后端。
+  #
+  # 本包把「隔离强度」变成**可声明、可判定**的机制：
+  #   - Level：档位（进程内解释器 → 内核级 → 硬件虚拟化），单调可比；
+  #   - Provider：后端协议（自报提供哪一档，并执行程序）；
+  #   - Registry：登记簿 + 按要求档位选择，**选不到就拒绝，不降级**。
+  #
+  # 「不降级」是本包的核心语义：要求档位若在无满足者时被悄悄换成弱后端，
+  # 这套机制就是装饰——宿主写下的「本次要内核级」与实际发生的「进程内跑」之间
+  # 没有任何信号，差的那个量级就是全量暴露。
+  #
+  # 边界：档位语义属于内核；「哪些执行要哪一档」属于宿主（那是风险判断，
+  # 不是机制）；后端实现可以在宿主侧（本包只认协议）。
+  - id: sandbox
+    roots: [sandbox]
+    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      执行沙箱的档位语义与后端协议：Level（隔离档位，单调可比）+ Provider（后端
+      协议）+ Registry（登记簿，按要求档位选**最弱**满足者，无满足者即拒绝）。
+      零内部依赖——它是叶子层，ptc 反过来依赖它（适配器方向只能是 ptc → sandbox：
+      沙箱机制不认识任何后端，后端认识沙箱）。
 
   - id: watchdog
     roots: [watchdog]
@@ -186,6 +215,26 @@ modules:
     owner: harness
     managed: true
     notes: 多轮挂起态载体：单一编码入口 + 宽容解码
+
+  - id: sideeffect
+    roots: [sideeffect]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      副作用「至多一次」的跨进程契约：幂等键（同一逻辑动作重试不重复施加）+
+      租约（同一资源独占，带 TTL）+ 栅栏令牌（过期持有者的迟到写入被下游拒绝）。
+      零内部依赖——它是叶子层。宿主实现 Store 接口落库，判据归内核。
+
+  - id: sidetest
+    roots: [sidetest]
+    requires: [sideeffect, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      sideeffect.Store 的共享契约测试套件：宿主写完存储实现后跑一遍，
+      违反哪条契约就红在哪一条——免得「各写一遍必然各判一套，漂移到没人发现为止」。
+      依赖 sideeffect 是因为要 import 它的契约类型（套件判的是它的实现）。
 
   - id: reminder
     roots: [reminder]
@@ -410,6 +459,31 @@ rules:
     scope_exclude: [cmd]
     forbid_import_regex: '^errors$|^github\.com/pkg/errors$'
 
+  # 规则八（2026-10-21）：外部程序执行的入口必须唯一。
+  #
+  # 隔离档位这套机制要成立，前提是「被执行的程序都在某个已登记的后端里跑」。
+  # 一旦某个包绕过登记簿直接起一个外部进程，那次执行就没有档位——宿主按
+  # 「它在受控后端里」做的风险判断，对那次执行全部落空，而**没有任何信号**：
+  # 构建全绿、测试全绿、审计日志里只有一条普通的进程记录。
+  #
+  # 这类绕过最常见的形态是 os/exec（Go 里起外部进程的标准入口），加进某个包
+  # 只要一行。于是本规则把「起外部进程」这件事**收口到 sandbox 包**，
+  # 其余生产代码一律不得直接 import。
+  #
+  # 判定面是 **import 路径**（走 go/ast），故单行/块/别名/空白导入一视同仁。
+  #
+  # 已知边界（写明，而不是假装覆盖）：本规则只拦 os/exec 这一个标准入口。
+  # 直接用 syscall 起进程的形态拦不住——那需要拦整个 syscall 面，代价远大于
+  # 收益，且当前本仓生产代码零 os/exec。规则拦的是**常见形态**，不是全部形态。
+  - id: harness-sandbox-execution-single-entry
+    desc: 外部程序执行只允许经 sandbox 包登记的后端；其余生产代码不得直接 import os/exec
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: true
+    scope_exclude: [cmd, sandbox]
+    forbid_import_regex: '^os/exec$'
+
 # ── 门面包不可变 ──
 #
 # 规则七（AST 类，**不在 rules 段**）：门面包只能是门面。
@@ -453,6 +527,19 @@ facades:
     desc: 系统注入防伪包裹门面包，核心在 oagentkit/guardx/injectband
     severity: error
     upstream: ["github.com/oagentkit/guardx/injectband"]
+
+  - package: toolfail
+    desc: 工具失败分类门面包，核心在 oagentkit/guardx/toolfail
+    severity: error
+    upstream: ["github.com/oagentkit/guardx/toolfail"]
+
+  - package: sandbox
+    desc: 执行沙箱档位门面包，核心在 oagentkit/guardx/sandbox
+    severity: error
+    upstream: ["github.com/oagentkit/guardx/sandbox"]
+    # 额外依赖是签名本身要求的，不是实现：context 是 Execute 的 ctx 参数类型，
+    # Provider.Exec 的 ctx 参数类型也是它。本包不提供任何实现。
+    allowed_imports: ["context"]
 
 # ── 包间依赖方向 ──
 #
@@ -519,6 +606,46 @@ dependency_direction:
     - github.com/oagentkit
     - github.com/oekit
 
+# ── 执行沙箱后端的档位登记 ──
+#
+# 「模型写的程序在哪跑、跑起来能触达什么」此前只有一个答案：进程内 goja VM（ptc），
+# 而那个答案是**写死在调用点**的——没有档位概念，也没有「这次执行至少要多强」的
+# 表达。于是宿主想跑一段不可信程序时，「它跑在够强的隔离里吗」这件事无处声明，
+# 只能靠人记得别挑错后端。
+#
+# sandbox 包把它变成机制（Level 档位 + Provider 协议 + Registry），但**机制不等于
+# 信任**：档位是后端自报的，后端若标了比实际更强的档位，宿主据此做的风险判断全部
+# 落空，而构建全绿、测试全绿、日志里只有一条普通的进程记录。
+#
+# 这一段就是档位声明的**签字处**：每个后端一条登记（标识、档位、所在包），
+# 「它凭什么说自己有这一档」写在该条的 notes 里——那是人 review 时会看到的地方。
+#
+# 执行体见 archcheck/sandbox.go（go/ast 判定），核对两件事：
+#   1. 登记 ↔ 代码事实一致（档位漂移 = 代码改了登记没改）；
+#   2. 实现 ↔ 登记齐全（未登记的后端，其档位声明不在被复核的清单里）。
+#
+# ⚠️ 这条门禁**判不了**「后端实际提供的隔离强度是否兑现其声明」——那要审实现。
+# 它保证的是：声明可见（在 policy 里）、不漂移（门禁核对）、有签字（人 review）。
+#
+# level 填 sandbox 包的档位**常量名**（LevelNone/LevelProcess/LevelOS/LevelMachine）
+# 而不是档位值（process/os/machine）：门禁不能 import 被判的包（它必须是最底层，
+# 否则「用它判别人」就变成「它自己也在被判定」），故它只能比对代码里可静态识别的
+# 那一面——常量名。两侧共用同一份真相，不另造映射表。
+sandbox_providers:
+  enabled: true
+  severity: error
+  desc: 执行沙箱后端的隔离档位必须登记在 sandbox_providers 段，且与代码事实一致（档位声明要有人签字）
+  ignore_dirs: [cmd, docs]
+  providers:
+    - id: ptc-goja
+      level: LevelProcess
+      package: ptc
+      notes: |
+        进程内 goja 解释器：能力面靠 JS 子集 + 绑定白名单裁剪，资源面靠三重预算。
+        这层约束由**解释器自己执行**，不是内核强制——故档位是 LevelProcess 而非
+        LevelOS。标成 LevelOS 就是让档位表说谎，而档位表是宿主做风险判断的依据，
+        说谎的成本落在宿主身上。
+
 # ── 全局阈值 ──
 thresholds:
   max_file_lines: 400
@@ -559,7 +686,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, archcheck, cmd]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, archcheck, cmd]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
