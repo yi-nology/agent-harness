@@ -72,20 +72,20 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 
 | 包 | 生产行数 | 外部依赖 | 职责 |
 |---|---|---|---|
-| `protocol` | 1850 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
+| `protocol` | 2037 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
 | `dispatch` | 36 | oagentkit/agent | allow 矩阵物化 + 深度上限 + 自派发拒绝 + 环检测（拓扑经 `EdgeSource` 由宿主提供）|
 | `eventbus` | 341 | oagentkit/runtime | 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责 |
 | `policy` | 89 | cloudwego/eino、oagentkit/guardx、oagentkit/toolgate | 操作审计门：阈值只降不升、解析失败即拒。**两个接入口**：`WithAuditGate`（包单个工具）与 `Stage`（接成**判定环的一环**——工具调用、程序内调用、子进程侧调用全走同一条 invoke 链，审批规则**只装配一次**；门面原先缺后者，宿主想接审批进判定链只能 import 上游 toolgate，「调用面逐字兼容」的承诺就断在那里）|
 | `spill` | 251 | oekit/pkg | 输出预算溢出：提示契约 / 取回 / 按龄清理 |
 | `pii` | 827 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）；运行时策略（开关/面/强度）整份单指针原子交换 + 变更订阅 `Subscribe`，代次从此不只可查、还可响应 |
-| `netguard` | 1251 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。扩展名单**整份原子交换 + 代次可观测**（两次独立取会读到撕裂策略）。代次**只有一个真相**（策略指针内的 gen，全局值是它的投影；交换走 CAS 循环，故并发下代次唯一、单调、不回卷）。**`DialFunc` 把同一套判定落到建连那一刻**（名字层 + egress 预检 + 建连后核对真实 RemoteAddr）——闭合「校验 → 拨号」的 rebinding 窗口；判据仍是 egress，**不引入第二套 IP 策略**。放行面**具名且两层共用同一类型**（`Allow`，零值即严）；`NewClient`/`NewTransport` 是接线件——宿主一行把守卫挂上，且 client 可注入（测试连本机假服务器时**只在测试里**放宽回环）**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」与 dial.go；与上游 `oekit/pkg/urlguard` 的分工（IP 策略单源 egress 不换、域名后缀层本包为超集）同样见包头|
+| `netguard` | 1232 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。扩展名单**整份原子交换 + 代次可观测**（两次独立取会读到撕裂策略）。代次**只有一个真相**（策略指针内的 gen，全局值是它的投影；交换走 CAS 循环，故并发下代次唯一、单调、不回卷）。**`DialFunc` 把同一套判定落到建连那一刻**（名字层 + egress 预检 + 建连后核对真实 RemoteAddr）——闭合「校验 → 拨号」的 rebinding 窗口；判据仍是 egress，**不引入第二套 IP 策略**。放行面**具名且两层共用同一类型**（`Allow`，零值即严）；`NewClient`/`NewTransport` 是接线件——宿主一行把守卫挂上，且 client 可注入（测试连本机假服务器时**只在测试里**放宽回环）**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」与 dial.go；与上游 `oekit/pkg/urlguard` 的分工（IP 策略单源 egress 不换、域名后缀层本包为超集）同样见包头|
 | `statemachine` | 79 | 无 | 环节状态机：条件迁移的纯函数件 |
 | `contract` | 124 | 无 | 编排运行契约：编排引擎 ↔ 宿主状态的**唯一边界**（纯接口面，零实现）|
 | `checkpoint` | 545 | oekit/pkg | 编排续跑契约：进度快照存取边界 + **「续跑而非重放」**的恢复判定（空洞不采信 / 终态不自动重开 / 序号单调闸）+ **跨进程 CAS 存取契约**（`StoreCAS.SaveIfNewer`）与提交序列固化（`Committer`：抢序号→落库→**仅失败时**回滚，宿主无法漏掉）|
 | `commitgate` | 328 | oekit/pkg | 环节终态独占提交闸：同一 (run, 环节) 的终态只允许被提交一次（`statemachine` 是纯谓词，`SeqGate` 只排快照序号，两者都排不出「两条分支都赢了」）。终态词表由宿主注入。**放闸靠凭证**：`Acquire` 返回唯一令牌、`ReleaseLease` 凭令牌精确释放——靠 (状态,分支,序号) 认人的旧 `Release` 分辨不出两次同名同序的占用，迟到的释放会放掉别人的闸 |
 | `budget` | 756 | oekit/pkg | 上下文预算：分段计量 + 窗口钳位 + 压实计划骨架（三重空转守卫；摘要生成与原文落盘各留宿主接口）|
 | `offload` | 589 | oekit/pkg | 内联大对象外置：sha 去重 + **两阶段**（首次标记、后续轮才替换占位）+ fail-soft（与 `spill` 是姊妹机制）|
-| `tooldisclose` | 862 | oagentkit/guardx、oekit/pkg | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分，**拒绝即激活**，重试不绕路）+ 接成 `invoke` 链的一环（`Stage`，链上 Reason 直接回面向模型的指引）|
+| `tooldisclose` | 868 | oagentkit/guardx、oekit/pkg | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分，**拒绝即激活**，重试不绕路）+ 接成 `invoke` 链的一环（`Stage`，链上 Reason 直接回面向模型的指引）|
 | `toolfail` | 89 | oagentkit/guardx | 工具失败的错误分类契约（**门面**，核心在 `oagentkit/guardx/toolfail`）：类别 → 可重试性/退避/需人工/重发安全/模型指引为**数据表**而非散落 if；不可归类一律不可重试。**重发安全与重试价值是两个正交维度**——超时值得重试但服务端可能已执行，原样重发即重复施加副作用；`Guidance()` 是模型侧的唯一消费方。判定口径必须跨宿主一致，故核心归上游安全层，本仓只保调用面稳定 |
 | `toolname` | 96 | 无 | 工具名 → 程序内可用的 JS 标识符：**一条单一真相**。`IsJSIdent`（能不能直接用）+ `Normalize`（不能的话用哪个）。生产侧（`tooldisclose` 派生调用形态）与消费侧（`ptc` 挂载绑定并校验形态里的函数名）共用它——两侧必须逐字一致，否则就是「这里派得出、那里认不出」的夹缝。规整**不保证唯一**（`get-logs` 与 `get_logs` 同名），撞不撞由调用方判 |
 | `sideeffect` | 540 | oekit/pkg | 副作用「至多一次」的跨进程契约：**幂等键**（同一逻辑动作重试不重复施加）+ **租约**（同一资源独占，带 TTL）+ **栅栏令牌**（过期持有者的迟到写入被下游拒绝）+ **下游拒收契约**（`FencedSink`：比较与写入须同一次原子操作，否则两个持有者会同时读到同一个旧值、双双通过检查，更旧的那次写入反而后落覆盖新的）。上游三个判据共用**一次原子操作**（`Store.Acquire`）——拆成三份存储就会出现「租约过了但幂等没过」的夹缝，允许同一动作被施加两次。执行失败**不记账**（没做成的不能记成做成了），但**释放闸**（否则失败残留的闸会把后续重试全挡成「别人占着」）。**施加前有资格检查**（`ExecuteWith` 两段式：准备 → 检查 → 施加）——闸已易主时**根本不施加**，因为 Complete 被拒只说明没记上账，**副作用早已生效，事后补救不了**。承诺的是**至多一次**而非 exactly-once——后者要求下游也接受幂等键 |
@@ -97,10 +97,10 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 | `reminder` | 30 | oagentkit/guardx | 系统注入提示的防伪包裹（门面）：核心已下沉 `guardx/injectband`，本包只保调用路径稳定，宿主调用点一行不动 |
 | `drain` | 188 | oekit/logx、oekit/pkg | 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀（经 `Turns` 接口）|
 | `ptc` | 2398 | dop251/goja、oagentkit/guardx、oekit/concurrency、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面**；绑定可带 Signature 让模型按位置传参（可选形参以 `?` 标记、未传则不出现在 JSON 里；形态里的函数名必须是**净化后**的名字，规则见 `toolname`）；**程序内的 host.<tool>() 与普通工具调用走同一套 Stage 判定环**（不做这一步，本包就成了整条链上唯一绕过所有门禁的路径）；绑定名净化后撞名即装配期拒（否则后绑者顶替前绑者，副作用错位无信号）。**新增子进程后端**（`ptc-subprocess`）：把执行搬出宿主进程，用 **cgroup v2 的 `memory.max`** 兑现 `MaxMemory`（限**物理内存**；`RLIMIT_AS` 限的是虚拟地址空间，会把 Go runtime 一起掐死——已实测否掉）——进程内形态兜不住内存（Go 运行时没有「只给一个 VM 限内存」的开关，goja 公开 API 也没有内存限制），故子进程形态**如实声明**自己兑现这一项（`sandbox.Capable`），**建不出即拒绝执行**（fail closed），兜不住的后端在登记簿里不会被选中 |
-| `sandbox` | 76 | oagentkit/guardx | 执行沙箱的**档位语义**与**后端协议**（**门面**，核心在 `oagentkit/guardx/sandbox`）：`Level`（进程内解释器 → 内核级 → 硬件虚拟化，单调可比，零值即最弱档——漏声明的后端只落到最弱一档，方向是安全的那一侧）+ `Provider`（后端自报提供哪一档并执行程序）+ `Registry`（登记簿；按要求档位选**最弱**满足者，**无满足者即拒绝、不降级**——降级会让「宿主声明的强度」与「实际执行的强度」之间没有信号，档位机制就成了装饰）。零内部依赖，ptc 反过来依赖它（**沙箱机制不认识任何后端，后端认识沙箱**）。**已知局限**：档位是后端自报的，内核不校验其真实性——宿主不信任某后端，唯一办法是不登记它。**档位声明要签字**：后端的档位登记在 policy 的 `sandbox_providers` 段（人 review 时看得见「它凭什么说自己有这一档」），门禁 `harness-sandbox-provider-declared` 核对登记与代码事实不漂移（走 `go/ast` 按方法指纹认出后端实现）|
+| `sandbox` | 98 | oagentkit/guardx | 执行沙箱的**档位语义**与**后端协议**（**门面**，核心在 `oagentkit/guardx/sandbox`）：`Level`（进程内解释器 → 内核级 → 硬件虚拟化，单调可比，零值即最弱档——漏声明的后端只落到最弱一档，方向是安全的那一侧）+ `Provider`（后端自报提供哪一档并执行程序）+ `Registry`（登记簿；按要求档位选**最弱**满足者，**无满足者即拒绝、不降级**——降级会让「宿主声明的强度」与「实际执行的强度」之间没有信号，档位机制就成了装饰）。零内部依赖，ptc 反过来依赖它（**沙箱机制不认识任何后端，后端认识沙箱**）。**已知局限**：档位是后端自报的，内核不校验其真实性——宿主不信任某后端，唯一办法是不登记它。**档位声明要签字**：后端的档位登记在 policy 的 `sandbox_providers` 段（人 review 时看得见「它凭什么说自己有这一档」），门禁 `harness-sandbox-provider-declared` 核对登记与代码事实不漂移（走 `go/ast` 按方法指纹认出后端实现）|
 | `watchdog` | 127 | 无| 被动配对不变量监视：环节收口仍有未执行声明 / 结果无对应声明；**只告警不裁决**（热路径裁决在守卫侧）|
-| `guardset` | 406 | oagentkit/guardx、oekit/pkg | 守卫装配契约：一组**相互独立**的判定一并求值，多条拒绝合成一条（按 Rank 定序、**不可重试优先**的保守裁决、指引指向真正卡住的那一条）。接成 `invoke` 链上单独一环——链在第一个拒绝处就收口，后面的守卫永远没机会说话，模型一次只听得到一个理由，这正是本包补的那一面；链本身的顺序/留痕/panic 兜底沿用上游，不重复实现 |
-| `archcheck` |     2810 | gopkg.in/yaml.v3 | 架构门禁执行体：`architecture-policy.yaml` 的**可执行面**（规则判定 / 门包判定 / 依赖方向判定 / policy 自校验 / 结构阈值）。**可导入包**——宿主仓复用同一套判据，不必各写一遍（各写一遍必然各判一套，漂移到没人发现为止）。判据与执行体分离：结构性判定一律走 `go/ast`（import 声明有六种以上书写形态，逐行正则必然漏）。依赖方向判三条：越界内部依赖 / 越界跨仓依赖（`ext:` 登记）/ 未登记包目录。**执行沙箱后端的档位登记**（`sandbox_providers` 段 ↔ 代码事实，走 `go/ast` 按方法指纹认出后端实现，核对档位漂移与未登记）。**陈旧包根当天即红**——root 指向空目录即「声明与事实已偏离」，而没有执行体时这句话没人读 |
+| `guardset` | 382 | oagentkit/guardx、oekit/pkg | 守卫装配契约：一组**相互独立**的判定一并求值，多条拒绝合成一条（按 Rank 定序、**不可重试优先**的保守裁决、指引指向真正卡住的那一条）。接成 `invoke` 链上单独一环——链在第一个拒绝处就收口，后面的守卫永远没机会说话，模型一次只听得到一个理由，这正是本包补的那一面；链本身的顺序/留痕/panic 兜底沿用上游，不重复实现 |
+| `archcheck` |     2927 | gopkg.in/yaml.v3 | 架构门禁执行体：`architecture-policy.yaml` 的**可执行面**（规则判定 / 门包判定 / 依赖方向判定 / policy 自校验 / 结构阈值）。**可导入包**——宿主仓复用同一套判据，不必各写一遍（各写一遍必然各判一套，漂移到没人发现为止）。判据与执行体分离：结构性判定一律走 `go/ast`（import 声明有六种以上书写形态，逐行正则必然漏）。依赖方向判三条：越界内部依赖 / 越界跨仓依赖（`ext:` 登记）/ 未登记包目录。**执行沙箱后端的档位登记**（`sandbox_providers` 段 ↔ 代码事实，走 `go/ast` 按方法指纹认出后端实现，核对档位漂移与未登记）。**陈旧包根当天即红**——root 指向空目录即「声明与事实已偏离」，而没有执行体时这句话没人读 |
 
 > 「生产行数」口径：`wc -l` 统计 `*.go` 且**不含** `_test.go`——包体量看的是要交付的实现，
 > 不是它的测试。依赖列只列**仓外** import；「无」表示该包生产代码只用 stdlib。
@@ -175,11 +175,11 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 14,806 行 / 84 文件（不含 `_test.go`） |
-| 测试 | 111 个测试文件 |
-| 覆盖率 | **86.1%**（门槛 60%，真阈值不是摆设） |
+| 生产代码 | 16,974 行 / 102 文件（不含 `_test.go`） |
+| 测试 | 126 个测试文件 |
+| 覆盖率 | **84.9%**（门槛 60%，真阈值不是摆设） |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
-| 门禁 | 8 条规则（`rules` 段）+ 3 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 28 包依赖方向 + README 包表一致性 |
+| 门禁 | 8 条规则（`rules` 段）+ 3 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 29 包依赖方向 + README 包表一致性 |
 | 例外登记 | **0** |
 
 > ⚠️ **上表不在 `docsync` 的判定面内**——`docsync` 只校验下面那张「包清单」表的
@@ -189,6 +189,15 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 > 它们是 `archcheck` 从 `cmd/` 下沉成独立包（2026-10-19）之前的旧值，此后没人更新。
 > 这正是本仓「散文不是门禁」那条纪律的反面案例：**机器只管得着被写成规则的那部分**。
 > 改这张表时请手动重算，**别信上一版**。
+>
+> 2026-10-21 又校准一次：上一版记的是 14,806 行/84 文件、111 个测试文件、86.1%，
+> 而本轮四个新包（`sideeffect`/`sidetest`/`retryplan`/`gatecheck`）落地后实测已是
+> 16,974 行/102 文件、126 个测试文件、84.9%——**漂了 2,168 行 / 18 个文件**，
+> 期间没人报过警。这不是新问题，是上面那条散文纪律的又一次复现：
+> 「上表不在 docsync 的判定面内」意味着**没有任何东西会提醒你来重算**。
+> 顺带记一句：`docsync` 对**包表**的行数也是**相对容差**判定（容差内的逐行涨落不报），
+> 所以包表那列同样会静默过期——本轮一次校准里 6 个包的行数都偏了。
+
 
 ## 头号红线：不得长出领域知识
 
@@ -208,13 +217,18 @@ make architecture-check   # 域词污染 + 依赖方向，违反即非零退出
 | `harness-test-fixture-domain-vocabulary` | **error** | 测试夹具用了真实运维词面（须改合成数据）。原 15 处 warn 级债已于 2026-10-18 清偿并升级为阻断 |
 | `harness-no-host-dependency` | **error** | 任何对宿主仓的 import |
 | `harness-no-domain-runtime-deps` | **error** | 对宿主仓 / 旧门面仓 / **已退役的 `agentkit` 门面** 的 import |
+| `harness-no-bare-goroutine` | **error** | 生产代码裸 `go func`（goroutine 内 panic 无法被外层 recover，直接杀进程）|
+| `harness-no-printf-log-callback` | **error** | 公开 API 里的 `logf func(string, ...any)`（printf 回调一旦焊进签名就是**不可逆 API 债**）|
+| `harness-single-errors-package` | **error** | stdlib `"errors"` 与 `github.com/pkg/errors`（全仓只允许 `oekit/pkg/errors` 一套，混用会打断 `As`/`Is` 判定链）|
+| `harness-sandbox-execution-single-entry` | **error** | 执行沙箱的后端不得多入口（执行路径与声明路径必须一致）|
 
-另有两条不走正则表、由 `go/ast` 判定的结构性规则（判据是语法结构，逐行看文本判不出）：
+另有三条不走正则表、由 `go/ast` 判定的结构性规则（判据是语法结构，逐行看文本判不出）：
 
 | 规则 | 级别 | 拦什么 | 落点 |
 |---|---|---|---|
-| `harness-facade-stays-facade` | **error** | `dispatch`/`policy`/`reminder` 三个门面包长出实现（声明新类型、给类型挂方法、函数体超过一条转发语句、调用非上游包、import 非允许依赖）| `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
+| `harness-facade-stays-facade` | **error** | `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五个门包长出实现（声明新类型、给类型挂方法、函数体超过一条转发语句、调用非上游包、import 非允许依赖）| `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
 | `harness-module-dependency-direction` | **error** | 包间依赖超出 `modules[].requires` 声明的方向；越界的**跨仓**依赖（`ext:` 面已登记却没在 requires 声明）；以及**未登记的包目录**（它对本门禁隐形，任何模块都能 import 而不判违规）| `policy.yaml` 的 `modules` / `dependency_direction` 段 + `archcheck/deps.go` |
+| 沙箱档位登记 | **error** | 执行沙箱后端未在 `sandbox_providers` 段登记，或登记的档位与代码事实漂移（**档位声明要有人签字**）| `policy.yaml` 的 `sandbox_providers` 段 + `archcheck/sandbox.go` |
 
 > 依赖方向这条是 2026-10-18 补的执行体。`modules` 段此前把 22 个包的依赖拓扑
 > 写得清清楚楚，README 也宣称门禁查「域词污染 + 依赖方向」——但执行器把

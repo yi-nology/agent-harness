@@ -37,6 +37,22 @@ type Rule struct {
 	ForbidImport string      `yaml:"forbid_import_regex"`
 	ForbidRegex  string      `yaml:"forbid_regex"`
 	NegFollow    []NegFollow `yaml:"negative_follow"`
+	// ImportExempt import 路径级的**精确**例外（issue #15）。
+	//
+	// 存在的原因：只有 `forbid_import_regex`（正则禁令）时，宿主若要放行
+	// 被禁依赖树里的**某个具体子包**，只有三条路：
+	//   1. 放宽整条正则 ⇒ 把整棵树的其余部分一起放行；
+	//   2. 改成逐包白名单 ⇒ 上游将来新增一个包就**静默放行**
+	//      （一条被静默放宽的声明等于没有声明）；
+	//   3. 绕开 —— 在宿主侧自写一层转译。
+	//
+	// 第 3 条可行，但代价是同一个上游能力要在宿主侧再写一遍转译
+	// （类型不许外泄、等价性自己核）——而这层转译本可以由上游的一个
+	// import 例外免掉。
+	//
+	// 粒度必须是**精确 import 路径**（不是正则前缀——后者等于放宽整棵树）。
+	// 未登记的包**仍然被拒** ⇒ 上游新增包不会静默放行。
+	ImportExempt []string `yaml:"import_exempt"`
 }
 
 // Threshold 是结构债阈值：超长文件与 god object 的机械判据。

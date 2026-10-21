@@ -97,6 +97,24 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		default:
 			add(policyPath, 0, "规则 %q 的 severity %q 非法（只允许 error / warn / 缺省）", r.ID, r.Severity)
 		}
+
+		// ── import_exempt 项的形状必须可能生效 ──
+		//
+		// 例外的语义是「放行这一条 import 路径」。若某一项**形状上就不可能
+		// 匹配**（空串、带尾斜杠、含通配/正则字符），它的效果是「一条都没放行」。
+		//
+		// 不判的后果：宿主会看到 import 被拒，却不知道是自己登记的那条豁免
+		// 没生效——**报错指向 import，真正的问题在 policy 里**（误诊）。
+		// 而「policy 写了例外但它不生效」正是本仓纪律里最贵的那一类静默失效。
+		//
+		// 判的是**形状**（确定性、不误报），不是「当前有没有命中」
+		// （命中与否分不清「写错」与「将来才用」，硬判就是误报）。
+		for _, e := range r.ImportExempt {
+			if defect := importExemptDefect(e); defect != "" {
+				add(policyPath, 0,
+					"规则 %q 的 import_exempt 项 %q 无效：%s", r.ID, e, defect)
+			}
+		}
 	}
 
 	// ── 阈值判定面必须覆盖所有登记在 modules 段的包 ──

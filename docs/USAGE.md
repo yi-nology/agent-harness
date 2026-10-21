@@ -13,7 +13,7 @@
 
 ## 怎么读这份文档
 
-**按需跳读，不必全接。** 22 个能力包分 10 组彼此独立的能力，典型接入顺序如下：
+**按需跳读，不必全接。** 27 个能力包分 12 组彼此独立的能力，典型接入顺序如下：
 
 ```
 ① 契约面        contract + statemachine    ← 你的状态长什么样（必接）
@@ -31,7 +31,7 @@
 每节的结构一致：**职责 → 最小集成片段 → 关键符号 → 坑**。
 最后一节 [§6 坑速查表](#6-坑速查表) 是全文浓缩，接线完成后拿它自查一遍。
 
-> **22 与 24 的口径差**：本文覆盖 **22 个能力包**（下面 10 组）。
+> **27 与 29 的口径差**：本文覆盖 **27 个能力包**（下面 12 组）。
 > `architecture-policy.yaml` 的 `modules` 段登记 **24 个**——
 > 多出的两个是 `toolname`（工具名归一的**单一真相**，被 `tooldisclose` 与 `ptc`
 > 共用，不单独成组接入）与 `archcheck`（门禁工具本身，宿主不用引）。
@@ -1791,8 +1791,8 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `vet` | go vet |
 | `lint` | golangci-lint（**未安装时明确报错退出**，不静默跳过） |
 | `test` | 全量单测 |
-| `cover-gate` | 覆盖率 < 60% 即红（当前实测 **86.6%**） |
-| `architecture-check` | 7 条规则 + 3 个门面包 + 24 个模块的依赖方向 |
+| `cover-gate` | 覆盖率 < 60% 即红（当前实测 **84.9%**） |
+| `architecture-check` | 8 条规则 + 5 个门包 + 29 个包的依赖方向 |
 | `docsync` | README 包表 ↔ 仓库实际（生产行数 / 外部依赖） |
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |
@@ -1801,7 +1801,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 make architecture-check --report   # 看全量违规清单（默认前 10 条）
 ```
 
-### 4.2 七条架构规则
+### 4.2 八条架构规则
 
 | 规则 | 级别 | 拦什么 |
 |---|---|---|
@@ -1812,13 +1812,15 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-no-bare-goroutine` | **error** | 生产代码裸 `go func`（panic 无法被外层 recover） |
 | `harness-no-printf-log-callback` | **error** | 公开 API 里的 `logf func(string, ...any)`（printf 回调焊进签名即不可逆 API 债） |
 | `harness-single-errors-package` | **error** | stdlib `"errors"` 与 `github.com/pkg/errors`（全仓只允许 `oekit/pkg/errors` 一套） |
+| `harness-sandbox-execution-single-entry` | **error** | 执行沙箱的后端不得多入口（执行路径与声明路径必须一致） |
 
-另有两条**不走正则表、由 `go/ast` 判定**的结构性规则（判据是语法结构，逐行看文本判不出）：
+另有三条**不走正则表、由 `go/ast` 判定**的结构性规则（判据是语法结构，逐行看文本判不出）：
 
 | 规则 | 拦什么 | 落点 |
 |---|---|---|
-| `harness-facade-stays-facade` | `dispatch`/`policy`/`reminder` 长出实现 | `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
+| `harness-facade-stays-facade` | `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 长出实现 | `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
 | `harness-module-dependency-direction` | 包间依赖超出 `modules[].requires` 声明；**以及未登记的包目录** | `policy.yaml` 的 `modules` 段 + `archcheck/deps.go` |
+| 沙箱档位登记 | 执行沙箱后端未在 `sandbox_providers` 段登记，或登记的档位与代码事实漂移 | `policy.yaml` 的 `sandbox_providers` 段 + `archcheck/sandbox.go` |
 
 > 「未登记的包目录」这条更隐蔽：未登记的包对本门禁完全隐形，
 > 任何模块都能 import 它而不判违规。
@@ -1826,7 +1828,36 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 **例外必须显式登记**（policy `exceptions` 段：rule + path + line 三元组精确豁免 +
 必须写 `until` 与拆除条件）。**当前例外数 = 0。**
 
-### 4.3 在本仓加新包的正确顺序
+### 4.3 import 路径级例外：`import_exempt`
+
+`forbid_import_regex` 是**正则禁令**。当你要放行被禁依赖树里的**某个具体子包**
+（而不是整棵树）时，用 `import_exempt`：
+
+```yaml
+rules:
+  - id: agent-memory-single-entry
+    forbid_import_regex: 'github\.com/yi-nology/agent-memory'
+    scope_exclude: [internal/memstore]
+    import_exempt:                      # 精确到 import 路径
+      - github.com/yi-nology/agent-memory/evaluation
+```
+
+**三条要点**：
+
+1. **粒度是整条路径相等**，不是正则前缀、不是通配。豁免 `a/b` **不会**连带放行
+   `a/b/c`——要放行就自己登记。这样上游将来在 `a/b` 下新增一个包时，
+   它**不会静默放行**（一条被静默放宽的声明等于没有声明）。
+2. **写错会响亮**。空串、带尾斜杠、含通配/正则字符的豁免项**不可能匹配**，
+   policy 自校验会直接点名该条目无效——因为它不生效时，报错若只指向 import，
+   就是**误诊**（真正的问题在 policy 里）。
+3. **声明面与执行体成对**。`import_exempt` 是 `Rule` 的字段，policy YAML 写错字段名
+   会被**静默丢弃**；自校验会校验豁免项的形状，执行体判路径。
+
+> **为什么不做前缀归一**：`a/b/` 看着像「放行 a/b 这棵树」，但那个语义正是这条能力
+> 要消灭的——前缀放行等于**静默放宽整棵依赖树**。故写成前缀时它不匹配任何具体
+> import 路径，让写错的人看到「豁免没生效」，而不是误以为整棵树放行了。
+
+### 4.4 在本仓加新包的正确顺序
 
 **先改 policy 再写代码。**
 
@@ -1842,7 +1873,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 不登记则 `architecture-check` 立刻红。判定面**只含生产代码**（跳过 `_test.go`）：
 依赖方向决定交付物里出现什么，测试依赖是临时的。
 
-### 4.4 结构阈值
+### 4.5 结构阈值
 
 `max_file_lines: 400`，`thresholds.enforce: true`，超限即非零退出。
 

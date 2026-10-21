@@ -41,7 +41,7 @@
 > **编排是代码，LLM 只做单环节。**
 
 本仓只提供**确定性编排的机制面**（报告协议、环节状态机、事件总线、派发守卫、
-审计策略、溢出存档、PII 脱敏、出站守卫等 28 个包），**不认识任何领域概念**。
+审计策略、溢出存档、PII 脱敏、出站守卫等 29 个包），**不认识任何领域概念**。
 
 ### 1.2 判定口诀（改任何代码前先问这一句）
 
@@ -54,13 +54,13 @@
 2. **展示文案归宿主。** 标题、兜底、品牌词一律走 `RenderOptions` 注入。
 3. **测试夹具用合成数据。** 夹具是契约的示例，示例带领域味等于把契约钉死在某个领域上。
 
-### 1.3 28 个包分三组
+### 1.3 29 个包分五组
 
 | 组 | 包 | 特征 |
 |---|---|---|
 | **机制面**（22 个） | `protocol` `statemachine` `contract` `eventbus` `spill` `budget` `offload` `toolfail` `tooldisclose` `toolname` `guardset` `sandbox` `ptc` `watchdog` `checkpoint` `commitgate` `delta` `pending` `drain` `pii` `netguard` `sideeffect` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
 | **契约套件**（1 个） | `sidetest` | 判「宿主的实现是否满足契约」的**判据**，不是能力本身。只给「怎么判」，不给「一份能用的实现」——见 AGENTS.md「共享契约测试套件」那条纪律。 |
-| **组合机制**（1 个） | `retryplan` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。它不重新判定任何东西，只回答「该走哪条路径」。 |
+| **组合机制**（2 个） | `retryplan` `gatecheck` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。`retryplan` 只回答「该走哪条路径」；`gatecheck` 把审批层与沙箱层合成一条判定（两层都同意才放行）。两者都**不重新判定**任何东西。 |
 | **门面**（3 个） | `dispatch` `policy` `reminder` | **只能有四种声明**：类型别名、常量别名、单条上游转发函数、允许集合内的 import。加真逻辑三者必居其一 → 门禁红。核心在 `oagentkit/*`。 |
 | **门禁执行体**（1 个 + 2 个 CLI） | `archcheck` / `cmd/archcheck` `cmd/docsync` | policy 的可执行面。可导入包，宿主可复用同一套判据。 |
 
@@ -87,7 +87,7 @@
 |---|---|---|---|
 | 1 | [README](../README.md) 的「边界」与「包清单」两节 | 3 min | 哪个包管什么事 |
 | 2 | [AGENTS.md](../AGENTS.md) 的「边界纪律」+「工程门禁」 | 5 min | 什么不能做、什么会红 |
-| 3 | `architecture-policy.yaml` 的 `modules` 段（24 个 id + requires） | 2 min | 哪个包能依赖哪个 |
+| 3 | `architecture-policy.yaml` 的 `modules` 段（29 个 id + requires） | 2 min | 哪个包能依赖哪个 |
 | 4 | 你要动的那一个包的包头注释 | 3 min | 这个包为什么长这样 |
 | 5 | 那个包的 `_test.go` | — | 契约的实际形状（比注释准） |
 
@@ -347,7 +347,7 @@ make check
 | `vet` | go vet | 按提示改 |
 | `lint` | golangci-lint（未安装时**明确报错退出**，不静默跳过） | `brew install golangci-lint`；CI 钉 v2.14.0 |
 | `test` | 全量单测 | 看失败断言 |
-| `cover-gate` | 覆盖率 < 60%（当前实测 86.6%） | 补测试，别降阈值 |
+| `cover-gate` | 覆盖率 < 60%（当前实测 84.9%） | 补测试，别降阈值 |
 | `architecture-check` | 8 条规则 + 5 门包 + 28 包依赖方向 | 见下表 |
 | `docsync` | README **包表** ↔ 仓库实际（包名 / 行数 / 依赖列 / 职责列）| 重算行数与依赖，改 README 包表。**注意「工程底座」表不在判定面内**，那几个数字要自己手算 |
 | `modreplace` | go.mod 含 `replace` | 改用 `make devlink` |
