@@ -248,6 +248,18 @@ modules:
       走幂等键重放）。与 guardset 同族：**组合逻辑归内核，判定归各自机制**。
       零内部依赖（不 import sideeffect：两者是契约上的衔接，不是代码耦合）。
 
+  - id: gatecheck
+    roots: [gatecheck]
+    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/toolgate"]
+    owner: harness
+    managed: true
+    notes: |
+      审批层与沙箱层的**联合判据**：Codex 的两层安全模型是「沙箱强制 +
+      审批策略，两层都同意才放行」。上游 guardx/sandbox（档位×预算）与
+      toolgate/policy（审批裁决）各自完整但**互不知情**，「两层是否都同意」
+      这个判定没有单点——落在各宿主手里必然漂移。本包只做**合成**，
+      不重新实现任何一层（那会造成与上游并存的第二份真相）。
+
   - id: reminder
     roots: [reminder]
     requires: ["ext:github.com/oagentkit/guardx"]
@@ -734,7 +746,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, archcheck, cmd]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, gatecheck, archcheck, cmd]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
