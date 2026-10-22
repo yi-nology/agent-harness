@@ -4,11 +4,21 @@ import "github.com/yi-nology/agent-harness/contract"
 
 // StepDef 编排图中的一个步骤。
 //
-// 内核只认 **ID 与图内顺序**，不认语义：Label 是给宿主/用户看的，
+// 内核只认 **ID、图内顺序、并行组**，不认语义：Label 是给宿主/用户看的，
 // 内核既不解释也不校验。
 type StepDef struct {
 	ID    string
 	Label string
+	// ParallelGroup 并行组号（fan-out 语义）。
+	//
+	// 0（缺省）= 顺序步：依赖图内顺序在其前的**所有**步骤，完成集须是连续前缀。
+	// 同一非 0 组号 = 一组**互不依赖**的并行步（fan-out）：组内成员可乱序完成，
+	// 各自只依赖「组外、顺序在其前」的步骤——故某个成员完成即可信，
+	// 不因兄弟成员尚未完成而作废。跨组/顺序步之间的前后依赖不变。
+	//
+	// 编排图应把**并发执行**的连续步骤放进同一组；内核不校验组内步骤是否真的相邻
+	// （与「只认 ID 与顺序、不认语义」一致——图良构是宿主责任）。
+	ParallelGroup int
 }
 
 // AnomalyKind 编排图与快照的不一致类别。
@@ -94,15 +104,19 @@ func isTerminal(status string) bool {
 //
 // 首次执行：全量 Run，不报异常。
 //
-// # 已完成的可信边界：图内**连续已完成的前缀**
+// # 已完成的可信边界：依赖全部可信
 //
-// 这是本包最关键的一条判定。一步的完成，只有在它**图内的前驱也都已完成**时
-// 才可信。若快照的完成集有空洞（后面几步完成了、前面几步没完成），
-// 说明推进本身已经失序——此时采信其中一部分，等于承认一个已失序的快照仍然可信，
-// 而那正是续跑唯一危险的前提。故空洞之后的完成**一律不采信**，整体重跑，
-// 并报 AnomalyDoneOutOfOrder 让宿主知道发生过失序。
+// 这是本包最关键的一条判定。一步的完成，只有在它**依赖的前驱都已可信完成**时才可信。
+// 依赖 = 图内顺序在其前、且不同并行组的步骤（ParallelGroup 见 StepDef）。
 //
-// 代价是「失序时会多跑几步」。这个方向是刻意选的：多跑可恢复，重复副作用往往不可。
+//   - **顺序步**（ParallelGroup==0，缺省）依赖其前所有步骤 → 退化为「连续已完成的
+//     前缀」：完成集有空洞（后面完成、前面没完成）说明推进失序，空洞后的完成
+//     一律不采信、整体重跑，并报 AnomalyDoneOutOfOrder。
+//   - **fan-out 并行组**（同非 0 ParallelGroup）成员互不依赖：某个兄弟完成即可信，
+//     不因其他兄弟未完成而作废——fan-out 乱序完成是常态而非失序。
+//
+// 采信一半失序快照是续跑唯一危险的前提，故默认（顺序）从严；fan-out 从宽是显式声明的。
+// 代价是「顺序链失序时会多跑几步」。这个方向是刻意选的：多跑可恢复，重复副作用往往不可。
 //
 // # 图收缩
 //
@@ -119,7 +133,7 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 
 	// 净化编排图：剔空 ID、去重（保留首次出现处 → 保证同一图必得同一计划）。
 	seen := make(map[string]bool, len(graph))
-	ids := make([]string, 0, len(graph))
+	steps := make([]StepDef, 0, len(graph))
 	for _, s := range graph {
 		switch {
 		case s.ID == "":
@@ -128,12 +142,12 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 			p.addAnomaly(AnomalyDuplicateStep, s.ID, "编排图内步骤 ID 重复，只保留首次出现处")
 		default:
 			seen[s.ID] = true
-			ids = append(ids, s.ID)
+			steps = append(steps, s)
 		}
 	}
 
 	if snap == nil {
-		p.Run = ids
+		p.Run = stepIDs(steps)
 		return p
 	}
 
@@ -149,22 +163,28 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 		}
 	}
 
-	n := 0
-	for ; n < len(ids) && done[ids[n]]; n++ {
-	}
-	p.Skip = ids[:n:n]
-	p.Run = ids[n:]
-
-	// 空洞检测：未完成的前缀之后，还有被记为已完成的步骤。
-	if n < len(ids) {
-		for _, id := range ids[n:] {
-			if done[id] {
-				p.addAnomaly(AnomalyDoneOutOfOrder, "",
-					"已完成步骤不是编排图的前缀，其后的完成记录不采信")
-				break
-			}
+	// 可信完成判定（fan-out 感知）：一步可信 = 自身已完成，且其**依赖全部可信**。
+	// 依赖 = 图内顺序在它之前、且**不同并行组**的步骤；同组（ParallelGroup 相同且非 0）
+	// = 互不依赖的 fan-out 兄弟，可乱序完成。全部 ParallelGroup==0 时退化为
+	// 「连续前缀」语义（向后兼容）——顺序步依赖其前所有步骤。
+	trusted := make([]bool, len(steps))
+	skip := make([]string, 0, len(steps))
+	run := make([]string, 0, len(steps))
+	for i, s := range steps {
+		if done[s.ID] && depsTrusted(steps, trusted, i) {
+			trusted[i] = true
+			skip = append(skip, s.ID)
+			continue
+		}
+		run = append(run, s.ID)
+		if done[s.ID] {
+			// 自身已完成，却因依赖未齐而不可信 = 失序推进（跳过了前驱 / fan-out 兄弟
+			// 尚未完成）。fan-out 兄弟互不依赖，故不会因此误报。
+			p.addAnomaly(AnomalyDoneOutOfOrder, s.ID,
+				"已完成但依赖未全部可信（前驱或同组外步骤未完成），该完成记录不采信")
 		}
 	}
+	p.Skip, p.Run = skip, run
 
 	// 已终结的运行不被自动重开：把已算出的计划作废，交给宿主显式决定。
 	if isTerminal(snap.Status) && len(p.Run) > 0 {
@@ -174,4 +194,31 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 	}
 
 	return p
+}
+
+// depsTrusted 步骤 i 的全部依赖是否已可信。依赖 = 图内顺序在 i 之前、且不同并行组的
+// 步骤；同组（ParallelGroup 相同且非 0）的兄弟步骤互不依赖（fan-out），跳过。
+// 顺序步（ParallelGroup==0）依赖其前**所有**步骤（含更早的顺序步），故同组跳过仅对
+// 非 0 组生效——这是「全 0 组退化为连续前缀」的关键。i 的依赖都在 j<i，故单趟前向
+// 扫描即可，无需递归。
+func depsTrusted(steps []StepDef, trusted []bool, i int) bool {
+	g := steps[i].ParallelGroup
+	for j := 0; j < i; j++ {
+		if g != 0 && steps[j].ParallelGroup == g {
+			continue // 同一 fan-out 组的兄弟，互不依赖
+		}
+		if !trusted[j] {
+			return false
+		}
+	}
+	return true
+}
+
+// stepIDs 抽出步骤 ID 序列（建独立切片，不与调用方共享底层数组）。
+func stepIDs(steps []StepDef) []string {
+	out := make([]string, 0, len(steps))
+	for _, s := range steps {
+		out = append(out, s.ID)
+	}
+	return out
 }

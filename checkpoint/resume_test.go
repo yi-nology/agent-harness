@@ -191,3 +191,66 @@ func TestSkipRunNoAlias(t *testing.T) {
 		t.Fatalf("Skip 与编排图共享了底层数组: %v", ids)
 	}
 }
+
+// pgraph 带并行组的合成图：id→ParallelGroup 映射（0=顺序步，同非0=同 fan-out 组）。
+func pgraph(groups map[string]int, ids ...string) []StepDef {
+	out := make([]StepDef, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, StepDef{ID: id, Label: "环节 " + id, ParallelGroup: groups[id]})
+	}
+	return out
+}
+
+// TestFanOutOfOrderTrusted fan-out 组成员乱序完成可采信：step-b(组1)未完成、
+// step-c(组1)已完成 → step-c 不因兄弟未完成而作废（这正是 fan-out 语义修复点）。
+// step-a 是顺序步（组0）已完成，是组1的共同前驱。
+func TestFanOutOfOrderTrusted(t *testing.T) {
+	g := pgraph(map[string]int{"step-a": 0, "step-b": 1, "step-c": 1},
+		"step-a", "step-b", "step-c")
+	s := snap("run", 2, contract.StatusRunning, "step-a", "step-c") // step-b 未完成
+	p := BuildPlan(g, &s)
+	if !reflect.DeepEqual(p.Skip, []string{"step-a", "step-c"}) {
+		t.Fatalf("fan-out 兄弟乱序完成应采信，实得 %v", p.Skip)
+	}
+	if !reflect.DeepEqual(p.Run, []string{"step-b"}) {
+		t.Fatalf("只续跑未完成的兄弟，实得 %v", p.Run)
+	}
+	if len(p.Anomalies) != 0 {
+		t.Fatalf("fan-out 乱序完成不是失序，不应报异常，实得 %+v", p.Anomalies)
+	}
+}
+
+// TestFanOutDependsOnPredecessor fan-out 成员仍依赖组外前驱：step-c(组1)虽完成，
+// 但其顺序前驱 step-a 未完成 → step-c 不可信（组内互不依赖 ≠ 组外前驱可跳过）。
+func TestFanOutDependsOnPredecessor(t *testing.T) {
+	g := pgraph(map[string]int{"step-a": 0, "step-b": 1, "step-c": 1},
+		"step-a", "step-b", "step-c")
+	s := snap("run", 1, contract.StatusRunning, "step-c") // 前驱 step-a 未完成
+	p := BuildPlan(g, &s)
+	if len(p.Skip) != 0 {
+		t.Fatalf("前驱未完成时 fan-out 成员不可信，实得 %v", p.Skip)
+	}
+	if !reflect.DeepEqual(p.Run, []string{"step-a", "step-b", "step-c"}) {
+		t.Fatalf("应全量重跑，实得 %v", p.Run)
+	}
+	if !p.HasAnomaly(AnomalyDoneOutOfOrder) {
+		t.Fatalf("跳过前驱的完成应报失序，实得 %+v", p.Anomalies)
+	}
+}
+
+// TestFanOutGroupPreservesOrderAcrossBoundary 跨组/顺序步的前后依赖不变：
+// 顺序步 step-d(组0) 依赖其前全部（含 fan-out 组1的 b、c）——b、c 未全完成时
+// step-d 即便完成也不可信。
+func TestFanOutGroupPreservesOrderAcrossBoundary(t *testing.T) {
+	g := pgraph(map[string]int{"step-a": 0, "step-b": 1, "step-c": 1, "step-d": 0},
+		"step-a", "step-b", "step-c", "step-d")
+	s := snap("run", 3, contract.StatusRunning, "step-a", "step-c", "step-d") // step-b 未完成
+	p := BuildPlan(g, &s)
+	// step-c(组1) 采信（兄弟 b 未完成不影响）；step-d(顺序) 依赖 b、c 都可信，b 未完成 → 不可信。
+	if !reflect.DeepEqual(p.Skip, []string{"step-a", "step-c"}) {
+		t.Fatalf("采信应止于顺序步前的 fan-out，实得 %v", p.Skip)
+	}
+	if !reflect.DeepEqual(p.Run, []string{"step-b", "step-d"}) {
+		t.Fatalf("step-d 依赖未齐应重跑，实得 %v", p.Run)
+	}
+}
