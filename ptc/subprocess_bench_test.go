@@ -183,52 +183,63 @@ func TestSubprocessMarginalCallCost(t *testing.T) {
 	}
 }
 
-// TestSubprocessOverheadIsBounded 钉住一条**上界**：子进程的一次工具调用往返
+// TestSubprocessOverheadIsBounded 钉住一条**上界**：子进程的一次执行（含启动）
 // 不应是「慢到没法用」的量级。
 //
-// # 为什么要有一条门槛（而 benchmark 不做）
+// # 为什么测「启动」而不是「摊薄到每次调用」
 //
-// benchmark 只给数据、不判定；但「子进程后端能不能用」这件事需要一条
-// 可机械判定的门槛，否则它可能悄悄劣化到没人发现（某次重构多了一次拷贝）。
+// 初版测的是「含启动的摊薄值」（20 次调用 ÷ 20），上界 50ms。
+// 而实测摊薄值 ≈ 23ms ⇒ **余量只有 2.2 倍**，不是初版注释写的「三个数量级」。
+// ⇒ Go 的测试套件**并行跑包**（ptc 的子进程测试与其他包的测试抢 CPU），
+// 负载一上来摊薄值就越线——**本轮实测红过一次**：131.9ms/次（≈5.7 倍）。
+// ⇒ 一条会**偶发红**的判据比没有判据更糟：它训练人忽略红色。
 //
-// # 门槛为什么取 50ms/次
+// # 现在的形态
 //
-// 50ms 是**极宽松**的上界：实测的量级在几十微秒。这个门槛只抓「劣化了一个
-// 数量级」这类事故（多了一次管道往返、缓冲区策略变了、忘了 flush），
-// 不受机器差异影响——真实值离它差三个数量级，机器快慢都碰不到它。
+//   - 测**启动成本**（一次调用：子进程起 + 一次往返），**取 3 次采样的最小值**
+//     ——最小值是「最不受干扰」的那一次；负载抬高的是均值与中位数，不是最小值；
+//   - 上界**宽松**（250ms）：本地实测 ≈13.4ms ⇒ 约 18 倍余量，CI runner 慢 10 倍也碰不到。
 //
-// 它**不是**性能承诺，是「劣化告警线」。
+// 它**不是**性能承诺，是「劣化告警线」：真出事故（管道握手多一轮、启动路径多做了一件事）
+// 会明显越线。
+//
+// # 每次往返的劣化由另一条钉
+//
+// 「一次工具调用的往返成本」由同文件的 `TestSubprocessMarginalCallCost` 用
+// **差分法**判（(T(51)−T(1))/50 ≤ 1ms）——差分对负载不敏感，故那条**不偶发红**。
+// 本条管启动，两者不重叠。
 func TestSubprocessOverheadIsBounded(t *testing.T) {
 	bin := buildChildProgram(t)
-	const calls = 20
-	prog := benchProgram(calls)
 	ctx := context.Background()
 
-	start := time.Now()
-	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
-		ExePath:  bin,
-		Program:  prog,
-		Bindings: []ptc.Binding{benchBinding()},
-		Timeout:  30 * time.Second,
-	})
-	out, err := p.Exec(ctx, sandbox.Request{Program: prog})
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("子进程执行失败: %v", err)
-	}
-	if !out.OK {
-		t.Fatalf("子进程内程序失败: %v", out.Err)
+	// 启动成本：一次调用（含子进程启动）。取多次采样的**最小值**。
+	const samples = 3
+	var best time.Duration
+	for i := 0; i < samples; i++ {
+		prog := benchProgram(1)
+		start := time.Now()
+		p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+			ExePath:  bin,
+			Program:  prog,
+			Bindings: []ptc.Binding{benchBinding()},
+			Timeout:  30 * time.Second,
+		})
+		out, err := p.Exec(ctx, sandbox.Request{Program: prog})
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("子进程执行失败: %v", err)
+		}
+		if !out.OK {
+			t.Fatalf("子进程内程序失败: %v", out.Err)
+		}
+		if i == 0 || elapsed < best {
+			best = elapsed
+		}
 	}
 
-	// 门槛：50ms/次。
-	//
-	// 这一条量的是「含启动的摊薄值」（≈ 23ms/次，与启动成本 13.4ms 同量级），
-	// 故它的余量天然比「边际成本」那条宽——它本来就不是为了抓边际劣化，
-	// 而是为了抓「整个路径慢了十倍」这类事故。
-	perCall := elapsed / calls
-	const limit = 50 * time.Millisecond
-	if perCall > limit {
-		t.Errorf("每次工具调用往返 %v，超过上界 %v（可能劣化了一个数量级）", perCall, limit)
+	const limit = 250 * time.Millisecond
+	if best > limit {
+		t.Errorf("子进程启动+一次往返 %v，超过上界 %v（启动路径劣化了一个数量级？）", best, limit)
 	}
-	t.Logf("子进程：%d 次调用共 %v，平均每次 %v", calls, elapsed, perCall)
+	t.Logf("子进程启动+一次往返: %v（%d 次采样的最小值）", best, samples)
 }
