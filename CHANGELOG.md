@@ -59,6 +59,21 @@ sandbox 隔离档位同因：口径分叉 = 治理失效）。它与「谁在用
 登记簿**（`Resolve` 按「选最弱满足者」先挑中真后端 ⇒ 受管版永远轮不到 ⇒ 判据
 被静默绕过）。
 
+- 杂务(deps)：依赖地板跟到发版时刻的最新
+
+下游要做什么：**go mod tidy**。地板抬高对下游是**隐式破坏性变更**——不跑就报
+`updates to go.mod needed`，且报错只说「需要 tidy」不提真正原因（不是本仓 API 变了）。
+抬了哪些地板（版本号从 git tag 推导，未手写）：
+- oagentkit/llm v0.15.2 → v0.16.0（新增 decision 子包：System One 协议判定模型客户端）
+- oagentkit/agent v0.10.4 → v0.10.6（router 新增决策面 DecisionFace）
+- oagentkit/guardx v0.13.1 → v0.14.0
+- oagentkit/obs v0.9.5 → v0.9.6
+- oekit/pkg v0.20.0 → v0.22.0
+- oekit/concurrency v0.19.0 → v0.20.1
+- oekit/core v0.11.0 → v0.12.0
+本仓行为零差异（纯地板追平）；迁移说明见各上游仓对应版本的 CHANGELOG。
+
+
 - 文档(ptc)：ptc.Run 包头标注它是裸执行入口 + 校准 README 包表与工程底座数字
 
 ## ptc.Run 的包头标注
@@ -76,6 +91,7 @@ README 包表两行 + 「工程底座」一处按实测重算：`ptc` 2398→241
 （包头注释）、`guardset` 1071→1070（此前偏 1）、生产代码 18,079→18,100 行。
 **这些数字不在 docsync 的强判定面内**（包表行数是**相对容差**判定，容差内的
 逐行涨落不报）⇒ 只能手算。docsync 绿着≠数字对。
+
 
 ## [v0.11.0] — 2026-10-22
 
