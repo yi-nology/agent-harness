@@ -39,6 +39,11 @@ const (
 	EventExecutionDegraded   = "execution_degraded"   // 执行面缺失（MCP 池未装配），已批准方案降级 DryRun 的显式留痕
 	EventRemediationExecuted = "remediation_executed" // 受审变更执行回执（批次九十四）：批准→执行完成后的汇总留痕（executor/change_ref/host/步骤数）
 	EventSessionFinished     = "session_finished"
+	// EventDecisionAnswered 判定面结果留痕（来源/置信语义/判定值/是否采纳）。
+	// 载荷键面见 protocol.DecisionEventPayload（扁平键，跨宿主聚合的共同底座）。
+	EventDecisionAnswered = "decision_answered"
+	// EventDecisionEscalated 判定面升级/回落留痕（判定面 → 生成面 / 人工的移交原因）。
+	EventDecisionEscalated = "decision_escalated"
 	// 轮次生命周期事件对（批次二百八十四，对标 DeepSeek harness turn 括号语义+「锁最后
 	// 释放」纪律）：turn_started 在会话认领成功后立即落库，turn_ended 在收尾漏斗出口
 	// 落库——「有 start 无 end」的残留=中断轮的可检测孤儿态（发版重启/进程死亡不再依赖
