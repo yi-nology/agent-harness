@@ -114,7 +114,7 @@ make architecture-check   # 架构门禁（当前 8 规则 + 5 门包 + 28 包�
 
 | 你要改的东西 | 去哪个包 | 注意 |
 |---|---|---|
-| 报告结构、解析容错、Markdown 渲染 | `protocol` | `report_types.go` 已近 400 行阈值；枚举位归一在 `report_normalize.go` |
+| 报告结构、解析容错、Markdown 渲染 | `protocol` | `report_types.go` 逼近单文件 400 行上限（实测以 `make architecture-check` 为准）；枚举位归一在 `report_normalize.go` |
 | 环节状态流转 | `statemachine` | 纯函数件，79 行，零依赖 |
 | 工具失败分类（可重试/退避/需人工/重发安全） | `toolfail` | 分类是**数据表**，不要散落 if |
 | 渐进披露、披露门禁 | `tooldisclose` | 拒绝即激活，重试不绕路 |
