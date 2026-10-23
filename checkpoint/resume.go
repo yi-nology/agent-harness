@@ -4,11 +4,33 @@ import "github.com/yi-nology/agent-harness/contract"
 
 // StepDef 编排图中的一个步骤。
 //
-// 内核只认 **ID 与图内顺序**，不认语义：Label 是给宿主/用户看的，
+// 内核只认 **ID、图内顺序与依赖声明**，不认语义：Label 是给宿主/用户看的，
 // 内核既不解释也不校验。
+//
+// # 依赖声明（零值 = 有序步骤链）
+//
+// 图默认是**有序步骤链**：一步的完成，只有在它图内的前驱也都已完成时才可信。
+// 并行组（fan-out）需要显式声明，否则合法的乱序完成集会被当成失序而整体重跑：
+//
+//	StepDef{ID: "a"}                           // 未声明：位置隐含前驱（有序链）
+//	StepDef{ID: "a", Isolated: true}           // 显式无前驱：可乱序完成
+//	StepDef{ID: "a", DependsOn: []string{"b"}} // 显式前驱集：取代位置隐含前驱
+//
+// 未声明即有序链，是**零值语义**：既有调用方逐字不变。依赖语义的完整推导、
+// 声明写法与混图的坑见 deps.go。
 type StepDef struct {
 	ID    string
 	Label string
+
+	// DependsOn 本步的显式前驱集（步骤 ID）。非空时**取代**图内位置隐含的前驱。
+	//
+	// 列出的是**全部直接前驱**（间接前驱由可信性的传递闭包自动带上）。
+	// 指向不在图内的 ID = 悬空依赖：该步恒不可信（恒重跑），不静默放行。
+	DependsOn []string
+
+	// Isolated 本步不依赖任何其他步骤（与执行环境的隔离无关）：
+	// 它自己完成即可信，可与任何步骤乱序完成。
+	Isolated bool
 }
 
 // AnomalyKind 编排图与快照的不一致类别。
@@ -94,15 +116,25 @@ func isTerminal(status string) bool {
 //
 // 首次执行：全量 Run，不报异常。
 //
-// # 已完成的可信边界：图内**连续已完成的前缀**
+// # 已完成的可信边界：按**依赖**判定
 //
-// 这是本包最关键的一条判定。一步的完成，只有在它**图内的前驱也都已完成**时
-// 才可信。若快照的完成集有空洞（后面几步完成了、前面几步没完成），
-// 说明推进本身已经失序——此时采信其中一部分，等于承认一个已失序的快照仍然可信，
-// 而那正是续跑唯一危险的前提。故空洞之后的完成**一律不采信**，整体重跑，
-// 并报 AnomalyDoneOutOfOrder 让宿主知道发生过失序。
+// 这是本包最关键的一条判定。一步的完成可信 ⟺ 它自己已完成 **且** 它的全部前驱
+// 也都可信完成（传递闭包：前驱本身不可信时，靠它完成的这一步同样不可信——
+// 采信它等于承认一个已失序的快照仍然可信，而那正是续跑唯一危险的前提）。
 //
-// 代价是「失序时会多跑几步」。这个方向是刻意选的：多跑可恢复，重复副作用往往不可。
+// **零值语义（图里没人声明依赖）= 图内连续已完成的前缀。**
+// 一步的完成只有在它图内的前驱也都已完成时才可信；若快照的完成集有空洞
+// （后面几步完成了、前面没完成），说明推进本身已经失序——故空洞之后的完成
+// **一律不采信**，整体重跑，并报 AnomalyDoneOutOfOrder 让宿主知道发生过失序。
+//
+// **声明过依赖时，按各自声明的前驱判定。** 并行组（fan-out）里
+// 「第 1 个还没完成、第 3 个完成」是**合法完成集**，不是失序：前置都满足的
+// 那一步自己完成即可信，不必等图内更早的步骤。此时失序判定收窄到
+// 「有依赖却失序」——某步自己完成了、但它的前驱没满足，那种完成不采信，
+// 并点名报告（Anomaly.Step 是那一步的 ID）。
+//
+// 两种口径下「代价」的方向一致：**多跑可恢复，重复副作用往往不可。**
+// 有依赖却失序时，宁可重跑那一步，也不采信一条说不清来历的完成记录。
 //
 // # 图收缩
 //
@@ -120,6 +152,7 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 	// 净化编排图：剔空 ID、去重（保留首次出现处 → 保证同一图必得同一计划）。
 	seen := make(map[string]bool, len(graph))
 	ids := make([]string, 0, len(graph))
+	steps := make([]StepDef, 0, len(graph))
 	for _, s := range graph {
 		switch {
 		case s.ID == "":
@@ -129,6 +162,7 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 		default:
 			seen[s.ID] = true
 			ids = append(ids, s.ID)
+			steps = append(steps, s)
 		}
 	}
 
@@ -149,16 +183,44 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 		}
 	}
 
-	n := 0
-	for ; n < len(ids) && done[ids[n]]; n++ {
+	specs := make([]depSpec, len(steps))
+	for i, s := range steps {
+		specs[i] = resolveSpec(s)
 	}
-	p.Skip = ids[:n:n]
-	p.Run = ids[n:]
+	index := make(map[string]int, len(ids))
+	for i, id := range ids {
+		index[id] = i
+	}
 
-	// 空洞检测：未完成的前缀之后，还有被记为已完成的步骤。
-	if n < len(ids) {
-		for _, id := range ids[n:] {
-			if done[id] {
+	// 可信完成集。未声明依赖时它就是「连续已完成的前缀」，与旧口径逐字等价。
+	satisfied := computeSatisfied(ids, specs, done)
+
+	skip := make([]string, 0, len(ids))
+	run := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if satisfied[id] {
+			skip = append(skip, id)
+		} else {
+			run = append(run, id)
+		}
+	}
+	p.Skip, p.Run = skip, run
+
+	if anyDeclared(specs) {
+		// 声明过依赖：逐点点名——谁完成了但前驱没满足。
+		for i, id := range ids {
+			if !done[id] || satisfied[id] {
+				continue
+			}
+			pred, known := firstUnsatisfiedPred(i, ids, specs, satisfied, index)
+			p.addAnomaly(AnomalyDoneOutOfOrder, id, untrustedDetail(id, pred, known))
+		}
+		// 待执行顺序：依赖拓扑序。图顺序本就与依赖一致时，与图顺序逐字相同。
+		p.Run = topoRun(specs, index, run)
+	} else {
+		// 纯有序链：旧口径——一条异常、不点名、文案逐字不变。
+		for _, id := range ids {
+			if done[id] && !satisfied[id] {
 				p.addAnomaly(AnomalyDoneOutOfOrder, "",
 					"已完成步骤不是编排图的前缀，其后的完成记录不采信")
 				break

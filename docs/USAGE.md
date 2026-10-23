@@ -1027,10 +1027,28 @@ func applyOffload(st *offload.State, msg []byte) offload.Report {
 
 内核把恢复判定做成纯函数 `BuildPlan(graph, snap) Plan`，三条硬规则：
 
-**① 空洞不采信**——只信「图内**连续已完成的前缀**」。若快照完成集有空洞
+**① 可信边界按依赖判定**——默认只信「图内**连续已完成的前缀**」。若快照完成集有空洞
 （后面几步完成、前面没完成），空洞之后的完成**一律不采信**，`Skip` 停在前缀末尾、
 其余进 `Run`（重跑），并报 `AnomalyDoneOutOfOrder`。
 代价是「失序时会多跑几步」——刻意选的：多跑可恢复，重复副作用往往不可。
+
+**并行组（fan-out）要显式声明依赖**，否则合法的乱序完成集会被前缀规则整体作废、
+整批重来（并行阶段被迫从零再跑，下游只能自建 checkpoint）。声明后按各自前驱采信：
+前置都满足的那一步自己完成即可信，不必等图内更早的步骤。
+
+```go
+graph := []checkpoint.StepDef{
+    {ID: "prep"},
+    {ID: "plug-a", DependsOn: []string{"prep"}}, // 彼此独立、乱序完成
+    {ID: "plug-b", DependsOn: []string{"prep"}},
+}
+// 快照里 plug-b 完成、plug-a 未完成 ⇒ Skip 含 plug-b，Run 含 plug-a，不报异常
+```
+
+`StepDef{ID: "x"}`（零值）= 有序链，与旧口径**逐字一致**；`Isolated: true` = 本步
+无前驱（可乱序完成）。`DependsOn` 是**取代**位置隐含前驱（不是叠加）——叠加的话
+并行组第二步会依赖第一步，组就退化成链。详见
+[CHECKPOINT.md §三之 1](CHECKPOINT.md#三、三条不变量)。
 
 **② 终态不自动重开**——快照 `Status` 是终态且图内仍有未完成步骤时，
 计划 `Blocked()=true` 且 `Run`/`Skip` **均置 nil**。内核拒绝替宿主决定是否重开，
