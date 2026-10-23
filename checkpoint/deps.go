@@ -30,8 +30,13 @@ import "fmt"
 // 隐含的前驱：列出的就是**全部直接前驱**，间接前驱由可信性的传递闭包自动带上。
 //
 // 代价是作者必须列全直接前驱，漏列等于抹掉那条约束。这条代价是刻意接受的：
-// **叠加语义的代价是「并行组表达不出来」**（本层要解决的正是这个），
-// 而漏列的代价可以用一条机械检查兜住（见 firstUnsatisfiedPred 的点名报告）。
+// **叠加语义的代价是「并行组表达不出来」**（本层要解决的正是这个）。
+//
+// ⚠️ 漏列**检不出来**，本包不假装能兜住它：内核不知道作者的真实意图，
+// 「漏了」的形态是「**过早采信**一个本不该采信的完成记录」——**静默**，
+// 且方向正好是续跑最危险的那一侧（重复副作用往往不可）。
+// 能机械检出的是另一头：「声明了依赖但没满足」——那种完成不采信，并点名报告。
+// ⇒ 漏列这条风险只能靠**文档 + 宿主自审**兜（见 docs/CHECKPOINT.md §三之 1）。
 //
 // # 混图的坑：声明的前驱别指向更晚的链式步骤
 //
@@ -122,43 +127,71 @@ func stepTrusted(spec depSpec, satisfied map[string]bool, prefixOK bool) bool {
 	}
 }
 
-// firstUnsatisfiedPred 返回步骤 i 的第一个未满足前驱。
+// predStatus 前驱「未满足」的三种状态。
 //
-// 返回的 predID 为空表示「没有未满足的前驱」。known 为 false 表示该前驱 ID
-// **不在编排图内**（悬空依赖）——两种情形的处置方向相同（恒不采信），
-// 但报告口径不同：悬空依赖是编排图的写法错误，得让宿主看见它。
-func firstUnsatisfiedPred(i int, ids []string, specs []depSpec, satisfied map[string]bool, index map[string]int) (predID string, known bool) {
+// 三种要分清：文案说错方向，宿主就照着错方向去查——那是**报告在制造噪音**，
+// 比不报更费时间。
+type predStatus int
+
+const (
+	// predSatisfied 前驱已满足（不该出现在报告里）。
+	predSatisfied predStatus = iota
+	// predNotInGraph 悬空依赖：前驱 ID 根本不在编排图内（编排图的写法错误）。
+	predNotInGraph
+	// predNotDone 前驱压根没记完成。
+	predNotDone
+	// predUntrusted 前驱**记了完成**但它自己不可信（它的前驱没满足，
+	// 或它与本步成环）。此时说它「未完成」是事实错误。
+	predUntrusted
+)
+
+// firstUnsatisfiedPred 返回步骤 i 的第一个未满足前驱及其状态。
+//
+// 返回的 predID 为空表示「没有未满足的前驱」。
+func firstUnsatisfiedPred(i int, ids []string, specs []depSpec, satisfied map[string]bool, done map[string]bool, index map[string]int) (predID string, status predStatus) {
 	spec := specs[i]
 	switch {
 	case len(spec.explicit) > 0:
 		for _, p := range spec.explicit {
 			if !satisfied[p] {
-				_, inGraph := index[p]
-				return p, inGraph
+				return p, predState(p, done, index)
 			}
 		}
-		return "", true
+		return "", predSatisfied
 	case spec.isolated:
-		return "", true
+		return "", predSatisfied
 	default:
 		for j := 0; j < i; j++ {
 			if !satisfied[ids[j]] {
-				return ids[j], true
+				return ids[j], predState(ids[j], done, index)
 			}
 		}
-		return "", true
+		return "", predSatisfied
 	}
 }
 
+// predState 判定一个未满足的前驱属于哪一类。
+func predState(pred string, done map[string]bool, index map[string]int) predStatus {
+	if _, inGraph := index[pred]; !inGraph {
+		return predNotInGraph
+	}
+	if !done[pred] {
+		return predNotDone
+	}
+	return predUntrusted
+}
+
 // untrustedDetail 一条「已完成但不可信」的说明文案。
-func untrustedDetail(id, predID string, known bool) string {
-	switch {
-	case predID == "":
-		return fmt.Sprintf("步骤 %s 已完成但前驱未满足，完成记录不采信", id)
-	case !known:
+func untrustedDetail(id, predID string, status predStatus) string {
+	switch status {
+	case predNotInGraph:
 		return fmt.Sprintf("步骤 %s 已完成，但其前驱 %s 不在编排图内（悬空依赖），完成记录不采信", id, predID)
-	default:
+	case predUntrusted:
+		return fmt.Sprintf("步骤 %s 已完成，但其前驱 %s 虽已完成仍不可信（该前驱自己的前驱未满足），完成记录不采信", id, predID)
+	case predNotDone:
 		return fmt.Sprintf("步骤 %s 已完成，但其前驱 %s 未完成，完成记录不采信", id, predID)
+	default:
+		return fmt.Sprintf("步骤 %s 已完成但前驱未满足，完成记录不采信", id)
 	}
 }
 

@@ -15,7 +15,8 @@
 
 **差距不在单个能力，在两个维度。**
 
-本仓的**机制面已经很厚**（27 个包，跨进程幂等、租约、栅栏、档位、上下文计量、
+本仓的**机制面已经很厚**（机制包近三十个——**准确清单见 README 的包表**，那张表由
+`make docsync` 机器校验；能力面上有跨进程幂等、租约、栅栏、档位、上下文计量、
 失败分类、契约套件……），比多数主流 harness 的「某一项」都深。
 
 真正的差距是：
@@ -50,7 +51,7 @@
 |---|---|---|---|
 | 沙箱档位 | Codex：OS 级（Seatbelt/bwrap+seccomp） | `sandbox`：`LevelNone/Process/OS/Machine` 档位 + 登记簿（**选不到满足档位即拒绝，绝不降级**） | 档位**声明**齐了，**兑现**依赖宿主 |
 | 审批 | Codex：**两层模型**——沙箱强制 + 审批策略，**两者都同意才放行** | `policy`（审计门）+ `statemachine.RequiresApproval` | ⚠️ 见 §三 |
-| 工具搜索 | Codex/DSH/Octop：支持 | `tooldisclose`：渐进披露（2416 行）+ 披露门 | ✅ 本仓更强 |
+| 工具搜索 | Codex/DSH/Octop：支持 | `tooldisclose`：渐进披露 + 披露门（行数见 README 包表）| ✅ 本仓更强 |
 | PTC / Code Mode | DSH：独立 Runtime | `ptc`：goja VM + 三重预算 + 判定环不断 | ✅ 机制齐 |
 | OS 级隔离 | Codex/DSH：支持 | `ptc` 是**进程内解释器**（自报 `LevelProcess`，**不谎报更高档**） | 宿主的事（容器/microVM） |
 | 跨进程副作用去重 | 各家：需具体验证 | `sideeffect`：幂等键 + 租约 + 栅栏令牌（**本轮刚补**） | ✅ 本仓更强 |

@@ -26,10 +26,19 @@ type StepDef struct {
 	//
 	// 列出的是**全部直接前驱**（间接前驱由可信性的传递闭包自动带上）。
 	// 指向不在图内的 ID = 悬空依赖：该步恒不可信（恒重跑），不静默放行。
+	//
+	// ⚠️ **空切片不等于「无前驱」**：`DependsOn: []string{}` 走的是位置隐含前驱
+	// （有序链语义），不是「本步无前驱」——要声明无前驱请用 `Isolated: true`。
+	// 这条刻意不做「nil 与空切片分义」：宿主若动态拼装前驱集，拼出空切片时
+	// 悄悄变成链语义（更严）尚可，拼成 nil 时变成「无前驱」（更松）才是事故。
+	// 两种空值都按「未声明」处理，方向恒为保守的那一侧。
 	DependsOn []string
 
 	// Isolated 本步不依赖任何其他步骤（与执行环境的隔离无关）：
 	// 它自己完成即可信，可与任何步骤乱序完成。
+	//
+	// 注意它只改变**本步**的前驱集合：排在它之后的未声明步骤，仍按位置把它当前驱
+	// ——「本步不依赖别人」≠「别人不依赖本步」。
 	Isolated bool
 }
 
@@ -44,7 +53,8 @@ const (
 	// AnomalyDoneNotInGraph 快照记为已完成，但当前编排图里没有这一步
 	// （典型成因：宿主换过编排包，图收缩了）。
 	AnomalyDoneNotInGraph AnomalyKind = "done_not_in_graph"
-	// AnomalyDoneOutOfOrder 已完成集合不是编排图的前缀（含空洞）。
+	// AnomalyDoneOutOfOrder 完成记录与依赖不符：零值语义下是「完成集合不是编排图的
+	// 前缀（含空洞）」；声明依赖后收窄为「该步有依赖却失序」（它的前驱没满足）。
 	AnomalyDoneOutOfOrder AnomalyKind = "done_out_of_order"
 	// AnomalyCompleteWithPending 快照标记运行已终结，编排图里却仍有未完成步骤。
 	AnomalyCompleteWithPending AnomalyKind = "complete_with_pending"
@@ -62,9 +72,12 @@ type Anomaly struct {
 
 // Plan 恢复计划：续跑而非重放。
 type Plan struct {
-	// Skip 本次**不执行**的步骤（已完成），按编排图顺序。
+	// Skip 本次**不执行**的步骤（已完成且可信），按编排图顺序。
 	Skip []string
-	// Run 本次**要执行**的步骤，按编排图顺序。
+	// Run 本次**要执行**的步骤。
+	//
+	// 图里没人声明依赖时按**编排图顺序**；声明过依赖时按**依赖拓扑序**
+	// （显式依赖先满足，同层保持编排图顺序）——图顺序本就与依赖一致时两者相同。
 	Run []string
 	// Anomalies 编排图与快照的不一致，按检出顺序。
 	Anomalies []Anomaly
@@ -212,8 +225,8 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 			if !done[id] || satisfied[id] {
 				continue
 			}
-			pred, known := firstUnsatisfiedPred(i, ids, specs, satisfied, index)
-			p.addAnomaly(AnomalyDoneOutOfOrder, id, untrustedDetail(id, pred, known))
+			pred, status := firstUnsatisfiedPred(i, ids, specs, satisfied, done, index)
+			p.addAnomaly(AnomalyDoneOutOfOrder, id, untrustedDetail(id, pred, status))
 		}
 		// 待执行顺序：依赖拓扑序。图顺序本就与依赖一致时，与图顺序逐字相同。
 		p.Run = topoRun(specs, index, run)
