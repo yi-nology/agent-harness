@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/oekit/pkg/pagination"
 )
 
 // 打分权重。为什么名字远重于描述：描述是**自由文本**，几乎每个工具的描述里都塞着
@@ -142,13 +144,14 @@ func stemTerm(term string) string {
 }
 
 // clampLimit 钳位检索上限到 [1, MaxSearchLimit]，非正值取默认。
+//
+// 口径（默认条数 / 上限 / 超限钳到上限）由 oekit pagination.Policy 统一表达，
+// 本仓只声明自己的两个数字，不再各写一份钳位逻辑。
 func clampLimit(n int) int {
-	switch {
-	case n <= 0:
-		return DefaultSearchLimit
-	case n > MaxSearchLimit:
-		return MaxSearchLimit
-	default:
-		return n
+	policy := pagination.Policy{
+		DefaultPageSize: DefaultSearchLimit,
+		MaxPageSize:     MaxSearchLimit,
+		OverMax:         pagination.OverMaxClamp,
 	}
+	return policy.NormalizeLimit(n)
 }
