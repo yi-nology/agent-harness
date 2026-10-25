@@ -134,10 +134,7 @@ func (m *Meter) Shrink(seg Segment, tokens int) int {
 	if have <= 0 {
 		return 0 // 该段本就没有量：无可扣，也不制造负值
 	}
-	removed := tokens
-	if removed > have {
-		removed = have // 钳位到本段实有量，不外溢到别的段
-	}
+	removed := min(tokens, have) // 钳位到本段实有量，不外溢到别的段
 	m.seg[seg] = have - removed
 	return removed
 }
@@ -212,10 +209,7 @@ func (d Display) Used() int {
 	if d.Cap <= 0 {
 		return d.Input
 	}
-	if d.Input > d.Cap {
-		return d.Cap
-	}
-	return d.Input
+	return min(d.Input, d.Cap)
 }
 
 // Overflow 输入是否已越界（仅在设了上限时有意义）。
