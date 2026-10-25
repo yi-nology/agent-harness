@@ -1,7 +1,8 @@
 package protocol_test
 
-// schema 编译缓存并发共享校验（批三百零三，挂账余项）：compileSchema 的 sync.Map 按
-// schemaSrc 原文缓存——多 goroutine 同 schema/异 schema 并发 ValidateStructured，
+// schema 编译缓存并发共享校验（批三百零三，挂账余项）：compileSchema 按
+// schemaSrc 原文缓存（oekit/pkg/cache 的 LocalCache + SingleFlight）——
+// 多 goroutine 同 schema/异 schema 并发 ValidateStructured，
 // -race 下验证缓存竞争面与结果一致性（合规恒 nil、违规恒非 nil，混跑不串味）。
 // 常规 go test 即跑（不是 fuzz；并发语义靠 -race 全仓门禁 make race）。
 
