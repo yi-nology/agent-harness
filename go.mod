@@ -14,17 +14,17 @@ go 1.27
 require (
 	github.com/cloudwego/eino v0.9.21
 	github.com/dop251/goja v0.0.0-20261010130053-73dc7edc278f
-	github.com/oagentkit/agent v0.10.6
-	github.com/oagentkit/guardx v0.14.0
-	github.com/oagentkit/llm v0.16.0
-	github.com/oagentkit/obs v0.9.6
+	github.com/oagentkit/agent v0.11.0
+	github.com/oagentkit/guardx v0.15.0
+	github.com/oagentkit/llm v0.17.1
+	github.com/oagentkit/obs v0.9.7
 	github.com/oagentkit/runtime v0.7.2
 	github.com/oagentkit/textx v0.6.2
-	github.com/oagentkit/toolgate v0.12.4
-	github.com/oekit/concurrency v0.20.1
+	github.com/oagentkit/toolgate v0.12.5
+	github.com/oekit/concurrency v0.22.0
 	github.com/oekit/core v0.12.0
 	github.com/oekit/logx v0.7.1
-	github.com/oekit/pkg v0.22.0
+	github.com/oekit/pkg v0.28.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -38,6 +38,7 @@ require (
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13 // indirect
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.17 // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dlclark/regexp2/v2 v2.9.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/eino-contrib/jsonschema v1.0.3 // indirect
@@ -48,14 +49,14 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
+	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mark3labs/mcp-go v1.1.1 // indirect
 	github.com/meguminnnnnnnnn/go-openai v0.1.6 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
-	github.com/oagentkit/mcpkit v0.8.5 // indirect
+	github.com/oagentkit/mcpkit v0.8.6 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
@@ -66,8 +67,9 @@ require (
 	github.com/yargevad/filepathx v1.0.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/arch v0.14.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	golang.org/x/time v0.14.0 // indirect
+	golang.org/x/time v0.16.0 // indirect
 )
