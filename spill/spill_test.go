@@ -86,6 +86,39 @@ func TestReadPageIsolation(t *testing.T) {
 	}
 }
 
+// TestSessionIDCannotEscapeRoot 钉住会话标识不得让落点越出 spill 根目录。
+//
+// 旧实现的会话目录判定用 filepath.Base 判等，而 filepath.Base("..") == ".."，
+// 于是 sessionID=".." 通过判定；第三道前缀守卫又按同一个 base 算，两道一起
+// 失效 ⇒ 落点指到根目录的**父目录**（实测能读出根外的文件）。
+func TestSessionIDCannotEscapeRoot(t *testing.T) {
+	root := t.TempDir()
+	// 根目录的父目录里放一个诱饵文件——逃逸成功就能读到它。
+	outside := filepath.Join(filepath.Dir(root), "spill-escape-probe.txt")
+	if err := os.WriteFile(outside, []byte("SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(outside) }()
+
+	for _, sess := range []string{"..", ".", "../..", "a/../..", "sess/../../.."} {
+		if _, err := ReadPage(root, sess, "spill-escape-probe.txt", 0, 0); err == nil {
+			t.Fatalf("会话标识 %q 应拒绝（不得越出 spill 根目录）", sess)
+		}
+	}
+	// 合法会话标识仍能正常取回（不能把面焊死）。
+	dir := filepath.Join(root, "sess-a")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ok-spill.txt"), []byte("内容"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pg, err := ReadPage(root, "sess-a", "ok-spill.txt", 0, 0)
+	if err != nil || pg.Content != "内容" {
+		t.Fatalf("合法会话标识应正常取回: %+v err=%v", pg, err)
+	}
+}
+
 func TestReadPagePaging(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "s1")

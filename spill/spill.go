@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/pathx"
 )
 
 // 契约锚点（与前端 spillHintOf 同判据）：截断标记「输出超预算已截断」+ 定位符
@@ -67,18 +68,30 @@ type Item struct {
 var ErrBadName = errors.New("定位符非法（只允许本会话存档目录下的裸文件名）")
 
 // sanitizeName 定位符净化（read_spill 三重守卫之一/二）：单段裸文件名，
-// filepath.Base 剥目录，含分隔符/点段即拒——LLM 面与控制台面同一判据。
+// 含分隔符/点段即拒——LLM 面与控制台面同一判据。
+//
+// 判据委托 oekit/pkg/pathx.IsSafeFileName：它是**判定器**（不合规则直接说不合格，
+// 不改写），且比手搓版更严——除分隔符与 "."/".." 点段外，还拒 Windows 盘符
+// 相对路径（"C:foo.bundle"），fail-closed（同一段载荷在 Linux/Windows 上得到
+// 同一结论）。
+//
+// 旧实现用 filepath.Base 判等，而 filepath.Base("..") == ".."、filepath.Base(".") == "."
+// ——两个点段都会被放行；改用 pathx 后一并堵上。
 func sanitizeName(name string) (string, error) {
 	name = strings.TrimSpace(name)
-	base := filepath.Base(name)
-	if name == "" || base != name || base == "." || base == ".." || strings.ContainsAny(base, `/\`) {
+	if !pathx.IsSafeFileName(name) {
 		return "", ErrBadName
 	}
-	return base, nil
+	return name, nil
 }
 
 // sessionDir 会话目录拼装+前缀守卫（三重守卫之三）：净化后理论出不去，仍显式
 // 校验落点（防御纵深，read_spill 原语义）。
+//
+// 会话标识同样走 pathx.IsSafeFileName：旧实现的 filepath.Base 判等会把 ".."
+// 放行（Base("..") == ".."），于是 sessionID=".." 能让落点指到 spill 根目录的
+// **父目录**——三重守卫的前两道（定位符净化）根本不参与会话目录的判定，第三道
+// 的前缀校验又按同一 base 算，两道一起失效（实测可读出根目录外的文件）。
 func sessionDir(root, sessionID string) (string, error) {
 	if strings.TrimSpace(root) == "" {
 		return "", errors.New("spill 面未装配（mcp.spill_dir 空），无存档可取")
@@ -87,8 +100,7 @@ func sessionDir(root, sessionID string) (string, error) {
 	if sess == "" {
 		return "", errors.New("无法归属会话（缺 session 标识），拒绝执行")
 	}
-	base := filepath.Base(sess)
-	if base != sess || strings.ContainsAny(sess, `/\`) {
+	if !pathx.IsSafeFileName(sess) {
 		return "", errors.New("会话标识非法")
 	}
 	return filepath.Join(root, sess), nil
