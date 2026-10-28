@@ -2,6 +2,57 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.14.0] — 2026-10-28
+
+- 杂务(deps)：oekit / oagentkit 依赖地板抬到各自最新发布 tag
+
+抬了哪几块（本仓自身代码零改动，只看 diff 看不出来）：
+- oekit/pkg       v0.28.0 → v0.30.0
+- oekit/logx      v0.7.1  → v0.8.0
+- oekit/concurrency v0.22.0 → v0.23.0
+- oekit/core      v0.12.0 → v0.12.1
+- oagentkit/guardx v0.15.0 → v0.17.0
+- oagentkit/llm   v0.17.1 → v0.18.1
+- oagentkit/textx v0.6.2  → v0.7.1
+- oagentkit/mcpkit v0.8.6 → v0.9.0
+下游要做什么：
+1. **`go mod tidy`**——地板抬高对下游是隐式 breaking，不跑就报
+   `updates to go.mod needed`，且报错只说这个、不提真正原因。
+2. **若你直接 import 过 `github.com/oagentkit/guardx/audit` 或
+   `github.com/oagentkit/guardx/bashguard`**：这两个包自 guardx v0.17.0 起
+   **不再属于 guardx 模块**，改 import 路径——
+   audit → `github.com/oagentkit/obs/audit`；
+   bashguard → `github.com/oagentkit/tools/bashguard`。
+   本仓自身**零命中**这两个路径（用的是新路径 `obs/audit`），故本仓无需改；
+   但你的宿主代码若直接依赖过，需跟着换一行 import。
+其余是等价改写与纯新增，无公开 API 变更：oekit/pkg v0.30.0 补
+`convert.AnyToStrOr` / `OptStr` / `OptBool` / `OptInt32` / `OptInt64` /
+`AnyToInt32` 六个 nil 安全入口并修 `cache.HashKey` 的参数边界歧义（不同参数组
+曾算出同一个 key）；oekit/logx v0.8.0 补 `Nop()` 静默 logger 与 `LevelOff`
+档；oekit/concurrency v0.23.0 修 `budget.Ledger` 的 int64 溢出绕过与
+`singleflight.DoChan` 的清理漂移，并补 `Ledger.Used` 观测口；
+oagentkit/mcpkit v0.9.0 补 `Pool.Tool(server, name)` 与 `ToolsResult.ByServer`
+（纯新增，`Tools` 的扁平列表保留）。
+
+
+- 文档：下游升级须知补 v0.14.0 行 + AGENTS.md 的上游 pkg 版本号对齐到 v0.30.0
+- 文档(agent-harness)：发版纪律补「一个提交只装一类内容」
+
+本轮发版（v0.13.0）撞上的缺口：**类型标签决定提交被渲染到发布说明的哪一段**。
+把行为变更（尤其安全修复）装进 `chore(deps)`，它就落到「依赖地板」段里，
+下游扫 breaking 变更时根本看不到。
+实例：本仓有一个提交标题是 `chore(deps): oekit 家族升级到本轮最新发布版本`，
+正文末句写着「顺带修掉 sessionID=".." 越界洞」——它同时装了 go.mod/go.sum 的
+地板抬升和 `spill` 的路径逃逸修复。正文里虽然写了，生成器仍按类型归进
+「依赖地板」段，那个安全修复就淹没在版本号列表中。
+修法：发版前把未发布的提交**拆开**（`fix(spill)!` 单独成提交），拆完再生成
+CHANGELOG，那个修复就会自己落到「修复」段。
+判据：发版前扫一遍本轮提交的 `git show --stat`——**有没有哪个提交同时改了
+依赖文件与非依赖文件**，有就是类型标签装错了内容。
+本提交在 v0.13.0 发布**之后**落：已发布 tag 不可重写历史（改写会让按 tag/commit
+引用的校验失效），故作为后续提交补纪律。
+
+
 ## [v0.13.0] — 2026-10-26
 
 ### 新增(checkpoint)：依赖声明 —— 并行 fan-out 的合法乱序完成不再被作废重跑
