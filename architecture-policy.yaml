@@ -331,6 +331,17 @@ modules:
   # 本包把口径收成单源：**时长只有起止时刻相减一个出处**，行里不存时长字段
   # （Duration() 现算），于是估算值结构性无处安放——不是靠纪律约束，是装不进去。
   # 配对缺口（缺结果/重复结果/无对应调用/重复声明）显式可见，不静默丢弃。
+  - id: ticket
+    roots: [ticket]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      一次性短时授权票据的机制面：签发/单次消费/TTL/用途绑定。消费即作废，
+      过期判定与消费判定同一处；绑定载荷原样携带，语义归宿主解释。零内部依赖
+      （纯 stdlib），时钟可注入——过期语义要能被确定性测，不靠 sleep。
+      票据空间有界且满了显式拒发（默默淘汰会让宿主以为票据还在，实际已失效）。
+
   - id: trajectory
     roots: [trajectory]
     requires: [eventbus]
@@ -808,7 +819,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, gatecheck, trajectory, archcheck, cmd]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, gatecheck, trajectory, ticket, archcheck, cmd]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
