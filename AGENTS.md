@@ -87,7 +87,7 @@ AI 代理在本仓干活时最容易犯的错是「顺手把宿主的需求写�
 解包到根用 `Cause`，链路保持单 import，不再双 import stdlib。
 
 **已清偿（2026-10-18）**：`go.mod` 当时升到 `oekit/pkg v0.13.0`（此后随上游继续
-抬升，当前 **v0.18.0**），全仓统一切到 `pkg/errors`（当时 24 个文件，现 **54** 个），
+抬升，当前 **v0.30.0**），全仓统一切到 `pkg/errors`（当时 24 个文件，现 **54** 个），
 `pkg/errors.New` 就是 `stderrors.New` 的 shim
 （`pkg/errors/std.go`），`Wrap` 的输出格式 `msg + ": " + err.Error()` 与
 `fmt.Errorf("msg: %w", err)` 逐字相同，故改写是行为等价的。
