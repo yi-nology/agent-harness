@@ -321,6 +321,27 @@ modules:
       规整不保证唯一（get-logs 与 get_logs 同名）——撞不撞由调用方判
       （ptc 在装配期拒，因为顶替意味着副作用错位）。
 
+  # 2026-10-29 新增：事件流 → 轨迹行的投影。
+  #
+  # 为什么值得单开一个包：「这一轮花了多久」这件事此前没有单点——宿主只能自己
+  # 从事件流里拼起止时刻、按 call_id 手工配对工具调用与结果，各拼一套必然漂。
+  # 尤其**时长这一个数**：有人拿载荷体积估、有人拿 token 数除、有人按事件时刻
+  # 相减——三种口径混进同一张表，谁也说不清哪一列是实测、哪一列是猜的。
+  #
+  # 本包把口径收成单源：**时长只有起止时刻相减一个出处**，行里不存时长字段
+  # （Duration() 现算），于是估算值结构性无处安放——不是靠纪律约束，是装不进去。
+  # 配对缺口（缺结果/重复结果/无对应调用/重复声明）显式可见，不静默丢弃。
+  - id: trajectory
+    roots: [trajectory]
+    requires: [eventbus]
+    owner: harness
+    managed: true
+    notes: |
+      事件流 → 轨迹行投影：轮次/步骤/工具三类行，起止时刻取自事件时刻，
+      时长由起止相减得出（无实测即无值，不拿估算补）；工具调用与结果按 call_id
+      配对，缺口进 Issues 显式可见；增量投影支持「先喂一半再喂后半，行被更新
+      而非重复」。依赖 eventbus 是为了吃本仓自己的事件词表，不另立事件模型。
+
   # 2026-10-19 新增：门禁执行体从 package main 下沉为可导入包。
   #
   # 为什么它属于本仓（而不是留在宿主仓各写一遍）：判据是「AST + 一张声明表」，
@@ -787,7 +808,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, gatecheck, archcheck, cmd]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, gatecheck, trajectory, archcheck, cmd]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
