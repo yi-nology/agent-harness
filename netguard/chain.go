@@ -1,6 +1,8 @@
 package netguard
 
 import (
+	"context"
+
 	"fmt"
 	"net/url"
 	"strings"
@@ -112,6 +114,14 @@ func ResolveLocation(current, location string) (string, error) {
 // 放行面与 CheckURLWith、拨号层同一个类型（见 allow.go）——逐跳校验与单跳校验
 // 必须是同一套判据，否则「起始跳放行、后续跳收紧」这种事就没人能发现了。
 func CheckChainWith(start string, hops []string, allow Allow, maxHops int) error {
+	// 无 ctx 形态：10s 上限（与 CheckURLWith 同一处置），取消传播用
+	// CheckChainWithCtx。
+	return CheckChainWithCtx(context.Background(), start, hops, allow, maxHops)
+}
+
+// CheckChainWithCtx 是 CheckChainWith 的取消传播形态：每一跳的解析都带
+// ctx（见 CheckURLWithCtx）。ctx 为 nil 时等价 CheckChainWith（带 10s 上限）。
+func CheckChainWithCtx(ctx context.Context, start string, hops []string, allow Allow, maxHops int) error {
 	if maxHops <= 0 {
 		maxHops = DefaultMaxHops
 	}
@@ -120,7 +130,7 @@ func CheckChainWith(start string, hops []string, allow Allow, maxHops int) error
 	if n := firstTerminalHop(hops); n >= 0 {
 		followed = hops[:n]
 	}
-	if err := CheckURLWith(start, allow); err != nil {
+	if err := CheckURLWithCtx(ctx, start, allow); err != nil {
 		return &HopDeniedError{Hop: 1, URL: start, Err: err}
 	}
 	if len(followed) > maxHops {
@@ -137,7 +147,7 @@ func CheckChainWith(start string, hops []string, allow Allow, maxHops int) error
 		if err != nil {
 			return &HopDeniedError{Hop: i + 2, URL: loc, Err: err}
 		}
-		if err := CheckURLWith(next, allow); err != nil {
+		if err := CheckURLWithCtx(ctx, next, allow); err != nil {
 			return &HopDeniedError{Hop: i + 2, URL: next, Err: err}
 		}
 		current = next

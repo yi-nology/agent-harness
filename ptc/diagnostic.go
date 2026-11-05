@@ -178,6 +178,11 @@ func suggestionsFor(kind string) []string {
 			"宿主绑定抛出的错误会直接冒泡：确认调用参数形状与该工具的契约一致",
 			"可以用 try/catch 包裹可疑调用，让程序带着已取得的部分结果继续",
 		}
+	case "host_panic":
+		return []string{
+			"这是宿主侧缺陷（绑定函数自己崩了），不是程序写错：改写法、换参数、try/catch 都无济于事",
+			"把这个 panic 连同 tool 名与参数报给宿主维护者；排除前避开该工具",
+		}
 	case "stage_denied":
 		return []string{
 			"这次调用被宿主的门禁判定拒绝：不是参数形状错，也不是程序 bug，改写法重试不会通过",

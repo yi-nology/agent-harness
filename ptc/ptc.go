@@ -42,6 +42,7 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/oagentkit/guardx/invoke"
+	"github.com/oekit/logx"
 	"github.com/oekit/pkg/errors"
 	"github.com/yi-nology/agent-harness/toolname"
 )
@@ -232,6 +233,26 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 	// 建议在唯一的收口处统一补，不在每个 return 分支里各写一遍——分支一多必然
 	// 漏一处，而漏掉的后果是「模型收到一条没有修复建议的失败」这种安静退化。
 	defer func() {
+		// 宿主绑定 panic 经 goja 原样重抛：callIt 直调宿主 Binding.Call，
+		// goja 对非 goja 值的异常 panic(arg) 原样穿透 vm.RunProgram 自己的
+		// 恢复面，直达主 goroutine。Run 的 doc 承诺「恒返回 Result 不
+		// panic」——这里就是兑现点。宿主侧崩溃（装饰链 bug / 类型断言 /
+		// MCP 调用层）恰恰是最可能 panic 的面，不能让它以「一次坏程序」的
+		// 名义杀掉整个宿主进程。中断 goroutine 那侧与此正交：它早已走
+		// async.GoSafe（panic 留痕不杀进程）。
+		if r := recover(); r != nil {
+			res = Result{
+				Error:     fmt.Sprintf("宿主绑定 panic（这不是程序错误，是宿主侧要修的）: %v", r),
+				ErrorKind: "host_panic",
+				// 已执行步骤留痕： panic 前成功的调用照常记账——
+				// 半途痕迹是审计要的，收口不留等于没发生过。
+				Calls:   res.Calls,
+				Bytes:   res.Bytes,
+				CallLog: res.CallLog,
+			}
+			logx.Error("ptc: 宿主绑定 panic，收敛为结果返回",
+				"panic", fmt.Sprint(r))
+		}
 		if !res.OK {
 			res.Suggestions = suggestionsFor(res.ErrorKind)
 		}

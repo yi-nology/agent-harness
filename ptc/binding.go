@@ -98,7 +98,29 @@ func mountBindings(
 				panic(vm.NewGoError(serr))
 			}
 			start := time.Now()
-			out, err := callIt(runCtx, b.Name, args) // runCtx：墙钟到点断阻塞调用（批三百零七）
+			// callIt 直调宿主 Binding.Call：宿主侧 panic 经 goja 对非 goja
+			// 值的异常重抛原样穿透。留痕要赶在穿透之前——Run 的收口
+			// recover 只能把「发生了 panic」装进结果，装不进这条调用的账；
+			// 审计要的是半途痕迹（panic 前这次调用尝试过、花了多久），
+			// defer 在 unwrap 之前把账记上。
+			var out string
+			var err error
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// 宿主侧 panic：留痕后原样穿透——Run 收口统一收敛
+						// 为 host_panic 结果，这里只负责把账记上。
+						res.Calls++
+						res.CallLog = append(res.CallLog, CallRecord{
+							Name: b.Name, Status: "panic",
+							Error: fmt.Sprint(r),
+							MS:    time.Since(start).Milliseconds(),
+						})
+						panic(r)
+					}
+				}()
+				out, err = callIt(runCtx, b.Name, args) // runCtx：墙钟到点断阻塞调用（批三百零七）
+			}()
 			rec := CallRecord{Name: b.Name, Bytes: len(out), MS: time.Since(start).Milliseconds()}
 			res.Calls++
 			res.Bytes += len(out)
