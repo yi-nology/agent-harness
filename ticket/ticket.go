@@ -105,6 +105,12 @@ func NewWithClock(maxSize int, now func() time.Time) *Store {
 // 单次消费语义就没有意义了）。
 //
 // 容量已满 ⇒ 显式报错（见 DefaultMaxEntries 的说明）。
+//
+// ⚠️ 绑定载荷**零校验**（含零值 Binding{}——机制面不解释字段语义）。
+// 零绑定票据消费成功后返回全空 Binding，消费方拿到「授权成立」却答不出
+// 「授权给谁、干什么、对什么对象」，审计面同样无从追溯。多数宿主应改用
+// IssueStrict（签发前校验绑定完整性）；确有「字段语义宿主自定义、允许留空」
+// 的场景再用本函数。
 func (s *Store) Issue(b Binding, ttl time.Duration) (string, time.Time, error) {
 	raw := make([]byte, idBytes)
 	if _, err := rand.Read(raw); err != nil {
@@ -119,6 +125,31 @@ func (s *Store) Issue(b Binding, ttl time.Duration) (string, time.Time, error) {
 	}
 	s.m[id] = entry{binding: b, expiresAt: exp}
 	return id, exp, nil
+}
+
+// IssueStrict 签发前校验**绑定完整性**：Binding 三字段（Subject/Purpose/
+// Target）任一为空 ⇒ 显式报错，不签发。
+//
+// 为什么默认建议走这里：空绑定不是策略，是**绑定不完整**——宿主策略无论
+// 如何都没法在一张「无主体/无用途/无目标」的票据上做判定，而消费侧拿到的
+// 是「授权成立 + 全空载荷」的假安全感（转用/误签发无从追溯）。与包内既有
+// 防线同哲学：随机源失败显式报错、容量满显式拒发，语义层面的非法值同样
+// 不静默放行。字段语义仍归宿主解释，本函数只校验「非空」这一完整性底线。
+func (s *Store) IssueStrict(b Binding, ttl time.Duration) (string, time.Time, error) {
+	var missing []string
+	if b.Subject == "" {
+		missing = append(missing, "Subject")
+	}
+	if b.Purpose == "" {
+		missing = append(missing, "Purpose")
+	}
+	if b.Target == "" {
+		missing = append(missing, "Target")
+	}
+	if len(missing) > 0 {
+		return "", time.Time{}, fmt.Errorf("票据绑定不完整，缺 %v（Subject/Purpose/Target 任一为空都拒发）", missing)
+	}
+	return s.Issue(b, ttl)
 }
 
 // Consume 消费一张票据：取出绑定载荷并**立即作废**。

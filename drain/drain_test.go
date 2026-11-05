@@ -136,3 +136,18 @@ func TestBudget(t *testing.T) {
 		t.Fatal("负预算应原样返回（关闭语义）")
 	}
 }
+
+// TestShutdownBudget 停机收尾预算：0 与负值都归缺省——配置侧「负=关闭排水」
+// 不等于收尾路径不要余量；正值原样。
+func TestShutdownBudget(t *testing.T) {
+	if ShutdownBudget(0) != DefaultTimeout {
+		t.Fatalf("0 应回落缺省 %s, got %s", DefaultTimeout, ShutdownBudget(0))
+	}
+	if ShutdownBudget(-5*time.Second) != DefaultTimeout {
+		t.Fatalf("负值应归缺省 %s（负配置直喂 WithTimeout 会立即过期）, got %s",
+			DefaultTimeout, ShutdownBudget(-5*time.Second))
+	}
+	if ShutdownBudget(30*time.Second) != 30*time.Second {
+		t.Fatal("正值应原样返回")
+	}
+}
