@@ -75,14 +75,20 @@
 package netguard
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/oagentkit/guardx/egress"
 	"github.com/oekit/pkg/errors"
 )
+
+// checkResolveTimeout 校验面解析的上限（nil ctx 形态用）：与拨号层的
+// dialTimeout 同值同因——一次卡住的解析不该挂住调用方。
+const checkResolveTimeout = 10 * time.Second
 
 // CheckURLWith 校验出站 URL 是否允许平台代发。
 //
@@ -90,6 +96,25 @@ import (
 // 外部输入面（平台代发给他人的目标）用零值；探测自己部署的服务用
 // AllowSelfService()——那个名字把意图留在了代码里。
 func CheckURLWith(rawURL string, allow Allow) error {
+	// 无 ctx 形态仍是公开面（宿主在用），但它不再无上限：拨号层当年同一
+	// 判据只修了一半（dial.go 的 dialTimeout 修了，这里没修），现在两边
+	// 都有 10s 上限。要调用方取消传播（关停/超时打断解析）请用
+	// CheckURLWithCtx。
+	return CheckURLWithCtx(context.Background(), rawURL, allow)
+}
+
+// CheckURLWithCtx 是 CheckURLWith 的取消传播形态：域名解析走带 ctx 的
+// Resolver——调用方的关停/超时能打断一次卡住的解析（DNS 黑洞场景下
+// 无 ctx 的 LookupIP 会把整个 Policy.Check 无期限挂住）。ctx 为 nil 时
+// 等价 CheckURLWith（带 10s 上限）。
+func CheckURLWithCtx(ctx context.Context, rawURL string, allow Allow) error {
+	if ctx == nil {
+		// nil ctx = 调用方选了无取消形态：仍给 10s 上限，对齐拨号层的
+		// dialTimeout——无上限的一次卡住解析会挂住整个 Check。
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), checkResolveTimeout)
+		defer cancel()
+	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return errors.Wrap(err, "出站 URL 非法")
@@ -109,7 +134,7 @@ func CheckURLWith(rawURL string, allow Allow) error {
 	ips := []net.IP{}
 	if ip := net.ParseIP(host); ip != nil {
 		ips = append(ips, ip)
-	} else if resolved, err := net.LookupIP(host); err != nil {
+	} else if resolved, err := net.DefaultResolver.LookupIP(ctx, "ip", host); err != nil {
 		return errors.Wrap(err, "出站目标解析失败", "host", host)
 	} else {
 		ips = resolved

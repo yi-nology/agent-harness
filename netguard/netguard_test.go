@@ -1,6 +1,12 @@
 package netguard
 
 import (
+	"time"
+
+	"net"
+
+	"context"
+
 	"fmt"
 	"sync"
 	"testing"
@@ -307,5 +313,61 @@ func TestCheckChainBlockedNameEveryHop(t *testing.T) {
 	}
 	if !errors.Is(err, ErrBlockedName) {
 		t.Errorf("应能判定出是名字层拒绝（Unwrap 链完整），实得 %v", err)
+	}
+}
+
+// TestCheckURLWithCtxPropagatesCancel 校验面的解析带 ctx：调用方取消要能
+// 打断一次卡住的解析（dial.go 当年同一判据只修了拨号层，这一半补齐）。
+// 用一个挂着不放的假解析器模拟 DNS 黑洞——无 ctx 形态在这里会永远挂住，
+// Ctx 形态在取消后立即返回。
+func TestCheckURLWithCtxPropagatesCancel(t *testing.T) {
+	// 挂住解析器：只响应 ctx.Done，否则永不返回。
+	blocking := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	old := net.DefaultResolver
+	net.DefaultResolver = blocking
+	t.Cleanup(func() { net.DefaultResolver = old })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- CheckURLWithCtx(ctx, "https://blackhole.example.com", Allow{})
+	}()
+	// 给校验面一点时间进解析，然后取消。
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("取消后必须返回错误，而不是解析成功")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("取消传播失效：Check 在假黑洞解析器上仍然挂住（无上限解析回来了）")
+	}
+}
+
+// TestCheckURLWithNilCtxBounded nil ctx 等价 10s 上限形态：不挂死。
+func TestCheckURLWithNilCtxBounded(t *testing.T) {
+	blocking := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	old := net.DefaultResolver
+	net.DefaultResolver = blocking
+	t.Cleanup(func() { net.DefaultResolver = old })
+
+	start := time.Now()
+	// 钉的就是 nil-ctx 契约（doc：nil = 10s 上限形态），豁免 SA1012。
+	_ = CheckURLWithCtx(nil, "https://blackhole.example.com", Allow{}) //nolint:staticcheck // SA1012: nil ctx is the contract under test
+	if d := time.Since(start); d > 15*time.Second {
+		t.Fatalf("nil ctx 形态应在 10s 上限内返回，实耗 %s", d)
 	}
 }

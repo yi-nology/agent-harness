@@ -223,3 +223,57 @@ return { merged: "ok", total: total };`
 		t.Fatalf("归并结果应比逐调路径小两个数量级: merged=%d perCall=%d", len(res.Value), perCallVisible)
 	}
 }
+
+// TestRunSurvivesHostBindingPanic 宿主绑定 panic 不得穿透 Run 的返回面：
+// callIt 直调宿主 Binding.Call，goja 对非 goja 值的异常 panic(arg) 原样重抛，
+// 此前直达主 goroutine 杀进程——doc 承诺「恒返回 Result 不 panic」却只对
+// JS 侧错误成立。现在的契约：panic 收敛为 host_panic 结果，已执行的调用
+// 照常留痕（半途痕迹是审计要的）。
+func TestRunSurvivesHostBindingPanic(t *testing.T) {
+	panicky := Binding{Name: "boom", Call: func(_ context.Context, _ string) (string, error) {
+		panic("decorator chain bug: type assertion failed")
+	}}
+	ctx := context.Background()
+
+	// panic 在唯一一次调用里。
+	r := Run(ctx, `const v = await host.boom("{}"); return v`, []Binding{panicky}, Options{})
+	if r.OK {
+		t.Fatalf("panic 不得伪装成成功: %+v", r)
+	}
+	if r.ErrorKind != "host_panic" {
+		t.Fatalf("ErrorKind = %q, want host_panic", r.ErrorKind)
+	}
+	if !strings.Contains(r.Error, "type assertion failed") {
+		t.Fatalf("panic 原值必须留在 Error 里（宿主排障要它）: %q", r.Error)
+	}
+	if len(r.Suggestions) == 0 {
+		t.Fatal("host_panic 也必须有修复建议（唯一的收口处补齐）")
+	}
+	// 修复建议必须说清「这不是程序能改的」——否则模型会在程序侧空转。
+	if !strings.Contains(r.Suggestions[0], "宿主侧") && !strings.Contains(r.Suggestions[0], "宿主侧缺陷") {
+		t.Fatalf("建议应指向宿主侧: %v", r.Suggestions)
+	}
+
+	// panic 前已成功的调用照常记账：半途留痕是审计要的。
+	r = Run(ctx, `const a = await host.ok("1"); const b = await host.boom("{}"); return b`,
+		[]Binding{echo("ok"), panicky}, Options{})
+	if r.ErrorKind != "host_panic" {
+		t.Fatalf("第二跳 panic: kind=%q", r.ErrorKind)
+	}
+	if r.Calls != 2 || len(r.CallLog) != 2 {
+		t.Fatalf("已执行调用应全部留痕（含 panic 的那次）: calls=%d log=%d", r.Calls, len(r.CallLog))
+	}
+	if r.CallLog[0].Status != "ok" {
+		t.Fatalf("panic 前的调用应为 ok: %+v", r.CallLog[0])
+	}
+
+	// 宿主侧修好了（panic 不再发生）⇒ 同一段程序正常跑通。
+	fixed := Binding{Name: "boom", Call: func(_ context.Context, _ string) (string, error) {
+		return "{}", nil
+	}}
+	r = Run(ctx, `const a = await host.ok("1"); const b = await host.boom("{}"); return a+b`,
+		[]Binding{echo("ok"), fixed}, Options{})
+	if !r.OK {
+		t.Fatalf("修好后的程序应跑通: %+v", r)
+	}
+}

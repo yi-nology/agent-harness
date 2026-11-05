@@ -160,7 +160,7 @@ modules:
   # 从未被执行过，连漂移都没人发现（执行体见 archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
-    requires: [toolname, sandbox, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"] # guardx 含 sandbox/wire（跨进程协议） # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包；sandbox 是执行档位与后端协议
+    requires: [toolname, sandbox, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg", "ext:github.com/oekit/logx"] # guardx 含 sandbox/wire（跨进程协议） # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包；sandbox 是执行档位与后端协议
     owner: harness
     managed: true
     notes: 程序化工具编排沙箱（goja VM，三重预算替代 OS 沙盘）
