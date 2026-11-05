@@ -47,8 +47,27 @@ const DefaultTimeout = 60 * time.Second
 const pollInterval = 200 * time.Millisecond
 
 // Budget 解析排水预算（0=缺省）。日志与部署口径共用此函数，避免两处各写一遍。
+//
+// **负值原样透传**：<0 是本包 Drain / DetachCtx 的「整体关闭排水」配置语义，
+// 本函数不做归一——宿主拿 Budget 的返回值去 context.WithTimeout 时若配置
+// 可能为负，请改用 ShutdownBudget（它把负值也归到缺省），否则负 ctx 立即
+// 过期，收尾协程秒退且无任何报错。
 func Budget(d time.Duration) time.Duration {
 	if d == 0 {
+		return DefaultTimeout
+	}
+	return d
+}
+
+// ShutdownBudget 解析**停机收尾预算**（0=缺省；负值同 0=缺省）。
+//
+// 与 Budget 的分工：宿主的「关闭排水」配置语义普遍用负值表达（排水关闭
+// ≠ 停机路径不要收尾余量），把这种配置值直接喂给 context.WithTimeout 会
+// 得到一个立即过期的 ctx——优雅停机静默变硬切。停机收尾场景（给
+// WithTimeout / 自定义硬上限用的预算）一律走本函数：d <= 0 都归
+// DefaultTimeout。要不要做轮排水（Budget 的负值语义）仍由 Drain 自己判。
+func ShutdownBudget(d time.Duration) time.Duration {
+	if d <= 0 {
 		return DefaultTimeout
 	}
 	return d

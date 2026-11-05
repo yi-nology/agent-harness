@@ -155,3 +155,44 @@ func Test并发签发消费不重复放行(t *testing.T) {
 		}
 	}
 }
+
+// TestIssueStrict 拒发不完整绑定：任一字段为空显式报错；三字段齐全才签发，
+// 消费取回的载荷与签发时一致。
+func TestIssueStrict(t *testing.T) {
+	s := New()
+
+	cases := []struct {
+		name string
+		b    Binding
+	}{
+		{"零值绑定", Binding{}},
+		{"缺 Subject", Binding{Purpose: "p", Target: "t"}},
+		{"缺 Purpose", Binding{Subject: "s", Target: "t"}},
+		{"缺 Target", Binding{Subject: "s", Purpose: "p"}},
+	}
+	for _, tc := range cases {
+		_, _, err := s.IssueStrict(tc.b, time.Minute)
+		if err == nil {
+			t.Fatalf("%s: 应显式报错而不是静默签发", tc.name)
+		}
+	}
+	// 拒发的票据不占容量空间
+	if s.Len() != 0 {
+		t.Fatalf("拒发的票据不得入存储空间, Len=%d", s.Len())
+	}
+
+	id, exp, err := s.IssueStrict(Binding{Subject: "s", Purpose: "p", Target: "t"}, time.Minute)
+	if err != nil {
+		t.Fatalf("完整绑定应签发成功: %v", err)
+	}
+	if id == "" || exp.IsZero() {
+		t.Fatal("签发应返回 id 与过期时刻")
+	}
+	got, ok := s.Consume(id)
+	if !ok {
+		t.Fatal("完整绑定签发的票据应可消费")
+	}
+	if got != (Binding{Subject: "s", Purpose: "p", Target: "t"}) {
+		t.Fatalf("消费取回应与签发一致, got %+v", got)
+	}
+}
