@@ -365,7 +365,8 @@ func TestCheckURLWithNilCtxBounded(t *testing.T) {
 	t.Cleanup(func() { net.DefaultResolver = old })
 
 	start := time.Now()
-	_ = CheckURLWithCtx(nil, "https://blackhole.example.com", Allow{})
+	// 钉的就是 nil-ctx 契约（doc：nil = 10s 上限形态），豁免 SA1012。
+	_ = CheckURLWithCtx(nil, "https://blackhole.example.com", Allow{}) //nolint:staticcheck // SA1012: nil ctx is the contract under test
 	if d := time.Since(start); d > 15*time.Second {
 		t.Fatalf("nil ctx 形态应在 10s 上限内返回，实耗 %s", d)
 	}
