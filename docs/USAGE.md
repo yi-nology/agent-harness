@@ -1945,7 +1945,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `vet` | go vet |
 | `lint` | golangci-lint（**未安装时明确报错退出**，不静默跳过） |
 | `test` | 全量单测 |
-| `cover-gate` | 全局覆盖率 < 60%（当前实测 **85.0%**）**或**任一包 < 70% 即红（逐包判据见 `scripts/pkgcov.awk`）|
+| `cover-gate` | 全局覆盖率 < 60%（当前实测 **87.0%**）**或**任一包 < 70% 即红（逐包判据见 `scripts/pkgcov.awk`，当前无豁免）|
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时明确报错退出，不静默跳过）|
 | `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）|
 | `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64；**windows 不支持**）|

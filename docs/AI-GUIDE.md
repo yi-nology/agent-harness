@@ -347,7 +347,7 @@ make check
 | `vet` | go vet | 按提示改 |
 | `lint` | golangci-lint（未安装时**明确报错退出**，不静默跳过） | `brew install golangci-lint`；CI 钉 v2.14.0 |
 | `test` | 全量单测 | 看失败断言 |
-| `cover-gate` | 全局覆盖率 < 60%（当前实测 85.0%）**或**任一包 < 70%（`scripts/pkgcov.awk`） | 补**该包**的用例，别降阈值；豁免登记在 Makefile 的 `PKG_COV_EXEMPT`，失效即红 |
+| `cover-gate` | 全局覆盖率 < 60%（当前实测 87.0%）**或**任一包 < 70%（`scripts/pkgcov.awk`） | 补**该包**的用例，别降阈值；豁免登记在 Makefile 的 `PKG_COV_EXEMPT`，失效即红（当前为空）|
 | `architecture-check` | 8 条规则 + 5 门包 + 32 包依赖方向 | 见下表 |
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**） | 依赖漏洞抬版本；**标准库**漏洞抬 go.mod 的 `go` 指令（`toolchain` 指令会被忽略）|
 | `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）| 按报告的 goroutine 栈修共享状态；别把该目标改成 `CGO_ENABLED=0` |
