@@ -72,13 +72,13 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 
 | 包 | 生产行数 | 外部依赖 | 职责 |
 |---|---|---|---|
-| `protocol` | 2037 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
+| `protocol` | 2329 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
 | `dispatch` | 36 | oagentkit/agent | allow 矩阵物化 + 深度上限 + 自派发拒绝 + 环检测（拓扑经 `EdgeSource` 由宿主提供）|
 | `eventbus` | 341 | oagentkit/runtime | 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责 |
 | `policy` | 89 | cloudwego/eino、oagentkit/guardx、oagentkit/toolgate | 操作审计门：阈值只降不升、解析失败即拒。**两个接入口**：`WithAuditGate`（包单个工具）与 `Stage`（接成**判定环的一环**——工具调用、程序内调用、子进程侧调用全走同一条 invoke 链，审批规则**只装配一次**；门面原先缺后者，宿主想接审批进判定链只能 import 上游 toolgate，「调用面逐字兼容」的承诺就断在那里）|
 | `spill` | 251 | oekit/pkg | 输出预算溢出：提示契约 / 取回 / 按龄清理 |
-| `pii` | 827 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）；运行时策略（开关/面/强度）整份单指针原子交换 + 变更订阅 `Subscribe`，代次从此不只可查、还可响应 |
-| `netguard` | 1232 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。扩展名单**整份原子交换 + 代次可观测**（两次独立取会读到撕裂策略）。代次**只有一个真相**（策略指针内的 gen，全局值是它的投影；交换走 CAS 循环，故并发下代次唯一、单调、不回卷）。**`DialFunc` 把同一套判定落到建连那一刻**（名字层 + egress 预检 + 建连后核对真实 RemoteAddr）——闭合「校验 → 拨号」的 rebinding 窗口；判据仍是 egress，**不引入第二套 IP 策略**。放行面**具名且两层共用同一类型**（`Allow`，零值即严）；`NewClient`/`NewTransport` 是接线件——宿主一行把守卫挂上，且 client 可注入（测试连本机假服务器时**只在测试里**放宽回环）**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」与 dial.go；与上游 `oekit/pkg/urlguard` 的分工（IP 策略单源 egress 不换、域名后缀层本包为超集）同样见包头|
+| `pii` | 768 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）；运行时策略（开关/面/强度）整份单指针原子交换 + 变更订阅 `Subscribe`，代次从此不只可查、还可响应 |
+| `netguard` | 1231 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。扩展名单**整份原子交换 + 代次可观测**（两次独立取会读到撕裂策略）。代次**只有一个真相**（策略指针内的 gen，全局值是它的投影；交换走 CAS 循环，故并发下代次唯一、单调、不回卷）。**`DialFunc` 把同一套判定落到建连那一刻**（名字层 + egress 预检 + 建连后核对真实 RemoteAddr）——闭合「校验 → 拨号」的 rebinding 窗口；判据仍是 egress，**不引入第二套 IP 策略**。放行面**具名且两层共用同一类型**（`Allow`，零值即严）；`NewClient`/`NewTransport` 是接线件——宿主一行把守卫挂上，且 client 可注入（测试连本机假服务器时**只在测试里**放宽回环）**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」与 dial.go；与上游 `oekit/pkg/urlguard` 的分工（IP 策略单源 egress 不换、域名后缀层本包为超集）同样见包头|
 | `statemachine` | 79 | 无 | 环节状态机：条件迁移的纯函数件 |
 | `contract` | 124 | 无 | 编排运行契约：编排引擎 ↔ 宿主状态的**唯一边界**（纯接口面，零实现）|
 | `checkpoint` | 882 | oekit/pkg | 编排续跑契约：进度快照存取边界 + **「续跑而非重放」**的恢复判定（空洞不采信 / 终态不自动重开 / 序号单调闸）+ **跨进程 CAS 存取契约**（`StoreCAS.SaveIfNewer`）与提交序列固化（`Committer`：抢序号→落库→**仅失败时**回滚，宿主无法漏掉）+ **依赖声明**（`StepDef.DependsOn` / `Isolated`）：并行 fan-out 的合法乱序完成按各自前驱采信，不再被「连续前缀」整批作废；零值 = 旧口径逐字不变|
@@ -95,11 +95,11 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 | `delta` | 253 | oagentkit/runtime | 增量节流：分片合并 + 权威整段优先 + 确定性收口扫序 |
 | `pending` | 62 | 无 | 多轮挂起态载体：单一编码入口 + 宽容解码（非法值降级为无挂起）|
 | `reminder` | 30 | oagentkit/guardx | 系统注入提示的防伪包裹（门面）：核心已下沉 `guardx/injectband`，本包只保调用路径稳定，宿主调用点一行不动 |
-| `drain` | 188 | oekit/logx、oekit/pkg | 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀（经 `Turns` 接口）|
+| `drain` | 309 | oekit/logx、oekit/pkg | 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀（经 `Turns` 接口）|
 | `ptc` | 2419 | dop251/goja、oagentkit/guardx、oekit/concurrency、oekit/logx、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面**；绑定可带 Signature 让模型按位置传参（可选形参以 `?` 标记、未传则不出现在 JSON 里；形态里的函数名必须是**净化后**的名字，规则见 `toolname`）；**程序内的 host.<tool>() 与普通工具调用走同一套 Stage 判定环**（不做这一步，本包就成了整条链上唯一绕过所有门禁的路径）；绑定名净化后撞名即装配期拒（否则后绑者顶替前绑者，副作用错位无信号）。**新增子进程后端**（`ptc-subprocess`）：把执行搬出宿主进程，用 **cgroup v2 的 `memory.max`** 兑现 `MaxMemory`（限**物理内存**；`RLIMIT_AS` 限的是虚拟地址空间，会把 Go runtime 一起掐死——已实测否掉）——进程内形态兜不住内存（Go 运行时没有「只给一个 VM 限内存」的开关，goja 公开 API 也没有内存限制），故子进程形态**如实声明**自己兑现这一项（`sandbox.Capable`），**建不出即拒绝执行**（fail closed），兜不住的后端在登记簿里不会被选中 |
 | `sandbox` | 98 | oagentkit/guardx | 执行沙箱的**档位语义**与**后端协议**（**门面**，核心在 `oagentkit/guardx/sandbox`）：`Level`（进程内解释器 → 内核级 → 硬件虚拟化，单调可比，零值即最弱档——漏声明的后端只落到最弱一档，方向是安全的那一侧）+ `Provider`（后端自报提供哪一档并执行程序）+ `Registry`（登记簿；按要求档位选**最弱**满足者，**无满足者即拒绝、不降级**——降级会让「宿主声明的强度」与「实际执行的强度」之间没有信号，档位机制就成了装饰）。零内部依赖，ptc 反过来依赖它（**沙箱机制不认识任何后端，后端认识沙箱**）。**已知局限**：档位是后端自报的，内核不校验其真实性——宿主不信任某后端，唯一办法是不登记它。**档位声明要签字**：后端的档位登记在 policy 的 `sandbox_providers` 段（人 review 时看得见「它凭什么说自己有这一档」），门禁 `harness-sandbox-provider-declared` 核对登记与代码事实不漂移（走 `go/ast` 按方法指纹认出后端实现）|
 | `watchdog` | 127 | 无| 被动配对不变量监视：环节收口仍有未执行声明 / 结果无对应声明；**只告警不裁决**（热路径裁决在守卫侧）|
-| `guardset` | 1070 | oagentkit/guardx、oekit/pkg | 守卫装配契约：一组**相互独立**的判定一并求值，多条拒绝合成一条（按 Rank 定序、**不可重试优先**的保守裁决、指引指向真正卡住的那一条）。接成 `invoke` 链上单独一环——链在第一个拒绝处就收口，后面的守卫永远没机会说话，模型一次只听得到一个理由，这正是本包补的那一面；链本身的顺序/留痕/panic 兜底沿用上游，不重复实现。**装配面 `Assembly` 提供「撤销」的机械路径**：撤销 = **换整份**，不是改其中一条——改其中一条会让「当前有哪些守卫」出现两个真相；换份走 **CAS + mutate(旧值)**（并发撤销**不丢更新**，否则「撤销被撤销」）、代次住在被换的那份里（全局代次是投影）、链不用重接、旧份不被修改、在途判定跑在旧份上；「全部撤销」不是降级是失守（换上去的那份永远非空） |
+| `guardset` | 1016 | oagentkit/guardx、oekit/pkg | 守卫装配契约：一组**相互独立**的判定一并求值，多条拒绝合成一条（按 Rank 定序、**不可重试优先**的保守裁决、指引指向真正卡住的那一条）。接成 `invoke` 链上单独一环——链在第一个拒绝处就收口，后面的守卫永远没机会说话，模型一次只听得到一个理由，这正是本包补的那一面；链本身的顺序/留痕/panic 兜底沿用上游，不重复实现。**装配面 `Assembly` 提供「撤销」的机械路径**：撤销 = **换整份**，不是改其中一条——改其中一条会让「当前有哪些守卫」出现两个真相；换份走 **CAS + mutate(旧值)**（并发撤销**不丢更新**，否则「撤销被撤销」）、代次住在被换的那份里（全局代次是投影）、链不用重接、旧份不被修改、在途判定跑在旧份上；「全部撤销」不是降级是失守（换上去的那份永远非空） |
 | `archcheck` |     3344 | gopkg.in/yaml.v3 | 架构门禁执行体：`architecture-policy.yaml` 的**可执行面**（规则判定 / 门包判定 / 依赖方向判定 / policy 自校验 / 结构阈值）。**可导入包**——宿主仓复用同一套判据，不必各写一遍（各写一遍必然各判一套，漂移到没人发现为止）。判据与执行体分离：结构性判定一律走 `go/ast`（import 声明有六种以上书写形态，逐行正则必然漏）。依赖方向判三条：越界内部依赖 / 越界跨仓依赖（`ext:` 登记）/ 未登记包目录。**执行沙箱后端的档位登记**（`sandbox_providers` 段 ↔ 代码事实，走 `go/ast` 按方法指纹认出后端实现，核对档位漂移与未登记）。**陈旧包根当天即红**——root 指向空目录即「声明与事实已偏离」，而没有执行体时这句话没人读 |
 | `trajectory` |      601 | 无 | 轨迹投影器：**事件流 → 一轮 turn 的步骤序列**（增量投影：喂新事件继续更新既有行）。行含 kind / 起止时刻 / **实测耗时**（起止相减现算）/ 工具调用**配对状态**（paired / missing_result / duplicate_result / unpaired_result / duplicate_call）/ 摘要。⭐ **结构上不设时长字段**——时长唯一来源是起止相减，**估算值无处安放**（没有实测就是没有实测，不拿 payload 体积之类糊过去）；配对缺口语义分两层：`missing_result`/`unpaired_result` 是**当前状态**（等到了会被清掉），`duplicate_*` 是**发生过**（永久留在清单里）。事件倒挂（结果先于调用）按「就地补起点」处理且此时判为无实测值。与 `watchdog` 分工：watchdog 判**不变量**（只告警），本包判**这一轮的流水**（给宿主渲染）|
 | `ticket` |      172 | 无 | 一次性短时授权票据的机制面：签发 / **单次消费**（用过即焚）/ TTL / **用途绑定**（载荷原样携带，语义归宿主）。⭐ 过期判定与消费判定**同一处**（两处各判一次必有一处漂）；时钟**可注入**——过期语义要能被确定性测，不靠 sleep（靠 sleep 的话「等到了」会被当成「判对了」，判定写反了测试照样绿）；票据空间**有界且满了显式拒发**（默默淘汰会让宿主以为票据还在、实际已失效 ⇒ 表现为「偶发地连不上」，极难查）；随机源失败**显式报错**（不降级成可预测 id——id 一旦可预测，单次消费就没意义了）。进程内存储（重启即失效）对「只活几十秒的票据」是**正确默认**：落盘即多一份要擦的痕迹 |
@@ -112,6 +112,11 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 > ——容差内的逐行涨落不拦，改一行代码不必顺手改文档，而跨量级的误述
 > （某包声称 ~86 行、实际 412 行那种）仍然拦下。行数取较大者为分母，
 > 「少写」与「夸大」同等对待。职责列与依赖列非空也在判定内。
+>
+> **`internal/` 下的包刻意不在本表**：它们是内部件，不是对外承诺（`docsync` 的
+> 反向收录判定只看一级目录，故 `internal/subhub` 不会要求一行）。但它们**不受
+> 「未登记包」豁免**——`architecture-policy.yaml` 的 `modules` 段照样要给
+> `{id, roots, requires, owner}`，否则依赖方向门禁判它「对本门禁隐形」。
 
 ## 特性
 
@@ -178,11 +183,11 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 18,678 行 / 108 文件（不含 `_test.go`） |
-| 测试 | 134 个测试文件 |
-| 覆盖率 | **85.2%**（门槛 60%，真阈值不是摆设） |
+| 生产代码 | 19,624 行 / 113 文件（不含 `_test.go`） |
+| 测试 | 139 个测试文件 |
+| 覆盖率 | **85.5%**（门槛 60%，真阈值不是摆设） |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
-| 门禁 | 8 条规则（`rules` 段）+ 4 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 29 包依赖方向 + README 包表一致性 |
+| 门禁 | 8 条规则（`rules` 段）+ 4 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 32 包依赖方向 + README 包表一致性 |
 | 例外登记 | **0** |
 
 > ⚠️ **上表不在 `docsync` 的判定面内**——`docsync` 只校验下面那张「包清单」表的
@@ -206,6 +211,72 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 > 实测已是 **18,678 行/108 文件、134 个测试文件、85.2%**——**又漂了 578 行 / 2 个文件**，
 > 同样没人报过警。**这张表已经这样漂过四轮**（11,491 → 13,336 → 16,974 → 18,100 → 18,678），
 > 每轮都靠人记得回来重算——这正是「散文不是门禁」那条纪律说的：**没人负责的东西会静默失真**。
+>
+> 2026-11-05 又校准一次（第五轮）：上一版记的 18,678 行/108 文件、134 个测试文件、85.2%，
+> 这一轮把依赖整体抬到最新（oekit / oagentkit 全家 + eino / goja / jsonschema）、删掉根目录
+> 的版本钉子 `tools.go`、并把三份重复的订阅表收编到 `internal/subhub` 之后，实测已是
+> **19,573 行/111 文件、139 个测试文件、85.5%**——**漂了 895 行 / 3 个文件**（其中约 600 行
+> 是本轮 `git pull` 进来的 v0.16.0，此前也一直没人重算）。门禁表里「依赖方向」那一格同时
+> 从 29 包改为 32 包（`archcheck` 的实测输出）。
+
+>
+> 2026-11-05 同日再校准一次（第六轮）：本轮两处去重，最终实测
+> **19,679 行 / 113 文件、139 个测试文件、85.5%**。
+>
+>   1. `drain` 的两份收敛循环收成一份——新增 `drain/converge.go`，`Drain` /
+>      `DrainSession` 各自缩成几行委托。drain 包从 188 行涨到 291 行（+103），而
+>      **去重本身净减 33 行**（`drain.go` / `session.go` 合计 +21/−54），涨的全是
+>      那一份循环的**理由注释**（停机路径为什么不该有两个副本、期限为什么只由 ctx
+>      承载、`base` 切片为什么不能直接 `append`）。
+>   2. `ptc` 的三处「`<=0` 即缺省」预算归一收成 `ptc/limits.go` 一份——那三处
+>      （进程内 `Run` / 子进程父侧 `run` / 子进程内 `runProgramInChild`）分处**两个
+>      进程**，各写一遍时改一处就只剩一个进程跟着变，症状是「换个后端跑，程序莫名
+>      先超时了」。
+>
+> 值得单独记一笔的是第 1 项的账：**行数不是复杂度**——上表这类纯行数指标看不见
+> 「副本从 2 份变 1 份」，反而把理由注释记成「涨了」。
+>
+> 2026-11-06 再校准一次（第七轮，**破坏性重构**）：上一版记的 19,679 行 / 113 文件、
+> 139 个测试文件、85.5%，本轮**删掉四个「废弃但保留」的公开入口**并结清全部台账后，
+> 实测 **19,606 行 / 113 文件、139 个测试文件、85.5%**（净减 73 行，文件数不变——
+> 一个测试文件改名、一个包内新增文件，两两抵消）。
+>
+> 删的是这四个：`netguard.CheckURL` / `netguard.CheckChain`（双 bool 包装）、
+> `pii.Redact` / `pii.RedactValue`（面无关门面）。删它们的共同理由不是「省行数」，
+> 而是**它们各自是一个只能靠自觉的洞**：
+>
+>   - 双 bool 包装里写反两个位置**不会编译报错**，只会静默改变放行面——而放行面是
+>     安全边界。`Allow` 具名类型出现后，包装的唯一价值是「不破宿主 API」，代价却是
+>     一条读不出意图的 SSRF 入口常年可用。删掉后 `Allow` 成为唯一形态：
+>     「哪个 bool 是哪个」这个问题**在类型层面消失**。
+>   - 面无关门面拿不到 `blocked` 信号，宿主把策略配成 `block` 时它只会静默打码。
+>     `Deprecated` 标记**不是防线，它只是提醒**。
+>
+> 连带清偿：保住护栏的行为而非函数名——`pii/facade_test.go` 的三条护栏（策略必须
+> 生效 / 面关闭必须透传 / 结构下探不得丢失）原样迁到 `pii/apply_test.go` 的
+> `Apply`/`ApplyValue` 上；netguard 那条「两种形态逐位穷举等价」的用例随包装一起删
+> （包装不存在，等价性无从谈起）；netguard 的 36 处测试调用点改写为
+> `CheckURLWith`/`CheckChainWith` + `Allow`。
+>
+> 同日再补一笔（harness#24 的接线面）：实测 19,612 行 / 113 文件（+6 行，全是
+> `drain.Budget` 的 godoc）。这 6 行补的是一个**修复修在库里、没修到手册**的旧账——
+> `ShutdownBudget` 早在 v0.16.0 就有了，但 `docs/USAGE.md` §3.8.2 的接线范式只写
+> `Budget(0)`，于是下游宿主在 `main.go` 里手写了 `d<0→0` 前置归一。详见 README
+> 的 [AGENTS.md](AGENTS.md#修复落在库里--修复到达调用点2026-11-06harness24-结清实录)「修复落在库里 ≠ 修复到达调用点」。
+>
+> 同日第三笔（**编译期护栏**，实测 19,624 行 / 113 文件，+12 行）：把 `drain.Budget`
+> 的返回值从 `time.Duration` 改成命名类型 `DrainBudget`，`Drain` / `DrainSession` /
+> `DetachCtx` 只收该类型。于是 `context.WithTimeout(ctx, drain.Budget(x))` 从
+> 「运行期拿到一个立即过期的 ctx、一句错都不报」变成**编译错误**。
+> 反向验证用 `go vet -overlay` 注入探针（探针不进仓）：注入 ⇒ `cannot use Budget(...)
+> (value of type DrainBudget) as time.Duration value`；换成显式 `time.Duration(...)`
+> ⇒ 过。这是 v0.17.0 的破坏性变更，兼容包装**刻意不做**——包装会让「直接传原始
+> 配置值」继续编译，而那正是要消灭的静默硬切入口。
+>
+> 顺带记一句反向的账：**删掉 API 只减了 73 行**（新增的理由注释吃掉了大半）。
+> 如果拿行数当「删除冗余」的验收指标，会得出「这轮几乎什么都没做」的结论——
+> 而实际删掉的是两条**不可见**的风险入口。这正是上面「行数不是复杂度」那条的
+> 加强版：**它也不是风险面的度量**。
 >
 > **重算口径（照抄这三条，别手算）**——「生产代码」= 全仓非 `_test.go` 的 `.go`，
 > 排除隐藏目录与 `vendor`：
@@ -524,6 +595,7 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 | 本仓版本 | 变更 | 下游要做什么 |
 |---|---|---|
+| **v0.17.0** | **三处破坏性收窄 + 依赖地板抬升**：① `drain.Budget` 返回**命名类型** `DrainBudget`（`Drain` / `DrainSession` / `DetachCtx` 只收它），于是 `context.WithTimeout(ctx, drain.Budget(x))` **编译不过**——那正是「优雅停机静默变硬切」的唯一入口；收尾预算一律 `drain.ShutdownBudget`（返回普通 `time.Duration`）。`drain` 包同时把 `Drain` / `DrainSession` 两份收敛循环合并成一份。② 删 `netguard.CheckURL` / `netguard.CheckChain`（双 bool 包装），放行面唯一形态是 `Allow{...}` + `CheckURLWith` / `CheckChainWith`。③ 删 `pii.Redact` / `pii.RedactValue`（面无关门面），唯一入口是 `pii.Apply` / `ApplyValue`（**必须显式指定面**）。另：`ptc` 三处预算归一收进 `ptc/limits.go`、三份快照式订阅表收编到 `internal/subhub`（均为内部实现，无 API 变化）。**依赖**：oekit / oagentkit 家族抬到本轮最新（逐项见 [CHANGELOG.md](CHANGELOG.md) 的 v0.17.0 段）；根目录 `tools.go` 版本钉子删除 ⇒ `oagentkit/{llm,obs,textx}` **不再是本仓依赖** | **① `go mod tidy`**——地板抬升对下游是隐式 breaking，不跑就报 `updates to go.mod needed`，且报错不提真正原因。<br>**② `drain` 接线改两个入口**：`Drain` / `DrainSession` / `DetachCtx` 的实参包一层 `drain.Budget(cfg.X)`；喂 `context.WithTimeout` 的那一个数改走 `drain.ShutdownBudget(cfg.X)`。机械改法、**语义不变**（`Budget` 对正值与负值都原样，只有 0 补缺省），但**别把 `Budget` 的负值归一**——`<0` 是「关闭排水」的配置语义，归一会把「少做」静默翻成「多做 60 秒」<br>**③ `netguard` 改调用形态**：`CheckURL(u)` → `CheckURLWith(u, Allow{...})`、`CheckChain(c)` → `CheckChainWith(c, Allow{...})`——两个 bool 的位置不再需要记（写反不报错，只是静默改变放行面）<br>**④ `pii` 改调用形态**：`Redact` / `RedactValue` → `Apply` / `ApplyValue` 并显式传面；面无关门面拿不到 `blocked` 信号，策略配成 `block` 时它只会**静默打码**<br>**⑤ 若你的 `go.mod` 靠本仓间接拉起过 `oagentkit/{llm,obs,textx}` 的版本地板**，请自己在 `go.mod` 里显式钉——本仓不再声明它们 |
 | **v0.14.0** | **依赖地板抬高**（`oekit/pkg` v0.28.0→v0.30.0、`oekit/logx` v0.7.1→v0.8.0、`oekit/concurrency` v0.22.0→v0.23.0、`oekit/core` v0.12.0→v0.12.1、`oagentkit/guardx` v0.15.0→v0.17.0、`oagentkit/llm` v0.17.1→v0.18.1、`oagentkit/textx` v0.6.2→v0.7.1、`oagentkit/mcpkit` v0.8.6→v0.9.0）；**本仓自身代码零改动** | **① `go mod tidy`**——地板抬高对下游是隐式 breaking，不跑就报 `updates to go.mod needed`，且报错不提真正原因。<br>**② 若你直接 import 过 `github.com/oagentkit/guardx/audit` 或 `github.com/oagentkit/guardx/bashguard`：这两个包自 guardx v0.17.0 起**不再属于 guardx 模块**，要改 import 路径**——audit → `github.com/oagentkit/obs/audit`；bashguard → `github.com/oagentkit/tools/bashguard`。本仓自身零命中这两个路径（用的是新路径 `obs/audit`），但你的宿主代码若直接依赖过，需跟着换这一行 import。<br>**其余全是等价改写与纯新增，无公开 API 变更**：`oekit/pkg` v0.30.0 补 `convert.AnyToStrOr` / `OptStr` / `OptBool` / `OptInt32` / `OptInt64` / `AnyToInt32` 六个 nil 安全入口（`AnyToStr(nil)` 此前返回 字符串 `"<nil>"` 这种**长得像值**的哨兵），并修 `cache.HashKey` 的参数边界歧义（`("a","b")` 与 `("a:b")` 曾算出同一个 key ⇒ 缓存串数据）；`oekit/logx` v0.8.0 补 `Nop()` 静默 logger 与 `LevelOff` 档；`oekit/concurrency` v0.23.0 修 `budget.Ledger` 的 int64 溢出绕过（一次 `n ≈ MaxInt64` 的消耗曾让该维度**永久**变成「无限制」）与 `singleflight.DoChan` 的清理漂移（`Forget` 后同 key 曾并发跑两次 fn），并补 `Ledger.Used` 观测口；`oagentkit/mcpkit` v0.9.0 补 `Pool.Tool(server, name)` 与 `ToolsResult.ByServer`（纯新增，`Tools` 的扁平列表保留） |
 | **v0.13.0** | **`spill` 路径逃逸修复（fail-closed 收口）**：会话标识与定位符的判定改委托 `oekit/pkg/pathx.IsSafeFileName`——旧实现用 `filepath.Base` 判等，而 `filepath.Base("..") == ".."`，于是 `sessionID=".."` 能让落点指到 spill 根目录的**父目录**（三重守卫两道一起失效，实测可读出根外文件）；**检索条数钳制**改用 `oekit/pkg/pagination.Policy` 口径（等价）；**schema 编译缓存**收编 `oekit/pkg/cache`（内部实现，契约不变）；**依赖地板抬高**（`oekit/pkg` v0.22.0→v0.28.0、`oekit/concurrency` v0.20.1→v0.22.0、`oagentkit/agent` v0.10.6→v0.11.0、`guardx` v0.14.0→v0.15.0、`llm` v0.16.0→v0.17.1、`obs` v0.9.6→v0.9.7、`toolgate` v0.12.4→v0.12.5、`mcpkit` v0.8.5→v0.8.6） | **① `spill` 的判定口径收紧了**：会话标识/定位符含路径形态（`.` / `..` / 含 `/` `\` / 含 Windows 盘符相对路径）此前多数**静默通过**，现在一律**显式拒绝**（返回 `ErrBadName` / 「会话标识非法」）。若你传的是用户可控的会话标识，非法形态从「悄悄读到别的目录」变成「拿到错误」——**这是修复，不是回归**。<br>**② `go mod tidy`**——地板抬高对下游是隐式破坏性变更，不跑就报 `updates to go.mod needed`，且报错不提真正原因。<br>**③ 两处上游 BREAKING 会传导到你**：`oekit/concurrency` v0.21.0 起 `ratelimit.Limiter` 接口**启用了 `Wait(ctx context.Context) error`**——**自行实现该接口的宿主需补上这个方法**（旧实现不再满足接口）；`oekit/pkg` v0.26.0 起 `convert.ResolveClientIP` **去掉了 `xri` 入参**（确需采信改用 `ResolveClientIPWithXRI`）。本仓自身两处都没直接用到，但你的宿主代码可能用了。<br>**其余全是等价改写，无公开 API 变更**：`pagination.Policy` 口径与旧 `clampLimit` 逐条等价（n≤0→默认、超限→钳到上限、区间内原样）；schema 缓存与单边界钳位均为内部实现替换 |
 | **v0.10.0** | **`guardset.Assembly` 对齐 `netguard` 的「整份原子交换」**：换份走 **CAS + `mutate(旧值)`**（新增 `SwapFunc`）；新增**代次**（`Assembly.Generation()` / `Snapshot()` / `Outcome.Generation`）与**换份订阅**（`Subscribe`/`Unsubscribe`）；**修两处静默失效**：① 并发换分**丢更新**⇒「撤销被撤销」（被撤掉的守卫悄悄复活）；② 通知期回调 panic 把**已落地**的换份说成失败 | **若你按 v0.9.0 的示例用 `Swap(next)` 做读改写，请改用 `SwapFunc(ctx, mutate)`**——`Swap` 的语义是「整份替换为这一份」，**不基于当前那一份**；两个并发撤销者会互相覆盖，被撤掉的守卫悄悄复活且**没有任何提示**。`SwapFunc` 基于当前份做读改写（CAS 循环），并发下不丢更新。**其余全是新增 API，无接口变更**（`SwapRecord`/`Outcome` 只**新增**字段）；`Set` 仍只读，`guardset.Stage(set)` 仍可用 |

@@ -1314,6 +1314,9 @@ func finish(p *delta.Pacer, publish func(delta.Pub)) {
 package myapp
 
 import (
+	"context"
+	"time"
+
 	"github.com/yi-nology/agent-harness/drain"
 )
 
@@ -1326,10 +1329,53 @@ func dispatch(rootCtx context.Context) context.Context {
 func shutdown(ctx context.Context, turns drain.Turns) {
 	drain.Drain(ctx, turns, drain.Budget(0)) // 恒无返回值，排水失败不阻断关停链
 }
+
+// ③ 预算来自配置时（最常见的形态）：两个解析入口**不可互换**
+func shutdownFromConfig(ctx context.Context, turns drain.Turns, cfgDrain time.Duration) {
+	// 收尾预算（给 WithTimeout 用的硬上限）→ ShutdownBudget：d <= 0 一律归缺省，
+	// 返回值**恒为正**，喂给 WithTimeout 是安全的。
+	ctx, cancel := context.WithTimeout(ctx, drain.ShutdownBudget(cfgDrain)+15*time.Second)
+	defer cancel()
+
+	// 轮排水预算 → Budget：负值是「关闭排水」的配置语义，**必须原样**传给
+	// Drain / DetachCtx。它和上面那个不是同一个数。
+	drain.Drain(ctx, turns, drain.Budget(cfgDrain))
+}
 ```
+
+> **为什么是两个函数而不是一个**：配置里的一个 `time.Duration` 同时承载了两件事——
+> 「要不要做轮排水」（负 = 关闭）与「停机收尾给多久」（必须恒正）。压成一个数，
+> 就必然有人把负值喂进 `context.WithTimeout`，得到一个**立即过期**的 ctx。
+> `Budget` 保留负值透传、`ShutdownBudget` 归一负值，是**刻意**把这两件事分开，
+> 不是两个重复的解析器。
+
+> **类型层面也分开了**：`Budget` 返回命名类型 `drain.DrainBudget`，`ShutdownBudget`
+> 返回普通 `time.Duration`。故把前者塞进 `context.WithTimeout` **编译不过**：
+> `cannot use Budget(...) (value of type DrainBudget) as time.Duration value`。
+> 也就是说上面这条「别喂错」不靠记性，靠编译器。真要把排水预算当普通时长用时
+> 显式写 `time.Duration(b)`——那个转换就是一次「我知道自己在做什么」。
+>
+> ⚠️ **v0.17.0 破坏性变更**：`Drain` / `DrainSession` / `DetachCtx` 的 budget 参数
+> 类型改为 `DrainBudget`。既有调用点用 `drain.Budget(x)` 包一层即可，
+> **行为零变化**（`Budget` 对正值与负值都原样返回，只有 0 补缺省，与旧签名逐字相同）。
+> 这一步刻意不做兼容包装：兼容包装会让「直接传原始配置值」继续编译，
+> 而那个写法正是本次要消灭的静默硬切入口。
 
 **坑**
 
+- **`Budget` 与 `ShutdownBudget` 不可互换，这是本包最贵的一次踩坑（harness#24）**。
+  `Budget` 的负值是「关闭排水」的**配置语义**，必须原样交给 `Drain` / `DetachCtx`；
+  而把它的返回值喂给 `context.WithTimeout`——在 v0.17.0 之前会拿到一个**立即过期**
+  的 ctx（收尾协程秒退、**且一句错都不报**，表现是「优雅停机静默变硬切」），
+  v0.17.0 起直接编译不过。收尾预算一律走 `ShutdownBudget`（`d <= 0` 归缺省，
+  返回值恒为正）。
+  历史上下游宿主因此都在 `main.go` 里手写了 `d<0→0` 前置归一——
+  **那不是各自多虑，是本节的接线范式当时漏了这条**（修 API 而没修手册，
+  等于修复停在库里）。
+- **不要「顺手」把 `Budget` 的负值也归一**。那会把「关闭排水」静默变成
+  「排水 60 秒」：方向从「少做」翻成「多做」，而配置里写下的意图被吞掉，
+  比原缺陷更坏。`drain_test.go` 的 `TestBudget` 与
+  `TestBudgetAndShutdownBudgetAreNotInterchangeable` 钉着这两个方向。
 - **这是本包唯一危险的使用前提**：脱钩后必须仍有一条取消通路兜底（轮内超时 /
   `Drain` 强制收刀），否则轮会真的泄漏。
 - **部署宽限期须 ≥ `DefaultTimeout`(60s) + 启动对账余量**，
@@ -1405,10 +1451,10 @@ func updatePolicy() error {
 
 **坑**
 
-- **`CheckURL` / `CheckChain` 的双 bool 形态已废弃**，请用具名的 `CheckURLWith` /
-  `CheckChainWith` + `netguard.Allow`。旧签名仍在（不破宿主 API），但两个 bool 的
-  含义只能靠调用点约定区分，而放行面是安全边界；具名形态让调用点自解释，
-  且将来加第三个放行维度不必破签名。**零值 `Allow{}` 是严的**（私网与回环全拒），
+- **只有 `CheckURLWith` / `CheckChainWith` 两个入口**（2026-11-06 破坏性删除）。
+  此前的 `CheckURL` / `CheckChain` 双 bool 形态已删——两个 bool 的含义只能靠调用点
+  约定区分，而放行面是安全边界；具名 `netguard.Allow` 让调用点自解释，且将来加
+  第三个放行维度不必破签名。**零值 `Allow{}` 是严的**（私网与回环全拒），
   要放行必须显式写出来。
 - **拨号层要接上，否则 rebinding 窗口仍在**。`CheckURLWith` 是**写面校验**
   （配置时判一次）；实际请求在之后由 HTTP 客户端再解析一次 DNS，两次之间权威
@@ -1539,7 +1585,10 @@ func guardOutflow(userMsg, modelAns string, toolResult any) error {
   但会再触发一轮通知，**递归深度由订阅者自己收敛**。
 - **15 位旧身份证不检**（已停用 20 年）；**裸 `86` 前缀不认**，只认 `+86` / `0086`。
 - **不下探标量**：数字/布尔原样返回——JSON number 形态的手机号不在覆盖面。
-- `Redact` / `RedactValue` 已 **Deprecated**（面无关且不回报是否阻断）。
+- **`Redact` / `RedactValue` 已于 2026-11-06 删除**（面无关且不回报是否阻断——
+  宿主把策略配成 `block` 时它拿不到信号，等于只能靠自觉）。唯一入口是
+  `Apply` / `ApplyValue`，**必须显式指定面**；每个出口声明自己在哪一面，
+  这条从语义约束变成调用点可见的事实。
 
 ---
 

@@ -20,6 +20,11 @@
 `Redact`/`RedactValue` 标记 `Deprecated`，写明拿不到 blocked 信号。
 回归护栏 `pii/facade_test.go`。
 
+> **2026-11-06 后续**：这两个门面**已被删除**（破坏性重构）。当时的「标记 Deprecated
+> 但保留」是过渡态，它把一条「策略配成 block 也拿不到阻断信号」的路径留在了
+> 公开面上——**废弃标记不是防线，它只是提醒**。护栏三条已原样迁到
+> `Apply`/`ApplyValue`（文件改名 `pii/apply_test.go`）：守的是行为，不是函数名。
+
 ## 二、`checkpoint`：`SeqGate` 没有回滚路径，且重启即失效
 
 **（a）无回滚**：`Accept` 先记门、调用方再 `Store.Save`。落库失败时门已跑到存储前面，

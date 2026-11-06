@@ -26,7 +26,9 @@ var snippetQuality = []*regexp.Regexp{
 }
 
 // ParseReport 解析模型输出为报告：
-//  1. trim；2) 若整体被 ```json 栅栏包裹则剥离；3) 快速判定形如报告；
+//  1. trim；2) 若**整体**被围栏包裹则剥离（锚定整串，判定与理由见 report_types.go
+//     的 fenceRe——刻意不换 jsonrepair.StripCodeFence，两者判的不是同一个问题）；
+//  3. 快速判定形如报告；
 //  4. 标量归一化（真实 LLM 会在字符串位输出 bool/数字——统一转文本）；5) JSON 反序列化。
 //     任何一步失败返回 ErrNotReport——调用方按失败兜底降级读 markdown 主体，不阻塞聚合。
 //

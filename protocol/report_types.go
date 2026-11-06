@@ -297,6 +297,25 @@ type Report struct {
 }
 
 var (
+	// fenceRe 「整份 payload 就是一个 markdown 围栏块」时剥掉围栏。
+	//
+	// **为什么不用 jsonrepair.StripCodeFence**——上游自称「围栏语义的单源」，
+	// 但它判的不是同一个问题。实测两种输入，换过去会改变受理面（并引入一条真实的
+	// 降级路径）：
+	//
+	//	输入（略）                                     本式            上游
+	//	整串围栏，字段里含 ```sh 代码块               剥外层围栏 ✓    截断在内层围栏 ✗
+	//	围栏 + 前后散文                                不剥（交提取）  剥成围栏内容
+	//
+	// 第一行是硬伤：上游用**第一个**闭合围栏收尾（惰性 `.*?`），本式以**最后一个**
+	// 能收尾的围栏结尾（`\s*$` 锚定）。报告字段里出现代码块（`commands[].detail`
+	// 写一段命令片段）时，上游会把 payload 截断在字符串中间，而截断产物经 Repair
+	// 补括号即可「解析成功」——正是 maxReportInput 处记录的「残缺内容以成功放行」
+	// 形态。第二行是分工问题：无锚定剥离等于把「提取对象」这一步提前，与本文件
+	// 三条通道（直解 / 修复 / 提取）的分工冲突。
+	//
+	// 语言标记刻意只认空与 json（上游认任意 info string）：非 json 标记的内容对
+	// 报告域没有意义，交给 ExtractObject 提取对象比按 yaml/toml 剥完当 JSON 解析更安全。
 	fenceRe = regexp.MustCompile("(?s)^```(?:json)?\\s*(.*?)```\\s*$")
 	// reportKeyRe 形如统一报告的快速判定（与 kyaiops-filter.js 同判据）。
 	reportKeyRe = regexp.MustCompile(`"(agent_name|domain|conclusion|recommendation|confidence)"`)
