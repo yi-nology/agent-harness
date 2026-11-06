@@ -12,7 +12,7 @@
 // 会误命中。缺省策略 mask 保长度（前段+星号+尾段），日志对齐与残留定位友好；其余
 // 策略的处置形态由宿主注入的 StrategyKind 决定（见 policy.go）。
 //
-// 结构面：ApplyValue（按敏感面）与历史门面 RedactValue 递归下探 map[string]any /
+// 结构面：ApplyValue（按敏感面）递归下探 map[string]any /
 // map[string]string / []any / []string——其中 map[string]string 是 agentkit
 // logredact.RedactValue 的已知结构盲区（alert_svc redactMap 绕行注释在案），
 // 本包一并收口。nil 容器原样保留：JSON 的 null 与空容器在审计链上是两种形状，
@@ -160,16 +160,6 @@ func dedupeSpans(in []Span) []Span {
 	return out
 }
 
-// Redact 打码 s 中全部 PII span。全局关闭时原样返回。
-//
-// Deprecated: 面无关的历史门面，**不回报是否阻断**。它会在任一面启用时按当前
-// 策略处置（不再是硬编码 mask），但拿不到 blocked 信号——宿主若需要 fail-closed
-// 处置（策略配成 block 时必须中断），请改用 Apply / ApplyValue。
-func Redact(s string) string {
-	out, _ := applyAny(CurrentPolicy(), s)
-	return out
-}
-
 // maskSpan 保长度打码：手机号留前 3 尾 4（+86/0086 前缀保留——归属信息不敏感），
 // 身份证留前 4 尾 2（省市级可见、生日与顺序码全掩）。
 func maskSpan(v string, kind Kind) string {
@@ -185,14 +175,4 @@ func maskSpan(v string, kind Kind) string {
 		return v[:4] + strings.Repeat("*", 12) + v[16:]
 	}
 	return strings.Repeat("*", len(v))
-}
-
-// RedactValue 递归下探常见载荷结构处置字符串值。不下探的标量（数字/布尔）原样
-// 返回——JSON number 形态的手机号不在覆盖面（载荷惯例为字符串，数字形态
-// 无边界可判、误伤面大）。
-//
-// Deprecated: 同 Redact，面无关且不回报阻断。新代码请用 ApplyValue 并显式指定面。
-func RedactValue(v any) any {
-	out, _ := applyAnyValue(CurrentPolicy(), v)
-	return out
 }

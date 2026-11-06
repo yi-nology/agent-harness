@@ -5,7 +5,7 @@ package pii
 // ## 为什么原包不够
 //
 // 原包只有「检出即保长打码」一种处置，且出口面只有一维开关。本仓所有 PII 出口
-// （审计链、事件双出口、外发文案、**工具返回**）走的都是同一个 RedactValue——
+// （审计链、事件双出口、外发文案、**工具返回**）走的都是同一个面无关入口——
 // 但工具返回与模型输出根本不是同一个风险面：工具返回常被当作可信数据回灌模型，
 // 值面敏感度与「给人看的输出」不是一个量级，用同一处置既是过度脱敏也是
 // 处置不足并存。
@@ -217,7 +217,7 @@ func updatePolicy(mutate func(*Policy)) {
 // SetEnabled 注入全局开关（conf security.pii_value_mask / env BQ_PII_VALUE_MASK）。
 func SetEnabled(on bool) { updatePolicy(func(p *Policy) { p.enabled = on }) }
 
-// Enabled 当前是否启用（关闭时 Redact/RedactValue 原样透传，零改写）。
+// Enabled 当前是否启用（关闭时 Apply / ApplyValue 原样透传，零改写）。
 func Enabled() bool { return curPolicy.Load().enabled }
 
 // SetSurfaces 注入面集合。

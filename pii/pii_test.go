@@ -15,7 +15,33 @@ func withCheck(base17 string) string {
 	return base17 + string(idCheckChars[sum%11])
 }
 
+// redactIn / redactInValue 本文件的取形助记：以 input 面处置并断言「mask 缺省下
+// 不得要求阻断」。
+//
+// 存在的理由：面无关门面（Redact / RedactValue）已于 2026-11-06 删除——它拿不到
+// blocked 信号，宿主把策略配成 block 时无法中断，是个只能靠自觉的洞。本文件的
+// 用例只关心**处置形态**，阻断信号由 policy_test.go / surface_*.go 专门断言；
+// 这里显式写出面名，顺带把「每个出口都必须声明自己在哪一面」变成调用点可见的事实。
+func redactIn(t *testing.T, s string) string {
+	t.Helper()
+	out, blocked := Apply(SurfaceInput, s)
+	if blocked {
+		t.Fatalf("mask 缺省策略下 input 面不应要求阻断: %q", s)
+	}
+	return out
+}
+
+func redactInValue(t *testing.T, v any) any {
+	t.Helper()
+	out, blocked := ApplyValue(SurfaceInput, v)
+	if blocked {
+		t.Fatalf("mask 缺省策略下 input 面不应要求阻断: %v", v)
+	}
+	return out
+}
+
 func TestRedactMobile(t *testing.T) {
+	restore(t)
 	cases := []struct {
 		name string
 		in   string
@@ -32,13 +58,14 @@ func TestRedactMobile(t *testing.T) {
 		{"1[3-9]不匹配", "12345678901", "12345678901"},
 	}
 	for _, c := range cases {
-		if got := Redact(c.in); got != c.want {
-			t.Errorf("%s: Redact(%q) = %q, want %q", c.name, c.in, got, c.want)
+		if got := redactIn(t, c.in); got != c.want {
+			t.Errorf("%s: Apply(input, %q) = %q, want %q", c.name, c.in, got, c.want)
 		}
 	}
 }
 
 func TestRedactResidentID(t *testing.T) {
+	restore(t)
 	valid := withCheck("11010519491231002") // = 11010519491231002X（经典测试号）
 	if valid != "11010519491231002X" {
 		t.Fatalf("构造基准失败: %s", valid)
@@ -59,30 +86,32 @@ func TestRedactResidentID(t *testing.T) {
 		{"随机18位数字", "123456789012345678", "123456789012345678"},
 	}
 	for _, c := range cases {
-		if got := Redact(c.in); got != c.want {
-			t.Errorf("%s: Redact(%q) = %q, want %q", c.name, c.in, got, c.want)
+		if got := redactIn(t, c.in); got != c.want {
+			t.Errorf("%s: Apply(input, %q) = %q, want %q", c.name, c.in, got, c.want)
 		}
 	}
 }
 
 func TestRedactOverlapAndLength(t *testing.T) {
+	restore(t)
 	in := "手机13812345678与身份证11010519491231002X同句"
-	got := Redact(in)
+	got := redactIn(t, in)
 	if strings.Contains(got, "13812345678") || strings.Contains(got, "11010519491231002X") {
 		t.Fatalf("原文残留: %s", got)
 	}
 	if len(got) != len(in) {
 		t.Fatalf("打码应保长度: %d != %d", len(got), len(in))
 	}
-	if Redact(in) != got {
+	if redactIn(t, in) != got {
 		t.Fatal("打码必须确定性")
 	}
 }
 
 func TestRedactValueStructures(t *testing.T) {
+	restore(t)
 	in := map[string]any{
 		"contact": "13812345678",
-		// agentkit logredact.RedactValue 不下探 map[string]string（结构盲区）——本包收口。
+		// agentkit logredact 的值面下探不下探 map[string]string（结构盲区）——本包收口。
 		"tags":  map[string]string{"owner": "13912345678"},
 		"list":  []any{"id 11010519491231002X"},
 		"strs":  []string{"13712345678"},
@@ -90,7 +119,7 @@ func TestRedactValueStructures(t *testing.T) {
 		"flag":  true,
 		"clean": "无敏感",
 	}
-	out, ok := RedactValue(in).(map[string]any)
+	out, ok := redactInValue(t, in).(map[string]any)
 	if !ok {
 		t.Fatal("应返回 map[string]any")
 	}
@@ -114,20 +143,20 @@ func TestRedactValueStructures(t *testing.T) {
 	}
 	// 入参不得被原地改写。
 	if in["contact"] != "13812345678" {
-		t.Fatal("RedactValue 改写了入参")
+		t.Fatal("ApplyValue 改写了入参")
 	}
 }
 
 func TestEnabledSwitch(t *testing.T) {
+	restore(t)
 	SetEnabled(false)
-	defer SetEnabled(true)
-	if Redact("13812345678") != "13812345678" {
+	if redactIn(t, "13812345678") != "13812345678" {
 		t.Fatal("关闭时应原样透传")
 	}
 	in := map[string]any{"a": "13812345678"}
-	out := RedactValue(in)
+	out := redactInValue(t, in)
 	if m, _ := out.(map[string]any); m["a"] != "13812345678" {
-		t.Fatal("关闭时 RedactValue 应透传")
+		t.Fatal("关闭时 ApplyValue 应透传")
 	}
 	if Detect("13812345678") == nil {
 		// Detect 是纯检测原语，不受开关影响（开关语义收敛在改写面）。

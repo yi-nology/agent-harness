@@ -7,27 +7,7 @@ package pii
 // 拆分的直接原因：policy.go 的文件头写的是「处置策略面（面开关 + 策略枚举）」，
 // 而执行引擎原本也在那个文件里，文档只描述了它一半的内容。
 
-// 处置策略面（面开关 + 策略枚举）。
-//
-// ## 为什么原包不够
-//
-// 原包只有「检出即保长打码」一种处置，且出口面只有一维开关。本仓所有 PII 出口
-// （审计链、事件双出口、外发文案、**工具返回**）走的都是同一个 RedactValue——
-// 但工具返回与模型输出根本不是同一个风险面：工具返回常被当作可信数据回灌模型，
-// 值面敏感度与「给人看的输出」不是一个量级，用同一处置既是过度脱敏也是
-// 处置不足并存。
-//
-// octop-harness 走的是同一条路（`pii_surfaces` 三面独立开关 +
-// `block/redact/mask/hash` 四值策略），本包取其形，不取其内容资产。
-//
-// ## 三条不变量
-//
-//  1. **默认三面全开**。新增一个出口面若默认关闭，等于给漏打开后门。
-//  2. **默认策略是 mask，不得改成 block**。block 会打断整条审计链；
-//     把它作为默认值等于「为了不漏打而把链子砍断」，是更严重的失职。
-//     要用 block 必须由宿主显式 SetStrategy 并自行履行阻断。
-//  3. **面未启用或全局关闭 → 原样透传且 blocked=false**。透传不是静默放行的
-//     漏洞面：它是宿主显式关闭后的既定语义。
+// （「为什么原包不够」与三条不变量在 policy.go 的文件头，此处不重复。）
 
 import (
 	"crypto/sha256"
@@ -114,8 +94,8 @@ func applyWith(p Policy, s Surface, text string) (string, bool) {
 	return applySpansAs(text, p.strategy)
 }
 
-// ApplyValue 递归下探常见载荷结构处置（与 RedactValue 同结构面，收口其
-// 行为并加上面/策略维度）。返回 (处置后载荷, 是否阻断)。
+// ApplyValue 递归下探常见载荷结构处置（结构面覆盖与原面无关门面一致，
+// 另加上面/策略维度）。返回 (处置后载荷, 是否阻断)。
 func ApplyValue(s Surface, v any) (any, bool) {
 	return applyValueWith(CurrentPolicy(), s, v)
 }
@@ -149,21 +129,6 @@ func applyValueWith(p Policy, s Surface, v any) (any, bool) {
 		}
 	}
 	return applyValue(v, func(t string) (string, bool) { return applyWith(p, s, t) })
-}
-
-// applyAny 面无关处置：任一面启用即处置。供历史门面 Redact/RedactValue 使用。
-func applyAny(p Policy, text string) (string, bool) {
-	if !p.enabled || p.surfaces == 0 {
-		return text, false
-	}
-	return applySpansAs(text, p.strategy)
-}
-
-func applyAnyValue(p Policy, v any) (any, bool) {
-	if !p.enabled || p.surfaces == 0 {
-		return v, false
-	}
-	return applyValue(v, func(t string) (string, bool) { return applyAny(p, t) })
 }
 
 // applyValue 递归下探：字符串交给 fn 处置，标量原样返回。
