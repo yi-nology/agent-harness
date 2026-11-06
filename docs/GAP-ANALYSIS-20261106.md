@@ -19,7 +19,7 @@
 | **DSH** | 「一切皆插件，Cordis 插件树」 | `deepseek-ai/deepseek-harness` @ `fcc0ad4`，**0.2.2-rc.1** | 叶子包 **219 → 400**。新增 `team`（子 agent 树的任务归属与依赖）、`ptc-runtime`（Node/Python 程序执行，异步函数体各起新进程）、`telemetry`、`deliverables`、`document`、`ssh`、`computer-use`、`browser-use`。`subagent` 家族已含 `subagent-acp` / `subagent-claude-code` / `subagent-codex` |
 | **Octop** | 「单进程自托管、专家团、IM 通道」 | `TencentCloud/Octop` @ `4022e24e`，**1.0.3b4** | `AgentTeams`（Beta）、**云端协作**（本机实例连另一实例、跨实例对话）、OpenSandbox 桥接、`octop-memory` 可迁移记忆、LDAP/WebAuthn |
 | **Coze Studio** | 「活跃对标：工作流/知识库/多租户」 | `coze-dev/coze-studio` 最后提交 **2026-07-29**，最后发布 **v0.5.1（2026-02-05）** | ❗**已停更**。从「活跃对标」降级为「冻结参考」 |
-| **本仓（yi-nology）** | v0.15.x，27 包 | **v0.17.0** @ `e37384a`，**31 个包**（README 包表口径，`make docsync` 判） | 新增 `gatecheck` / `guardset.Assembly` / `archcheck.execution_paths`（10-21 台账的 P0/P1 已结清），`ticket` / `trajectory` / `drain` / `internal/subhub` |
+| **本仓（yi-nology）** | v0.15.x，27 包 | **v0.17.0** @ `e37384a`，**31 个包**（README 包表口径，`make docsync` 判）——⚠️ 这是**本文写作时**的数；第六节落地后已是 **41 个包**（`make docsync` 实测） | 新增 `gatecheck` / `guardset.Assembly` / `archcheck.execution_paths`（10-21 台账的 P0/P1 已结清），`ticket` / `trajectory` / `drain` / `internal/subhub` |
 
 > **Coze 停更这条要单独记**：上一版把「Coze 的工作流 UI / 知识库 / 多租户」
 > 当成「我们不补的产品面」。现在那个参照系不动了——**没有活跃参照的维度，
