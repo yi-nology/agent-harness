@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/stringx"
 )
 
 // Verdict 一次裁决。
@@ -265,10 +266,14 @@ func (e *Engine) runBlocking(ctx context.Context, h Hook, p Payload) (Verdict, s
 // clip 截断理由（hook 输出可以任意长，原样带进日志与上下文会撑爆两端）。
 func (e *Engine) clip(s string) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= e.maxChars {
-		return s
+	// 截断必须落在 rune 边界：旧实现直接 s[:maxChars]，切在半个多字节字符上会
+	// 产出**非法 UTF-8**——而拒绝理由正是要被人读的那一行，客户端多半把它显示成
+	// U+FFFD 或整条丢弃，且报错信息不会提「是你的裁剪切坏了」。
+	cut, truncated := stringx.TruncBytes(s, e.maxChars)
+	if !truncated {
+		return cut
 	}
-	return s[:e.maxChars] + "…（已截断）"
+	return cut + "…（已截断）"
 }
 
 // reasonOf 取拒绝理由：stderr 优先（工具的抱怨通常在那里），否则 stdout。

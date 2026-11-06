@@ -171,7 +171,7 @@ modules:
   # 从未被执行过，连漂移都没人发现（执行体见 archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
-    requires: [toolname, sandbox, egress, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg", "ext:github.com/oekit/logx"] # guardx 含 sandbox/wire（跨进程协议） # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包；sandbox 是执行档位与后端协议
+    requires: [toolname, sandbox, egress, "ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/runtime", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg", "ext:github.com/oekit/logx"] # guardx 含 sandbox/wire（跨进程协议） # runtime/procx 管「子进程能看见什么环境」（白名单，非全量继承）；工具名→JS 标识符的规整规则，唯一的真相在 toolname 包；sandbox 是执行档位与后端协议
     owner: harness
     managed: true
     notes: 程序化工具编排沙箱（goja VM，三重预算替代 OS 沙盘）
@@ -1127,7 +1127,7 @@ execution_paths:
 # 「声明了受限出口」在那一侧**没有任何东西兑现**，而报告全绿，因为没有判据在问
 # 「这个 spawn 点在强制面内吗」。
 #
-# 判据四条（执行体见 archcheck/egresspaths.go）：
+# 判据五条（执行体见 archcheck/egresspaths.go）：
 #   1. **未登记的启动点即红**——方向是 fail-closed：「没登记」不等于「不要求出口」，
 #      而是「没人声明过它的出口是什么」。放成宽松侧的话，加一个 spawn 点就是一次
 #      静默扩大判定面：未登记的启动点越多，判定面越小。
@@ -1137,7 +1137,18 @@ execution_paths:
 #      写在登记里等于把「假装禁网」写进 policy。禁网只能由带能力声明的后端强制。
 #   4. **陈旧登记即红**——文件/函数不存在，或那个函数里没有启动调用。
 #      声明与事实偏离而无人红，是无声漂移（与「陈旧包根当天即红」同一把尺子）。
-#   5. **判定面覆盖的形态**（收集器在 archcheck/spawnsites.go）：限定符调用（**别名**同样命中，
+#   5. **不得把全量环境交给子进程**（os.Environ() 即红，**不看登记档位**）。
+#      这条与 1~4 正交：登记段回答「出站策略是什么」，本条回答「子进程能看见宿主的
+#      哪些秘密」。登记成 unrestricted 的启动点同样不该继承整份环境——子进程是模型
+#      写的程序，它的隔离面是 JS 子集而非 OS 沙盘，整份环境里有 provider 的 API key、
+#      对象存储令牌、数据库口令，程序没有网络也没有 exec，但它能读到秘密再写进返回值。
+#      **判定粒度是文件**（不是启动函数）：环境 base 常由辅助函数生成（childBaseEnv /
+#      buildEnv 这类），含 spawn 的函数里只剩一句调用——实测把 os.Environ() 放进辅助
+#      函数，函数级判据一条都不报、退出码 0。代价是「文件里另有无关的 os.Environ()」
+#      会假红，这一方向是刻意选的：红可见可讨论（走 exceptions 登记原因与拆除条件），
+#      绿不可见。
+#
+# 判定面覆盖的形态（收集器在 archcheck/spawnsites.go）：限定符调用（**别名**同样命中，
 #      按 import 路径解析不按名字猜）、**点导入**（`import . "os/exec"`，调用没有限定符）、
 #      **包级初始化**（`var cmd = exec.Command(...)`，不在任何函数里）。入口表按 import 路径归，
 #      除 os/exec 还含 os.StartProcess 与 syscall.Exec/ForkExec/StartProcess——它们同样绕开
@@ -1146,7 +1157,7 @@ execution_paths:
 egress_paths:
   enabled: true
   severity: error
-  desc: 每个子进程启动点都必须登记出口档位，且要求经代理的必须在 spawn 之前看得见 env 的生成/校验
+  desc: 每个子进程启动点都必须登记出口档位，要求经代理的必须在 spawn 之前看得见 env 的生成/校验，且不得把全量环境（os.Environ）交给子进程
   entries:
     - path: ptc/childpipes.go
       fn: newChildPipes

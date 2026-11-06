@@ -49,6 +49,13 @@ type spawnSite struct {
 	line    int               // 行号（报告用）
 	body    *ast.BlockStmt    // 函数体（判兑现证据用；nil = 函数外）
 	imports map[string]string // 该文件的「包名/别名 → import 路径」
+	// fullEnv 本文件里是否出现 os.Environ()（**按文件**算，不按启动函数算）。
+	//
+	// 为什么粒度是文件而不是函数：环境 base 几乎总是由**辅助函数**生成的
+	// （ptc 的 childBaseEnv、各种 buildEnv/mkEnv），只判「含 spawn 的那个函数」
+	// 会让「换一个函数生成环境」变成一条静默通道——反向验证时实测如此：
+	// 把 os.Environ() 放进同包的 childBaseEnv，函数级判据一条都不报。
+	fullEnv bool
 }
 
 // dotSpawnFuncs 取本文件点导入的启动入口函数名集合。
@@ -105,30 +112,89 @@ func collectSpawnSites(root string, ignore map[string]bool) ([]spawnSite, error)
 // 「空 = 函数外」，缺的是收集侧——声明与实现必须同时在场。
 func fileSpawnSites(fset *token.FileSet, f *ast.File, imports map[string]string, rel string) []spawnSite {
 	var out []spawnSite
-	dotted := dotSpawnFuncs(dotImportPaths(f))
+	dots := dotImportPaths(f)
+	dotted := dotSpawnFuncs(dots)
+	fullEnv := fileCallsEnviron(f, imports, dots)
 	for _, d := range f.Decls {
 		switch decl := d.(type) {
 		case *ast.FuncDecl:
 			if decl.Body == nil {
 				continue
 			}
-			out = append(out, spawnSitesIn(fset, decl.Body, decl.Body, decl.Name.Name, imports, dotted, rel)...)
+			out = append(out, spawnSitesIn(fset, decl.Body, decl.Body, decl.Name.Name, imports, dotted, fullEnv, rel)...)
 		case *ast.GenDecl:
-			out = append(out, spawnSitesIn(fset, decl, nil, "", imports, dotted, rel)...)
+			out = append(out, spawnSitesIn(fset, decl, nil, "", imports, dotted, fullEnv, rel)...)
 		}
 	}
 	return out
 }
 
+// fileCallsEnviron 报告本文件里是否出现 os.Environ()（**整个文件**，不止启动函数）。
+//
+// # 为什么粒度是文件而不是函数
+//
+// 环境 base 几乎总是由**辅助函数**生成的（ptc 的 childBaseEnv、各种 buildEnv/mkEnv），
+// 含 spawn 的函数里往往只剩一句 childBaseEnv()。反向验证实测：把 os.Environ() 放进
+// 同包的辅助函数，函数级判据一条都不报、退出码 0——判定面静默塌了一个数量级。
+// 判据要覆盖的失效形态是「宿主秘密被递给子进程」，而它与**在哪一层生成**无关。
+//
+// # 判据看调用形态，不看文本
+//
+// os.Environ() 有三种写法：原样、别名导入（import o "os" ⇒ o.Environ()）、点导入
+// （import . "os" ⇒ Environ()）。文本正则只认第一种，而绕过去从不需要动机——只需
+// 换个导入写法。故这里按**本文件的 import 路径**解析限定符，点导入另算（点导入由
+// importPathByName 按设计丢掉，只服务限定符判定的那张表拿不到它）。
+//
+// # 假红方向可接受
+//
+// 文件里另有一处与子进程无关的 os.Environ()（例如启动时读一次环境做诊断）会被
+// 一并报出。这条边界是刻意选的方向：红是可见的、可讨论的（走 policy exceptions
+// 登记原因即可），而绿是不可见的——判据宁可吵闹，不可沉默。
+func fileCallsEnviron(f *ast.File, imports map[string]string, dots map[string]bool) bool {
+	names := map[string]bool{}
+	for name, path := range imports {
+		if path == "os" && name != "_" && name != "." {
+			names[name] = true
+		}
+	}
+	dotted := dots["os"]
+	if len(names) == 0 && !dotted {
+		return false
+	}
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		switch fun := call.Fun.(type) {
+		case *ast.SelectorExpr:
+			ident, ok := fun.X.(*ast.Ident)
+			if ok && names[ident.Name] && fun.Sel.Name == "Environ" {
+				found = true
+			}
+		case *ast.Ident:
+			if dotted && fun.Name == "Environ" {
+				found = true
+			}
+		}
+		return true
+	})
+	return found
+}
+
 // spawnSitesIn 取一个 AST 节点里的启动点（限定符形态与点导入形态各扫一遍）。
-func spawnSitesIn(fset *token.FileSet, node ast.Node, body *ast.BlockStmt, fn string, imports map[string]string, dotted map[string]bool, rel string) []spawnSite {
+func spawnSitesIn(fset *token.FileSet, node ast.Node, body *ast.BlockStmt, fn string, imports map[string]string, dotted map[string]bool, fullEnv bool, rel string) []spawnSite {
 	var out []spawnSite
 	for _, call := range qualifiedCallsIn(fset, node) {
 		imp, ok := imports[call.qualifier]
 		if !ok || !spawnFuncsByPath[imp][call.sel] {
 			continue
 		}
-		out = append(out, spawnSite{path: rel, fn: fn, line: call.line, body: body, imports: imports})
+		out = append(out, spawnSite{path: rel, fn: fn, line: call.line, body: body, imports: imports, fullEnv: fullEnv})
 	}
 	if len(dotted) == 0 {
 		return out
@@ -137,7 +203,7 @@ func spawnSitesIn(fset *token.FileSet, node ast.Node, body *ast.BlockStmt, fn st
 		if !dotted[call.sel] {
 			continue
 		}
-		out = append(out, spawnSite{path: rel, fn: fn, line: call.line, body: body, imports: imports})
+		out = append(out, spawnSite{path: rel, fn: fn, line: call.line, body: body, imports: imports, fullEnv: fullEnv})
 	}
 	return out
 }

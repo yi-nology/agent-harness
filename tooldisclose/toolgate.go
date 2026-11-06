@@ -45,7 +45,8 @@ package tooldisclose
 import (
 	"sort"
 	"sync"
-	"unicode/utf8"
+
+	"github.com/oekit/pkg/stringx"
 )
 
 // DegenerateType 退化 schema 的顶层类型标记。
@@ -124,10 +125,11 @@ const (
 //
 // 按 rune 而非字节截：按字节切会从多字节字符中间劈开，产出乱码直接进了模型上下文。
 func truncateDescription(s string) string {
-	if utf8.RuneCountInString(s) <= MaxDescriptionLen {
-		return s
-	}
-	return string([]rune(s)[:MaxDescriptionLen])
+	// 判据委托 oekit/pkg/stringx.TruncRunes：它先按 RuneCountInString 判超长
+	// （未超长时不分配），再转 []rune 切——旧写法每次超长都要先把整串摊成
+	// []rune（描述动辄数 KB），只为取前 320 个字符。
+	out, _ := stringx.TruncRunes(s, MaxDescriptionLen)
+	return out
 }
 
 // Catalog 工具目录 + 已加载集。

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/oagentkit/runtime/procx"
 	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/agent-harness/egress"
@@ -86,12 +87,7 @@ func newChildPipes(exe string, spec egress.Spec) (*childPipes, error) {
 	// 「代理变量覆盖旧值」「NO_PROXY 排序确定性」两条口径，而 egress 的
 	// 判据（Spec.Verify）正是拿这份 env 去对照声明的。
 	// 生成失败 ⇒ **不起子进程**（fail closed）：假装受限比明确拒绝更危险。
-	base := append(os.Environ(),
-		childModeEnv+"=1",
-		childCallReqFDEnv+"=3",
-		childCallRespFDEnv+"=4",
-	)
-	childEnv, err := spec.Env(base)
+	childEnv, err := spec.Env(childBaseEnv())
 	if err != nil {
 		p.closeAll()
 		return nil, errors.Wrap(err, "ptc: 子进程出口声明兑现不了")
@@ -99,6 +95,41 @@ func newChildPipes(exe string, spec egress.Spec) (*childPipes, error) {
 	child.Env = childEnv
 	p.child = child
 	return p, nil
+}
+
+// childBaseEnv 子进程该看见的环境（交给 egress 叠加出口声明之前的那一层）。
+//
+// # 为什么不是 os.Environ()
+//
+// 子进程是本进程的 **re-exec**，它只需要三样：起得来、能读临时目录、能按地方
+// 编码解释字符串。而全量继承会把宿主进程手里的一切一起交出去——模型 provider
+// 的 API key、对象存储令牌、数据库口令，全都在父进程的环境里。子进程跑的是
+// **模型写的程序**（进程内 goja 的隔离面是 JS 子集，不是 OS 沙盘），把整份环境
+// 递过去等于给这条隔离面开了一个谁也没声明过的侧门：程序没有网络也没有 exec，
+// 但它能读到宿主的秘密再写进返回值——而返回值会回灌模型上下文。
+//
+// # 为什么白名单在上游而不是在这里
+//
+// 「子进程该看见什么」是跨宿主必须一致的判定，不是本仓的编排语义：各写一份
+// 白名单，一个宿主放了云厂商密钥、另一个没放，同一个后端在不同宿主下的实际
+// 强度就不同，而报告里两处都显示「已隔离」。故判据单源
+// oagentkit/runtime/procx.ChildEnv：
+//
+//   - 基础集（PATH/HOME/TMPDIR/USER/SHELL/LANG/TERM + 代理变量与 CA 目录）照传；
+//   - 形如 KEY=VALUE 的入参**字面注入**且优先于父进程同名值；
+//   - 其余一律不透传。
+//
+// 协议三件必须走**字面注入**：它们是父子之间的握手参数（子进程读不到就退化成
+// 「这是一次普通启动」或直接报 fd 非法），不能指望父进程环境里恰好有。
+//
+// 出口声明仍然成立：代理变量在基础集内，spec.Env 之后仍按声明覆盖它们，
+// 而 Spec.Verify 判的就是最终这一份。
+func childBaseEnv() []string {
+	return procx.ChildEnv([]string{
+		childModeEnv + "=1",
+		childCallReqFDEnv + "=3",
+		childCallRespFDEnv + "=4",
+	})
 }
 
 // closeAll 关掉全部管道端（失败路径上用）。

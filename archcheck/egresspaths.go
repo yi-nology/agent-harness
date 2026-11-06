@@ -10,7 +10,7 @@
 // 这正是本仓反复强调的「声明强度 ≠ 实际强度」在执行面上的又一次实例：
 // 判据停在工具调用，工具内部起的进程没有判据。
 //
-// # 判据四条
+// # 判据五条
 //
 //  1. **每个子进程启动点必须登记**（未登记即红）。方向是 fail-closed：
 //     「没登记」不等于「不要求出口」，而是**没人声明过它的出口是什么**——
@@ -23,6 +23,9 @@
 //     policy——比明确不声明更危险。
 //  4. **陈旧登记当天即红**（文件/函数不存在，或那个函数里没有启动调用）。
 //     与「陈旧包根当天即红」同一把尺子：声明与事实偏离而无人红，是无声漂移。
+//  5. **启动函数不得把全量环境交给子进程**（os.Environ() 即红，不看登记）。
+//     登记段回答「出站策略是什么」，本条回答「子进程能看见宿主的哪些秘密」——
+//     两者正交：unrestricted 的启动点同样不该继承整份环境。详见 inheritsFullEnv。
 //
 // # 为什么按「文件 + 函数」定位启动点
 //
@@ -73,7 +76,8 @@ func egressPathsDesc(cfg EgressPaths) string {
 		return cfg.Desc
 	}
 	return "每个子进程启动点都必须在 policy 的 egress_paths 段登记出口档位；" +
-		"要求经代理的必须在启动函数里看得见 env 的生成/校验（环境变量不会自己跑到子进程上）"
+		"要求经代理的必须在启动函数里看得见 env 的生成/校验（环境变量不会自己跑到子进程上）；" +
+		"任何启动点所在文件都不得以 os.Environ() 把全量环境交给子进程"
 }
 
 // egressPathViolations 判定「子进程是否在出口强制面内」。
@@ -110,6 +114,22 @@ func egressPathViolations(root string, cfg EgressPaths) ([]Violation, error) {
 				"「没登记」不等于「不要求」）", fnLabel(s.fn)),
 		})
 	}
+
+	// 全量环境继承：与「有没有登记」正交，所有启动点都判。
+	// 放在登记循环之后而不是之中：这条判据不认领启动点（matched 不变），
+	// 否则一个继承全量环境的启动点会因为「已登记」而看起来处理过了。
+	for _, s := range sites {
+		if !inheritsFullEnv(s) {
+			continue
+		}
+		out = append(out, Violation{
+			Rule: egressPathRuleID, Path: s.path, Line: s.line,
+			Kind: "egress_full_env_inherit",
+			Text: fmt.Sprintf("启动点（%s）所在文件出现 os.Environ()：子进程是本进程的 re-exec，"+
+				"整份环境里有宿主的凭据类变量——环境必须由白名单生成（oagentkit/runtime/procx.ChildEnv），"+
+				"再交给 egress.Spec.Env 叠加出口声明；确有无关用途请在 policy 的 exceptions 登记原因与拆除条件", fnLabel(s.fn)),
+		})
+	}
 	return out, nil
 }
 
@@ -119,6 +139,54 @@ func fnLabel(fn string) string {
 		return "包级初始化"
 	}
 	return fn
+}
+
+// inheritsFullEnv 判启动函数是否把「全量环境」当成子进程环境。
+//
+// # 为什么这条判据必须存在
+//
+// 子进程是本进程的 **re-exec**：它只需要起得来、能读临时目录、能按地方编码
+// 解释字符串。而 os.Environ() 交出去的是**宿主进程手里的一切**——模型 provider
+// 的 API key、对象存储令牌、数据库口令都在里面。子进程跑的是模型写的程序，
+// 它的隔离面是 JS 子集而不是 OS 沙盘（见 policy 的 sandbox_providers），
+// 把整份环境递过去等于给那层隔离开了一个谁也没声明过的侧门：程序没有网络
+// 也没有 exec，但它能读到宿主的秘密再写进返回值。
+//
+// # 为什么与「有没有登记」无关
+//
+// 登记段回答的是「这次执行的出站策略是什么」；本条回答的是「子进程能看见宿主
+// 的哪些秘密」。两者正交：登记成 unrestricted 的启动点同样不该继承全量环境。
+// 故本判据对**所有**启动点生效，不挂在任何一条登记上。
+//
+// # 判据看调用形态，不看文本
+//
+// os.Environ() 有三种写法：原样、别名导入（import o "os" ⇒ o.Environ()）、
+// 点导入（import . "os" ⇒ Environ()）。文本正则只认第一种，而绕过去从来
+// 不需要动机——只需换个导入写法。故这里按**本文件的 import 路径**解析限定符，
+// 点导入另算。
+//
+// # 为什么粒度是文件，不是启动函数
+//
+// 环境 base 几乎总是由**辅助函数**生成的（ptc 的 childBaseEnv，各种 buildEnv/mkEnv），
+// 含 spawn 的函数里往往只剩一句 childBaseEnv()。反向验证实测：把 os.Environ() 放进
+// 同包的辅助函数，函数级判据一条都不报、退出码 0——这条判据会**静默塌掉**，而它
+// 存在的理由正是「子进程能看见宿主秘密」这件事与在哪一层生成无关。
+//
+// 代价是假红方向：文件里另有一处与子进程无关的 os.Environ()（例如启动时读一次
+// 环境做诊断）会被一并报出。这条边界是刻意选的：红是可见的、可讨论的（走 policy
+// 的 exceptions 登记原因与拆除条件即可），绿是不可见的。判据宁可吵闹，不可沉默。
+//
+// # 判不了什么（写明，而不是假装覆盖）
+//
+//   - 判不了 cmd.Env **压根没赋值**（nil 即继承全量）：那需要跨语句的数据流，
+//     而入口表里的每个 API 都允许 Env 在别处赋值。这一态的兜底是第 2 条判据
+//     （proxy 档要求启动函数里看得见 env 的生成/校验）——env 是生成出来的，
+//     就不会是 nil。
+//   - 判不了宿主把 os.Environ() 的等价物藏在别的包（例如自己封一层），也判不了
+//     从**跨包的**辅助函数（如 procx.ChildEnv 之外的 os 封装）拿回全量环境。
+//     事实面只到「本文件有没有把整份环境读出来」。
+func inheritsFullEnv(s spawnSite) bool {
+	return s.fullEnv
 }
 
 // judgeEgressEntry 判一条登记，并就地标记它命中的启动点。

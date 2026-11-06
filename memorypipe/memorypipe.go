@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/stringx"
 )
 
 // Entry 一条记忆（值类型）。
@@ -219,5 +220,9 @@ func clip(s string, n int) string {
 	if n <= 0 || len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	// 与 hookengine 同一判据（stringx.TruncBytes）：按字节切会把多字节字符切成
+	// 半个，产出的**非法 UTF-8** 会跟着注入体一起进模型上下文——而这里正是
+	// 「不可信正文」的入口，坏字节在两侧都读不出原因。
+	cut, _ := stringx.TruncBytes(s, n)
+	return cut + "…"
 }

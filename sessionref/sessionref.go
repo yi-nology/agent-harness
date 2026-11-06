@@ -57,9 +57,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/stringx"
 
 	"github.com/yi-nology/agent-harness/reminder"
 )
@@ -153,14 +153,12 @@ func cut(body string, b Bounds) (string, bool) {
 		}
 	}
 	if b.MaxBytes > 0 && len(out) > b.MaxBytes {
-		out = out[:b.MaxBytes]
-		// 回退到最近的 rune 边界（最多 3 字节）。
-		for i := 0; i < utf8.UTFMax && len(out) > 0; i++ {
-			if utf8.ValidString(out) {
-				break
-			}
-			out = out[:len(out)-1]
-		}
+		// 边界回退委托 oekit/pkg/stringx.TruncBytes：它从预算处**向前**扫到最近的
+		// rune 起始字节（最多 3 步）。旧实现是「先按字节切、再反复用
+		// utf8.ValidString 验证整段」，最坏四次全串扫描，且正确性依赖
+		// 「往回退最多 3 字节」这条隐含前提——真踩到更长的坏边界时会静默留下
+		// 非法 UTF-8。
+		out, _ = stringx.TruncBytes(out, b.MaxBytes)
 		truncated = true
 	}
 	return out, truncated
