@@ -1,4 +1,7 @@
-// Command docsync 校验 README 的包清单表与仓库实际状态一致。
+// Command docsync 校验 README 的两张声明表与仓库实际状态一致：
+//
+//   - 包清单表：包名 / 生产行数（相对容差）/ 外部依赖（见 pkgtable.go）
+//   - 「工程底座」表：生产行数、生产文件数、测试文件数（**判相等**，见 baseline.go）
 //
 // # 为什么要有这个命令
 //
@@ -14,17 +17,17 @@
 //   - 生产行数：pkg/*.go 且不含 _test.go（表头已声明该口径）
 //   - 外部依赖：生产代码 import 的仓外模块，取 module 前两段归并
 //   - 本仓自身 import（github.com/yi-nology/agent-harness/...）不算外部依赖
+//
+// 两张表用**两套口径**是刻意的：包表的行数是约数（25% 容差滤逐行涨落），
+// 工程底座的三个数是声明值（判相等）。混用一套口径，等于让「跨量级的误述」
+// 与「差一行」享受同一个宽容度——而后者正是前者藏身的地方。
 package main
 
 import (
 	"bufio"
 	"fmt"
-	"go/parser"
-	"go/token"
 	"os"
-	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -64,9 +67,12 @@ func run() error {
 	defer func() { _ = f.Close() }()
 
 	var rows []row
+	var lines []string // 原文另存一份：工程底座表按行解析，与包表的行形态不同
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		m := rowRe.FindStringSubmatch(sc.Text())
+		line := sc.Text()
+		lines = append(lines, line)
+		m := rowRe.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
@@ -131,15 +137,39 @@ func run() error {
 		}
 	}
 
+	// ── 工程底座表（issue #31）：确定性量直接判相等 ──
+	//
+	// 与包表**分两套口径**，这一条是刻意的：包表的行数是约数（25% 容差滤逐行
+	// 噪声），工程底座的数字是声明值（判相等）。混用一套口径，等于让「跨量级的
+	// 误述」与「差一行」享受同一个宽容度——而后者正是前者藏身的地方。
+	claim, present, berr := parseBaseline(lines)
+	if berr != nil {
+		problems = append(problems, berr.Error())
+	} else if present {
+		actual, merr := measureBaseline()
+		if merr != nil {
+			return merr
+		}
+		problems = append(problems, diffBaseline(claim, actual)...)
+	}
+
 	if len(problems) > 0 {
-		return fmt.Errorf("README 包表与仓库实际状态不一致（%d 项）：\n  - %s\n"+
-			"修法：按各包 *.go（不含 _test.go）重算行数与外部依赖，改 README 包表。\n"+
-			"行数项按 %.0f%% 相对容差判定：容差内的逐行涨落不报，跨量级的误述才报。\n"+
+		return fmt.Errorf("README 与仓库实际状态不一致（%d 项）：\n  - %s\n"+
+			"修法：包表按各包 *.go（不含 _test.go）重算行数与外部依赖；"+
+			"工程底座表按报错里给的三条命令重算，改 README。\n"+
+			"两套口径别混：包表行数按 %.0f%% 相对容差判（容差内的逐行涨落不报），"+
+			"工程底座的三项是确定性量，**判相等**。\n"+
 			"本门禁不自动改文档——改表是要人判断的动作。",
 			len(problems), strings.Join(problems, "\n  - "), locTolerance*100)
 	}
 
-	fmt.Printf("README 包表与仓库一致（%d 个包）✓\n", len(rows))
+	if present {
+		actual, _ := measureBaseline()
+		fmt.Printf("README 与仓库一致（%d 个包；工程底座 %d 行 / %d 文件 / %d 个测试文件）✓\n",
+			len(rows), actual.prodLines, actual.prodFiles, actual.testFiles)
+		return nil
+	}
+	fmt.Printf("README 包表与仓库一致（%d 个包；无工程底座表）✓\n", len(rows))
 	return nil
 }
 
@@ -177,218 +207,3 @@ func locDeviation(readme, actual int) float64 {
 }
 
 // measure 实测一个包的生产行数与外部依赖。
-func measure(pkg string) (int, []string, error) {
-	matches, err := filepath.Glob(filepath.Join(pkg, "*.go"))
-	if err != nil {
-		return 0, nil, err
-	}
-	var prod []string
-	for _, f := range matches {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
-		prod = append(prod, f)
-	}
-	if len(prod) == 0 {
-		return 0, nil, fmt.Errorf("%s: 目录下没有生产 .go 文件", pkg)
-	}
-
-	loc := 0
-	depSet := map[string]bool{}
-	for _, f := range prod {
-		b, readErr := os.ReadFile(f)
-		if readErr != nil {
-			return 0, nil, readErr
-		}
-		loc += countLines(string(b))
-		// 依赖取自**真正的 import 声明**（go/ast），不是从源码文本里扫引号内容。
-		//
-		// 旧实现用正则扫全文，于是**文档注释里的示例路径**会被当成真依赖：
-		// 写一句 `forbid_import_regex: "example.com/demo/internal/(engine|service)"`
-		// 就会让 README 的依赖列多出一项「demo/internal」——那不是依赖，是举例。
-		// 这与本仓 archcheck 包当年的同一个病（import 声明有六种以上书写形态，
-		// 逐行正则必然漏）同源，故同样走语法树。
-		paths, perr := importPaths(f)
-		if perr != nil {
-			return 0, nil, perr
-		}
-		for _, path := range paths {
-			if isSelfPath(path) {
-				continue // 本仓自身不算外部依赖
-			}
-			if !looksLikeModulePath(path) {
-				continue // 纯 stdlib 标识等
-			}
-			depSet[normalizeDep(path)] = true
-		}
-	}
-	deps := make([]string, 0, len(depSet))
-	for d := range depSet {
-		deps = append(deps, d)
-	}
-	sort.Strings(deps)
-	return loc, deps, nil
-}
-
-// importPaths 取一个文件里真正 import 的路径。
-//
-// 解析失败必须响亮失败：依赖列是从 import 声明推出来的，推不出来就没有结论，
-// 静默跳过等于「这个包的依赖列是空的」。
-func importPaths(path string) ([]string, error) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly|parser.SkipObjectResolution)
-	if err != nil {
-		return nil, fmt.Errorf("解析 %s 失败（依赖列取自 import 声明，解析不出来就没有结论）: %w", path, err)
-	}
-	var out []string
-	for _, im := range f.Imports {
-		p, uerr := strconv.Unquote(im.Path.Value)
-		if uerr != nil {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out, nil
-}
-
-// isSelfPath 判断路径是否指向本仓自身（含其子包）。
-//
-// 必须带 / 边界：纯 strings.HasPrefix(path, selfModule) 会把
-// agent-harness-fork 这类**真实的外部依赖**当成自身而静默排除——
-// 那是漏判方向，与门禁职责正好相反，且无声无息。
-func isSelfPath(p string) bool {
-	return p == selfModule || strings.HasPrefix(p, selfModule+"/")
-}
-
-// countLines 数真实行数。
-//
-// 单纯 strings.Count(s, "\n") 只在**每个文件都以换行结尾**时等于行数；某个文件
-// 丢了结尾换行会被少算一行，于是「改了文件并把 README 同步成少算的值」就能
-// 蒙混过关——指标自指，让门禁在自己改动的量纲上失准。
-//
-// 末尾无换行时补计残行。对以换行结尾的文件（当前全部生产文件都是）与旧口径
-// 完全一致，故本修正不改今天的任何数字，只堵住将来的那个洞。
-func countLines(s string) int {
-	n := strings.Count(s, "\n")
-	if n > 0 && !strings.HasSuffix(s, "\n") {
-		n++
-	} else if n == 0 && s != "" {
-		n = 1 // 整个文件就是一行且没有换行
-	}
-	return n
-}
-
-// looksLikeModulePath 判断一个带引号 token 是否长得像 Go module 路径。
-//
-// 判据（逐条都对应仓里真实存在、且必须被排除的东西）：
-//   - 不能以 . 或 / 开头：排除相对路径 "../escape" 与协议相对 "//host/x"；
-//   - 第一段不能含 ':'：排除带 scheme 的 URL（http://、https://），
-//     否则第一段会切成 "http:" 而被误当宿主名；
-//   - 第一段必须含 '.'：module 路径带 module host（github.com / gopkg.in /
-//     mvdan.cc），纯 stdlib 标识（context、runtime）没有；
-//   - 必须还有子路径：module 路径至少两段。
-//
-// 不要求全小写——Go 允许大写（代理里编码为 !x），限定小写会让含大写的依赖
-// 整个漏掉，而漏判方向与门禁职责相反。
-func looksLikeModulePath(p string) bool {
-	if strings.HasPrefix(p, ".") || strings.HasPrefix(p, "/") {
-		return false
-	}
-	host, _, ok := strings.Cut(p, "/")
-	if !ok || !strings.Contains(host, ".") || strings.Contains(host, ":") {
-		return false
-	}
-	return true
-}
-
-// normalizeDep 把 module 路径归并到「owner/repo」两段——
-// github.com/oekit/pkg 与 github.com/oekit/logx 同属 oekit；
-// santhosh-tekuri/jsonschema/v6 没有 module host，第一段就是 owner。
-//
-// host 的判据是「第一段含点且至少还有两段」：github.com / gopkg.in / mvdan.cc
-// 都带点，而 owner 名（santhosh-tekuri、oagentkit）不带点。
-func normalizeDep(path string) string {
-	parts := strings.Split(path, "/")
-	rest := parts
-	if len(parts) >= 3 && strings.Contains(parts[0], ".") {
-		rest = parts[1:] // 去掉 module host（github.com/x → x）
-	}
-	if len(rest) < 2 {
-		return rest[0]
-	}
-	return rest[0] + "/" + rest[1]
-}
-
-// listPackages 列出一级子目录中的 Go 包（以含 .go 文件为准）。
-func listPackages() ([]string, error) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		files, globErr := filepath.Glob(filepath.Join(e.Name(), "*.go"))
-		if globErr != nil || len(files) == 0 {
-			continue
-		}
-		out = append(out, e.Name())
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-// splitDeps 拆依赖列：顿号或逗号分隔，「无」视为空。
-//
-// **不排序**：比对是按位置对齐的（README 须按实测的字典序书写），
-// 排序会打乱位置对应关系，让后缀匹配失去意义。
-func splitDeps(s string) []string {
-	s = strings.TrimSpace(s)
-	if s == "" || s == "无" {
-		return nil
-	}
-	var out []string
-	for _, part := range strings.FieldsFunc(s, func(r rune) bool {
-		return r == '、' || r == ',' || r == '，'
-	}) {
-		if p := strings.TrimSpace(part); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-func join(s []string) string {
-	if len(s) == 0 {
-		return "无"
-	}
-	return strings.Join(s, "、")
-}
-
-// equalDeps 比对依赖集合。
-//
-// 允许 README 用人类可读的简写：「jsonschema」匹配「santhosh-tekuri/jsonschema」，
-// 「goja」匹配「dop251/goja」。包表是给人看的，硬要求 owner/repo 全名只会逼着
-// 写噪音。判定按**路径后缀**——README 条目是实测依赖串的后缀即算匹配，
-// 既容忍简写，又不会把一个真依赖判成没有（「无」不匹配任何非空依赖）。
-func equalDeps(readme, actual []string) bool {
-	if len(readme) != len(actual) {
-		return false
-	}
-	for i, want := range actual {
-		if !suffixMatch(readme[i], want) {
-			return false
-		}
-	}
-	return true
-}
-
-// suffixMatch a 是否为 b 的路径后缀（a 短或相等即算）。
-func suffixMatch(a, b string) bool {
-	if a == b {
-		return true
-	}
-	return len(a) < len(b) && strings.HasSuffix(b, "/"+a)
-}

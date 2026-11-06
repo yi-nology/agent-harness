@@ -372,6 +372,25 @@ modules:
       门禁必须是**最底层**的东西，否则「用它判别人」就变成「它自己也在被判定」，
       门禁的红绿会依赖它所判的代码。
 
+  # 2026-11-06 新增（issue #35）：`cmd/ptcchild` 此前靠 dependency_direction 的
+  # 目录级豁免 `[cmd]` 顺带盖住，从未经过任何判定面。
+  #
+  # 它的性质是「**测试夹具 + 执行入口**」：不作为独立二进制发布，而是被 ptc 的用例
+  # `go build` 出来当被测子进程（正常形态回 Result 帧 / noop 形态读掉 stdin 后干等，
+  # 用来验证「子进程不回结果时父侧必须限期收场」）。
+  #
+  # 登记进来的好处是它的依赖边**被真的判着**：它只允许依赖 ptc，多引一个机制包就红。
+  # 这比「按目录整棵跳过」严格——后者连「它 import 了什么」都不问。
+  - id: ptcchild
+    roots: [cmd/ptcchild]
+    requires: [ptc]
+    owner: harness
+    managed: true
+    notes: |
+      ptc 子进程后端的被测入口（测试夹具，不发布为独立二进制）。
+      requires 只有 ptc：它调 `ptc.MaybeRunChild()` 进子进程协议。
+      **不含裸执行入口 ptc.Run** ⇒ 执行路径门禁对它是绿的，且是**真的判过**的绿。
+
   # 2026-11-05 新增：快照式订阅表的**单一实现**（本仓内部件，不进公开 API）。
   #
   # 此前本仓有三份近乎逐字相同的实现：netguard/subscribe.go、pii/subscribe.go、
@@ -672,9 +691,21 @@ dependency_direction:
   enabled: true
   severity: error
   desc: 包间依赖必须先在 modules 段登记 requires；跨仓依赖用 ext:<import 路径前缀> 登记；未登记的包目录对门禁隐形，须补登记
-  # cmd 是门禁与文档工具自身（archcheck / docsync），不是机制包；
-  # 它们 import 各包是工具职责，不受机制包的依赖方向约束。
-  ignore_dirs: [cmd, docs]
+  # 豁免**逐包列举**，不给目录前缀（issue #35）。
+  #
+  # 前缀豁免的通病是「今天写它时只想着两个包，明天多一个也没人重新判断」。
+  # 本仓真实发生过：这行原写 `[cmd, docs]`，理由写的是「archcheck / docsync 是
+  # 工具包」；而当时 cmd/ 下**已有三个包**，第三个 `ptcchild` 既不是门禁工具也不是
+  # 文档工具（它是 ptc 子进程后端的执行入口），却被同一条前缀豁免顺带盖住了，
+  # 且没有任何信号——理由点名 2 个、实际豁免 3 个。
+  #
+  # 逐个列举之后，新增 `cmd/xxx` 会当场报「未登记的包目录」，逼人重新判断它是
+  # 什么：是工具（加到这里）、还是值得被依赖方向管住的模块（登记进 modules 段）。
+  #
+  #   cmd/archcheck、cmd/docsync、cmd/pkgcov  门禁 / 文档工具：import 各包是工具
+  #                                            职责，不是机制依赖。
+  #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -728,7 +759,9 @@ sandbox_providers:
   enabled: true
   severity: error
   desc: 执行沙箱后端的隔离档位必须登记在 sandbox_providers 段，且与代码事实一致（档位声明要有人签字）
-  ignore_dirs: [cmd, docs]
+  # 逐包列举，理由同 dependency_direction（issue #35）：前缀豁免会**无声地**把
+  # 将来新增的 cmd 子包一起盖住。这三个是工具，它们不实现 sandbox.Provider。
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, docs]
   providers:
     - id: gatecheck-managed
       level: LevelProcess
@@ -797,7 +830,14 @@ execution_paths:
   enabled: true
   severity: error
   desc: 执行必须经 sandbox 登记簿（sandbox.Execute），不得直接调用裸执行入口
-  ignore_dirs: [cmd, docs]
+  # ✅ 本段**不豁免 cmd**（issue #35）：门禁工具与文档工具自己不执行任何第三方
+  # 程序，本来就不需要这条豁免——而 cmd/ptcchild 恰恰是「会真实起子进程、并让
+  # 父侧验证『不回结果时必须限期收场』」的程序，是这条判定面最该看一眼的对象。
+  # 它现在被判定面覆盖着（它调的是 ptc.MaybeRunChild，不是裸入口 ptc.Run，故合规）。
+  #
+  # 判定面覆盖它是**有意义的信号**：哪天有人把它改成直接调 ptc.Run，这条门禁会红。
+  # 按目录豁免的写法下，那种改动从来不会经过任何判定面。
+  ignore_dirs: [docs]
   # 本仓自己的裸执行入口登记在**判据执行体的内置表**里
   # （archcheck/execution.go 的 builtinRawEntries）——那是本仓的 API 事实，
   # 让每个仓各登记一份就是**两份真相**（宿主改了登记、本仓没改，两边各判一套，

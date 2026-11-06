@@ -39,6 +39,28 @@ PKG_COV_MIN := 70
 # 记这一笔的原因是它验证了「失效即红」这条机制：补完用例后第一次跑 cover-gate，
 # 门禁自己报的就是「豁免失效，请从 PKG_COV_EXEMPT 移除」，而不是默默放行。
 PKG_COV_EXEMPT :=
+# 零测试文件豁免（逗号分隔，按包路径**后缀**匹配）。同样「失效即红」。
+#
+# 为什么要这条判据（issue #30）：`go test` 对无测试文件的包输出
+# `?  <pkg>  [no test files]`，而覆盖率判据只认带数值的行——`?` 行被跳过。
+# 跳过是**刻意**的（它不是「0% 覆盖」，是「不适用」，混进分母会把判据变成
+# 「测试文件计数」），但后果是**没有测试文件的包对逐包下限完全隐形**：新增包若
+# 整包不写测试，判据一声不吭。判据分不出「合理的零测试」与「漏写测试」——
+# 那就别假装分得出，要求显式声明：要么补测试，要么在这里登记并写清为什么。
+#
+# 当前两项：
+#   cmd/archcheck  纯 CLI 装配层（Load/Run/WriteReport 的拼装与 flag 解析）；
+#                  判定逻辑全在 archcheck 包，那里有完整用例。
+#   cmd/ptcchild   子进程夹具：不作为独立包被调用，而是由 ptc 的用例用
+#                  `go build` 编出来当被测子进程（见 ptc/subprocess_exec_test.go）。
+PKG_NO_TEST_EXEMPT := cmd/archcheck,cmd/ptcchild
+# 门禁工具的版本口径。**单一来源在这里**，ci.yml 必须与之一致（versioncheck 判）。
+# 运行时还要再断言一次实跑版本（lint / vuln 目标里）——「钉了版本」与「跑的是
+# 那个版本」是两件事：命令在 PATH 里只说明门禁会跑，不说明跑的是同一套判据。
+LINT_VERSION := 2.14.0
+# ci.yml 路径（versioncheck 交叉比对用）。抽成变量是为了让判据本身只有一处
+# 引用文件名——改名时不会漏掉某条判据。
+CI_YML := .github/workflows/ci.yml
 # -race 必须开 cgo：Linux 上 `-race requires cgo`（实测 GOOS=linux 下
 # `CGO_ENABLED=0 go test -race -c` 直接报这句）。故 race 目标**不能**跟着
 # 全局的 GOENV(CGO_ENABLED=0)——那样它在 CI 上必红。本机 cgo=1 已验证可
@@ -53,7 +75,7 @@ CROSS_TARGETS := linux/amd64 linux/arm64 darwin/arm64
 # govulncheck 版本口径：CI 装这个版本，与本机验证过的一致（同 lint 的理由）。
 GOVULNCHECK_VERSION := v1.7.0
 
-.PHONY: build fmt-check vet lint test race cover cover-gate vuln crossbuild architecture-check docsync check tidy devlink devunlink clean
+.PHONY: build fmt-check vet lint test race cover cover-gate vuln crossbuild versioncheck architecture-check docsync check tidy devlink devunlink clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -82,8 +104,21 @@ vet:
 # 「从没见过它触发」的规则等于没有规则，同理「没人跑的门禁」也不等于有门禁，
 # 故按 AGENTS.md「门禁本体全部在 check 里」把它接进来。CI 侧只负责把二进制装好，
 # 规则本体仍在本 Makefile——不放到 ci.yml 里，避免变成「推送后门禁」。
-lint: ## 静态检查（未安装时明确报错退出，与宿主仓同口径）
+lint: ## 静态检查（未安装 / 版本不符都明确报错退出，与宿主仓同口径）
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint 未安装：brew install golangci-lint"; exit 1; }
+	@# 版本断言（issue #37）：`command -v` 只说明门禁**会跑**，不说明跑的是
+	@# **同一套判据**。静态分析器的版本决定判定结果（新增 check / 默认配置调整 /
+	@# 误报修正），于是版本漂移的两个方向都不好：本机更严 ⇒ 本地红、CI 绿，人会去
+	@# 改代码而 CI 永远不会同意；本机更松 ⇒ 本地绿、CI 红，被当成「CI 抽风」，
+	@# 而实际漏了一条真问题。
+	@#
+	@# 不自动降级、不自动安装：版本不符是「判据与声明不一致」，属于必须由人决定的
+	@# 动作——静默换版本等于让门禁自己决定自己被谁判。
+	@got=$$(golangci-lint --version 2>/dev/null | awk '{print $$4}'); \
+	[ "$$got" = "$(LINT_VERSION)" ] || { \
+	  echo "golangci-lint 版本不符：Makefile 声明 $(LINT_VERSION)，PATH 里是 '$$got'"; \
+	  echo "装对应版本：brew install golangci-lint@$(LINT_VERSION) 或按官方 install.sh 装 v$(LINT_VERSION)"; \
+	  exit 1; }
 	$(EXPORT) $(GOENV) golangci-lint run ./...
 
 test:
@@ -114,7 +149,7 @@ cover-gate: ## 覆盖率阈值门禁（全局门槛 + 逐包下限；阈值应�
 	@#
 	@# 两条判据：全局门槛（COV_MIN）管「整体没退步」，逐包下限（PKG_COV_MIN）
 	@# 管「没有一个包躲在大盘后面」。两者判的是两件事，故都要跑；判定细则见
-	@# scripts/pkgcov.awk 的头注。
+	@# cmd/pkgcov 的头注（原 scripts/pkgcov.awk，issue #36 收编为 Go 执行体）。
 	@#
 	@# 日志必须留到逐包判定之后再删：原实现「成功即 rm 日志」，于是逐包数字在
 	@# 判定前就已经没了——这正是它此前只能判全局的实现层原因。
@@ -135,7 +170,7 @@ cover-gate: ## 覆盖率阈值门禁（全局门槛 + 逐包下限；阈值应�
 	  rm -f "$$log"; \
 	  exit 1; \
 	fi; \
-	if ! awk -v m="$(PKG_COV_MIN)" -v ex="$(PKG_COV_EXEMPT)" -f scripts/pkgcov.awk "$$log"; then \
+	if ! $(EXPORT) $(GOENV) go run ./cmd/pkgcov -min $(PKG_COV_MIN) -exempt "$(PKG_COV_EXEMPT)" -no-test-exempt "$(PKG_NO_TEST_EXEMPT)" <"$$log"; then \
 	  rm -f "$$log"; \
 	  exit 1; \
 	fi; \
@@ -152,7 +187,49 @@ vuln: ## 依赖与标准库漏洞扫描（govulncheck）
 	@command -v govulncheck >/dev/null 2>&1 || { \
 	  echo "govulncheck 未安装：go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)"; \
 	  exit 1; }
+	@# 版本断言（issue #37）：与 lint 同一条理由，但这一条更硬——AGENTS.md 那条
+	@# 「修标准库漏洞要抬 go 指令、不是 toolchain 指令」的结论**正是靠 v1.7.0 的
+	@# 输出**得出的（6 条 stdlib 漏洞的清单来自它）。扫描器悄悄换了版本，结论的
+	@# 依据就变了，而门禁的绿会照旧。
+	@#
+	@# 只断言 **Scanner**，不断言 `Go:` 行：那行报的是**本地工具链**版本，比 go.mod
+	@# 的 go 指令新是合法状态（下游照样能用本仓的地板编出无漏洞的二进制），
+	@# 断言相等会在任何较新工具链的机器上假红。
+	@got=$$(govulncheck -version 2>/dev/null | awk -F'@' '/^Scanner: /{print $$2}'); \
+	[ "$$got" = "$(GOVULNCHECK_VERSION)" ] || { \
+	  echo "govulncheck 版本不符：Makefile 声明 $(GOVULNCHECK_VERSION)，PATH 里是 '$$got'"; \
+	  echo "装对应版本：go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)"; \
+	  exit 1; }
 	$(EXPORT) $(GOENV) govulncheck ./...
+
+# ── 门禁工具版本口径（issue #32）────────────────────────────────
+#
+# 门禁工具的版本**决定判定结果**，而它此前写在两个地方：Makefile 的
+# GOVULNCHECK_VERSION 与 ci.yml 的安装行。改一处忘另一处 ⇒ CI 装旧版、本地跑新版
+# ⇒「本地绿、CI 红」（或反过来，更糟：CI 绿而本地红，人会以为门禁误报）。
+#
+# 单一来源是**本文件**：LINT_VERSION / GOVULNCHECK_VERSION。ci.yml 只负责把
+# 对应版本的二进制装进 PATH，版本号必须与这里一致。
+#
+# 为什么不让 ci.yml 反向读 Makefile（如 print-govulncheck-version）：那会让
+# 「装什么版本」变成 CI 去解析 Makefile 输出的脆弱动作——判据留在 Makefile、
+# 声明也留在 Makefile，CI 只管安装，边界才清楚。
+versioncheck: ## 门禁工具版本口径：ci.yml 安装的版本必须与 Makefile 声明一致（issue #32）
+	@# 两处版本号不一致即红，且把**两边各自的值**都打出来——只说「不一致」时，
+	@# 人要自己去两个文件里翻，而门禁报错的成本恰恰在这里。
+	@# 用「取全部唯一值」而不是「取第一个」：ci.yml 里若同一工具出现两次且版本
+	@# 不同，取第一个会把「自身内部不一致」放过去。
+	@lint_ci=$$(grep -o 'bin" v[0-9][0-9.]*' $(CI_YML) | sed 's/.*" //' | sort -u | tr '\n' '|'); \
+	vuln_ci=$$(grep -o 'govulncheck@v[0-9][0-9.]*' $(CI_YML) | sed 's/.*@//' | sort -u | tr '\n' '|'); \
+	ok=1; \
+	[ "$$lint_ci" = "v$(LINT_VERSION)|" ] || { \
+	  echo "golangci-lint 版本不一致：Makefile v$(LINT_VERSION)，ci.yml '$$lint_ci'"; ok=0; }; \
+	[ "$$vuln_ci" = "$(GOVULNCHECK_VERSION)|" ] || { \
+	  echo "govulncheck 版本不一致：Makefile $(GOVULNCHECK_VERSION)，ci.yml '$$vuln_ci'"; ok=0; }; \
+	[ "$$ok" = 1 ] || { \
+	  echo "修法：改 ci.yml 的安装行，或改 Makefile 的 LINT_VERSION / GOVULNCHECK_VERSION（两边必须同步）"; \
+	  exit 1; }; \
+	echo "门禁工具版本口径一致 ✓（golangci-lint v$(LINT_VERSION) / govulncheck $(GOVULNCHECK_VERSION)）"
 
 crossbuild: ## 交叉构建矩阵（声明支持的平台必须真的编得过）
 	@# 为什么这条要有：本仓是**给宿主当依赖编进二进制**的，本机 darwin 绿不等于
@@ -212,7 +289,9 @@ modwork: ## go.work / go.work.sum 不得入库（只应存在于本机）
 # crossbuild（声明支持的平台必须真编得过）。它们的共同点是「目标/文档里有，
 # 但没人执行」——与 lint 当年同样的形态，故按同一条纪律接进 check，
 # 不挂到 ci.yml 上变回「推送后门禁」。
-check: fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync modreplace modwork ## 提交前门禁聚合
+## 提交前门禁聚合。versioncheck 排在最前：工具版本不符时后面每条门禁的绿都不
+## 代表「本仓合规」，先让它说话，免得红在别处、人往别处查。
+check: versioncheck fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync modreplace modwork
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy

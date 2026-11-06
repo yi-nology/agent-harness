@@ -19,6 +19,8 @@
 package archcheck
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -135,6 +137,86 @@ func TestSelfCheckCatchesExceptionOnUnknownRule(t *testing.T) {
 	vs := selfCheckViolations(t.TempDir(), &pol)
 	if !containsText(vs, "不存在的规则") {
 		t.Fatalf("指向不存在规则的例外必须被报出，实得 %v", textsOf(vs))
+	}
+}
+
+// TestSelfCheckCatchesIgnoreDirThatDoesNotExist 目录级豁免必须指向真实存在的目录。
+//
+// 为什么这条要成对（下面还有一个「存在即不报」的用例）：只有「坏实现会红」的
+// 用例才钉得住判据。只测「好实现能过」的话，一个把 ignore_dirs 整个跳过不看的
+// 实现照样全绿——而它正是这条自校验要防的失效形态。
+func TestSelfCheckCatchesIgnoreDirThatDoesNotExist(t *testing.T) {
+	pol := Policy{
+		Modules: []Module{{ID: "ok", Roots: []string{"ok"}, Requires: []string{}}},
+		DepDir: DependencyDirection{
+			IgnoreDirs: []string{"ghostdir", "docs-but-not-there"},
+		},
+	}
+	vs := selfCheckViolations(t.TempDir(), &pol)
+	for _, want := range []string{"ghostdir", "docs-but-not-there"} {
+		if !containsText(vs, want) {
+			t.Fatalf("指向不存在目录的豁免项 %q 必须被报出，实得 %v", want, textsOf(vs))
+		}
+	}
+	if !containsText(vs, "dependency_direction") {
+		t.Fatalf("报错必须点名是**哪一段**的豁免（宿主有多个 ignore_dirs 段），实得 %v", textsOf(vs))
+	}
+}
+
+// TestSelfCheckIgnoreDirThatExistsIsFine 反向对照：目录真实存在时不得误报。
+func TestSelfCheckIgnoreDirThatExistsIsFine(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "tools"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	pol := Policy{
+		DepDir: DependencyDirection{IgnoreDirs: []string{"cmd/tools"}},
+	}
+	vs := selfCheckViolations(root, &pol)
+	if containsText(vs, "ignore_dirs") {
+		t.Fatalf("存在的目录不得被判为陈旧豁免，实得 %v", textsOf(vs))
+	}
+}
+
+// TestSelfCheckScanRootAncestorCoversChild scan_roots 的祖先目录覆盖子目录，不得假红。
+//
+// 旧实现逐字比相等：scan_roots 写 "cmd"、模块根写 "cmd/tool" 时会报「漏在
+// scan_roots 之外」——而阈值判定是**按目录递归**走的，"cmd" 明明扫着它。
+// 假红的代价很具体：唯一的解是把每个子目录逐个列进 scan_roots，直到清单与
+// 目录树同构。判据不该逼人做那件事。
+func TestSelfCheckScanRootAncestorCoversChild(t *testing.T) {
+	pol := Policy{
+		Modules: []Module{{ID: "tool", Roots: []string{"cmd/tool"}, Requires: []string{}}},
+		Thresholds: Threshold{
+			Enforce:           true,
+			MaxFileLines:      400,
+			MaxMethodsPerType: 25,
+			ScanRoots:         []string{"cmd"},
+		},
+	}
+	vs := selfCheckViolations(t.TempDir(), &pol)
+	if containsText(vs, "scan_roots") {
+		t.Fatalf("祖先目录覆盖时不得报「漏在 scan_roots 之外」，实得 %v", textsOf(vs))
+	}
+}
+
+// TestSelfCheckScanRootSiblingDoesNotCover 反向：同级的**兄弟**目录不算覆盖。
+//
+// 与上一条成对存在。缺了这条，把「祖先覆盖」实现成「同前缀即可」也会全绿
+// ——"cmd/other" 与 "cmd/tool" 共享前缀 "cmd/"，但那不是覆盖。
+func TestSelfCheckScanRootSiblingDoesNotCover(t *testing.T) {
+	pol := Policy{
+		Modules: []Module{{ID: "tool", Roots: []string{"cmd/tool"}, Requires: []string{}}},
+		Thresholds: Threshold{
+			Enforce:           true,
+			MaxFileLines:      400,
+			MaxMethodsPerType: 25,
+			ScanRoots:         []string{"cmd/other"},
+		},
+	}
+	vs := selfCheckViolations(t.TempDir(), &pol)
+	if !containsText(vs, "scan_roots") {
+		t.Fatalf("同级兄弟目录不是覆盖，必须仍报「漏在 scan_roots 之外」，实得 %v", textsOf(vs))
 	}
 }
 

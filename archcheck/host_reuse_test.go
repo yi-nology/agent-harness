@@ -118,6 +118,10 @@ func TestHostReuseUndeclaredExternalIsViolation(t *testing.T) {
 	writeHostRepo(t, root, policy, map[string]string{
 		"internal/service/svc.go": "package service\n\nimport (\n\t_ \"example.test/host/internal/base\"\n\t_ \"github.com/yi-nology/agent-harness/netguard\"\n)\n",
 		"internal/base/base.go":   "package base\n",
+		// policy 的 ignore_dirs 写了 cmd ⇒ 这个目录必须真的存在，否则豁免是
+		// 陈旧声明（自校验会红，见 selfcheck.go 的「目录级豁免必须指向真实存在
+		// 的目录」）。夹具要把**宿主政策的样子**摆全，而不是只摆被判的那几个包。
+		"cmd/tool/main.go": "package main\n",
 	})
 
 	pol, err := Load(filepath.Join(root, "architecture-policy.yaml"))
@@ -164,6 +168,7 @@ dependency_direction:
 `
 	writeHostRepo(t, root, policy, map[string]string{
 		"internal/service/svc.go": "package service\n",
+		"cmd/tool/main.go":        "package main\n", // ignore_dirs 提到 cmd ⇒ 它得存在
 	})
 
 	pol, err := Load(filepath.Join(root, "architecture-policy.yaml"))
@@ -200,6 +205,7 @@ func TestHostReuseNestedRootsAreNotFalsePositives(t *testing.T) {
 	writeHostRepo(t, root, hostPolicy, map[string]string{
 		"internal/service/svc.go": "package service\n",
 		"internal/base/base.go":   "package base\n",
+		"cmd/tool/main.go":        "package main\n", // ignore_dirs 提到 cmd ⇒ 它得存在
 	})
 
 	pol, err := Load(filepath.Join(root, "architecture-policy.yaml"))
