@@ -155,14 +155,6 @@ func CheckChainWithCtx(ctx context.Context, start string, hops []string, allow A
 	return nil
 }
 
-// CheckChain 逐跳校验一条跳转链（双 bool 形态）。
-//
-// Deprecated: 用 CheckChainWith（理由同 CheckURL 的 Deprecated 说明）。
-// 保留旧签名是为了不破宿主 API。
-func CheckChain(start string, hops []string, allowPrivate, allowLoopback bool, maxHops int) error {
-	return CheckChainWith(start, hops, Allow{Private: allowPrivate, Loopback: allowLoopback}, maxHops)
-}
-
 // firstTerminalHop 返回首个终止跳下标，没有则 -1。
 func firstTerminalHop(hops []string) int {
 	for i, loc := range hops {

@@ -34,14 +34,14 @@ func TestThisNetworkRangeBlocked(t *testing.T) {
 		"http://0.128.0.1/x",
 		"http://0.0.0.1/x",
 	} {
-		if err := CheckURL(u, true, true); err == nil {
+		if err := CheckURLWith(u, Allow{Private: true, Loopback: true}); err == nil {
 			t.Errorf("%s: this network 段应无条件拒（放行面参数全开也不例外），实得放行", u)
 		}
 	}
 
 	// 全零字面量随旗标走，与回环同待遇——单独钉住，免得日后有人把
 	// 「整段无条件拒」的错误理解顺带改到它头上。
-	if err := CheckURL("http://0.0.0.0/x", true, false); err == nil {
+	if err := CheckURLWith("http://0.0.0.0/x", Allow{Private: true, Loopback: false}); err == nil {
 		t.Error("0.0.0.0 在 allowLoopback=false 时应拒")
 	}
 }
@@ -56,7 +56,7 @@ func TestThisNetworkIPv4MappedBlocked(t *testing.T) {
 		"http://[::ffff:0.1.2.3]/x",
 		"http://[::ffff:0.255.255.255]/x",
 	} {
-		err := CheckURL(u, true, true)
+		err := CheckURLWith(u, Allow{Private: true, Loopback: true})
 		if err == nil {
 			t.Errorf("%s: IPv4-mapped 形态应被拒，实得放行", u)
 			continue

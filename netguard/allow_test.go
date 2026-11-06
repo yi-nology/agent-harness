@@ -2,13 +2,14 @@
 //
 // # 为什么这些用例必须存在
 //
-// 1. **deprecated 包装与具名形态必须逐字等价**。双 bool 签名留着是为了不破宿主
-//    API，但包装里写反两个 bool 的位置不会编译报错、也不会有任何告警——它只会
-//    静默改变宿主的放行面。**这类 bug 的失败形态是「门禁变绿」**：宿主照常跑，
-//    只是放行面与它以为的不一样。
-// 2. **校验层与拨号层必须同口径**（issue #6 的行动项）。两层各判各的时，
-//    不一致的后果是分层放行：校验层拒、拨号层放行——**后者才是安全问题**。
-//    这条判据无法靠文档保证，只能靠用例钉住。
+// **校验层与拨号层必须同口径**（issue #6 的行动项）。两层各判各的时，
+// 不一致的后果是分层放行：校验层拒、拨号层放行——**后者才是安全问题**。
+// 这条判据无法靠文档保证，只能靠用例钉住。
+//
+// 历史：本文件曾用一整条用例钉「双 bool 包装与具名形态逐字等价」——
+// 那条包装已在 2026-11-06 的破坏性重构里删除（双 bool 的位序写反不会编译报错、
+// 也不会告警，只会静默改变放行面）。包装既已不存在，等价的唯一形态就是
+// `Allow` 本身。
 
 package netguard
 
@@ -16,43 +17,6 @@ import (
 	"net"
 	"testing"
 )
-
-// TestDeprecatedBoolWrappersMatchNamedForm 双 bool 包装必须与具名形态逐字等价。
-//
-// 逐位穷举：两个 bool 的四种组合 × 若干 URL，两个形态的判定结果必须一致。
-//
-// 为什么逐位穷举而不是抽测：包装里的写错（private 与 loopback 写反）只在
-// **两个都 true 或都不同时**显形，抽测很容易正好躲开。
-func TestDeprecatedBoolWrappersMatchNamedForm(t *testing.T) {
-	urls := []string{
-		"http://127.0.0.1/x",
-		"http://10.0.0.5/x",
-		"http://169.254.169.254/x",
-		"http://example.com/x",
-		"http://localhost:9/x",
-		"https://internal.svc/x",
-		"ftp://example.com/x",
-		"not-a-url",
-	}
-	for _, priv := range []bool{false, true} {
-		for _, loop := range []bool{false, true} {
-			for _, u := range urls {
-				gotOld := CheckURL(u, priv, loop)
-				gotNew := CheckURLWith(u, Allow{Private: priv, Loopback: loop})
-				if (gotOld == nil) != (gotNew == nil) {
-					t.Fatalf("CheckURL(%q, %v, %v) 与具名形态判定不一致：old=%v new=%v",
-						u, priv, loop, gotOld, gotNew)
-				}
-				// 逐跳链同理：包装不得在中间改写放行面。
-				chainOld := CheckChain(u, []string{"http://svc.internal/x"}, priv, loop, 0)
-				chainNew := CheckChainWith(u, []string{"http://svc.internal/x"}, Allow{Private: priv, Loopback: loop}, 0)
-				if (chainOld == nil) != (chainNew == nil) {
-					t.Fatalf("CheckChain(%q, ..., %v, %v) 与具名形态判定不一致", u, priv, loop)
-				}
-			}
-		}
-	}
-}
 
 // TestAllowZeroValueIsStrict 零值必须是严的。
 //

@@ -23,7 +23,7 @@
 //
 //	hc, err := netguard.NewClient(nil, netguard.Allow{})   // 零值 = 私网与回环全拒
 //
-// 测试（要连本机假服务器时，**只在测试里放宽**回环）：
+// 测试（要连回环上的假服务器时，**只在测试里放宽**回环）：
 //
 //	hc, err := netguard.NewClient(&http.Client{Timeout: 2 * time.Second},
 //	                             netguard.Allow{Loopback: true})

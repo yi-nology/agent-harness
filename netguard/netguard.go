@@ -1,11 +1,12 @@
-// Package netguard 出站 URL 守卫（SSRF 防护）：告警回推、凭证连通性探测、IM 推送等
-// 「平台代发 HTTP」的出口统一过闸——scheme 白名单 + 目标地址解析后逐 IP 过策略
+// Package netguard 出站 URL 守卫（SSRF 防护）：凡是「服务端代发 HTTP」的出口都统一
+// 过闸——scheme 白名单 + 目标地址解析后逐 IP 过策略
 // （IP 策略单源 oagentkit/guardx/egress：回环/未指定按 allowLoopback、RFC1918 私网按
 // allowPrivate 放行，链路本地（含云元数据）/组播/CGNAT/保留段一律拒绝——放行面
-// 只覆盖「目标在内网/本机是合法场景」的那部分；CGNAT 等保留段自此比旧版收紧）。
-// allowLoopback=false / allowPrivate=false 时对应族一并拒绝（告警回推/IM 推送等
-// 外部输入面）；凭证连通性探测传 (true, true)——探测本机/内网自建服务是能力本身，
-// 且写面已收 admin。
+// 只覆盖「目标落在内网或回环上是合法场景」的那部分；CGNAT 等保留段自此比旧版收紧）。
+// allowLoopback=false / allowPrivate=false 时对应族一并拒绝——面向**不可信输入**
+// 的出口取这一档（零值即此档）；面向**可信目标**的访问传 (true, true)，因为能否
+// 抵达内网/回环本身就是那个调用的能力，其前提是这类调用的写面另有鉴权约束
+// （鉴权属宿主职责，本包只管地址族）。
 //
 // 已知局限（纵深取舍）：DNS 解析与实际拨号之间存在 TOCTOU（rebinding 可绕过解析期
 // 检查）。**本批已补上拨号层的闭合**——见 dial.go 的 `DialFunc`：把同一套判定
@@ -146,18 +147,6 @@ func CheckURLWithCtx(ctx context.Context, rawURL string, allow Allow) error {
 		}
 	}
 	return nil
-}
-
-// CheckURL 校验出站 URL 是否允许平台代发（双 bool 形态）。
-//
-// Deprecated: 用 CheckURLWith。双 bool 的两个开关含义只能靠调用点约定区分
-// （issue #2 的「缺口 1b」），而放行面是安全边界；具名形态让调用点自解释，
-// 且将来加第三个放行维度不必破签名。
-//
-// 保留旧签名是为了不破宿主 API：宿主现有的调用点一行不改仍能编译，
-// 但新代码请用 CheckURLWith。
-func CheckURL(rawURL string, allowPrivate, allowLoopback bool) error {
-	return CheckURLWith(rawURL, Allow{Private: allowPrivate, Loopback: allowLoopback})
 }
 
 // ── 名字层：DNS 解析之前按名字拒 ──

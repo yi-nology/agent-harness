@@ -37,9 +37,9 @@ func TestCheckURL(t *testing.T) {
 		{"缺 host 拒绝", "http:///path", true, false, true},
 	}
 	for _, tc := range cases {
-		err := CheckURL(tc.url, tc.allowPrivate, tc.allowLoop)
+		err := CheckURLWith(tc.url, Allow{Private: tc.allowPrivate, Loopback: tc.allowLoop})
 		if (err != nil) != tc.wantErr {
-			t.Errorf("%s: CheckURL(%q) err=%v wantErr=%v", tc.name, tc.url, err, tc.wantErr)
+			t.Errorf("%s: CheckURLWith(%q, %+v) err=%v wantErr=%v", tc.name, tc.url, Allow{Private: tc.allowPrivate, Loopback: tc.allowLoop}, err, tc.wantErr)
 		}
 	}
 }
@@ -62,7 +62,7 @@ func TestCheckURLBlockedNameBeforeDNS(t *testing.T) {
 		{"大小写与尾点归一化", "http://Metadata.Google.Internal./x"},
 	}
 	for _, tc := range cases {
-		err := CheckURL(tc.url, false, false)
+		err := CheckURLWith(tc.url, Allow{Private: false, Loopback: false})
 		var bn *BlockedNameError
 		if !errors.As(err, &bn) {
 			t.Errorf("%s: 应在解析前被名字层拒（BlockedNameError），实得 %v", tc.name, err)
@@ -123,7 +123,7 @@ func TestCheckURLBlockedNameIgnoresAllowFlags(t *testing.T) {
 		"http://svc.localdomain/x",
 		"http://box.lan/x",
 	} {
-		if err := CheckURL(u, true, true); !errors.Is(err, ErrBlockedName) {
+		if err := CheckURLWith(u, Allow{Private: true, Loopback: true}); !errors.Is(err, ErrBlockedName) {
 			t.Errorf("%s: 放行面参数下仍应由名字层拒，实得 %v", u, err)
 		}
 	}
@@ -133,14 +133,14 @@ func TestCheckURLBlockedNameIgnoresAllowFlags(t *testing.T) {
 // 必须与回环地址同待遇：allowLoopback=true 放行、false 拒绝。
 // 少了这条，新增名字层会把「allowLoopback=true 够不到自身服务」变成回归。
 func TestCheckURLLoopbackFamilyFollowsAllowFlag(t *testing.T) {
-	if err := CheckURL("http://localhost:9/x", true, true); err != nil {
+	if err := CheckURLWith("http://localhost:9/x", Allow{Private: true, Loopback: true}); err != nil {
 		t.Fatalf("allowLoopback=true 时回环族名字应放行: %v", err)
 	}
-	if err := CheckURL("http://api.localhost:9/x", true, true); err != nil {
+	if err := CheckURLWith("http://api.localhost:9/x", Allow{Private: true, Loopback: true}); err != nil {
 		t.Fatalf("allowLoopback=true 时 .localhost 后缀应放行: %v", err)
 	}
 	for _, u := range []string{"http://localhost/x", "http://api.localhost/x"} {
-		if err := CheckURL(u, true, false); !errors.Is(err, ErrBlockedName) {
+		if err := CheckURLWith(u, Allow{Private: true, Loopback: false}); !errors.Is(err, ErrBlockedName) {
 			t.Errorf("%s: allowLoopback=false 时应被名字层拒，实得 %v", u, err)
 		}
 	}
@@ -149,7 +149,7 @@ func TestCheckURLLoopbackFamilyFollowsAllowFlag(t *testing.T) {
 // TestCheckURLPublicNameAllowed 名字层不得误伤公网名（含大小写/尾点写法）。
 func TestCheckURLPublicNameAllowed(t *testing.T) {
 	for _, u := range []string{"https://example.com/hook", "http://EXAMPLE.com/x", "http://example.com./x"} {
-		if err := CheckURL(u, false, false); err != nil {
+		if err := CheckURLWith(u, Allow{Private: false, Loopback: false}); err != nil {
 			t.Errorf("%s: 公网名应放行，实得 %v", u, err)
 		}
 	}
@@ -167,10 +167,10 @@ func TestExtraBlockedNamesCannotDisableDefaults(t *testing.T) {
 		t.Fatalf("合法后缀不应被拒: %v", err)
 	}
 
-	if err := CheckURL("http://extra-blocked.example/x", false, false); !errors.Is(err, ErrBlockedName) {
+	if err := CheckURLWith("http://extra-blocked.example/x", Allow{Private: false, Loopback: false}); !errors.Is(err, ErrBlockedName) {
 		t.Errorf("扩展精确名单应生效，实得 %v", err)
 	}
-	if err := CheckURL("http://a.blocked-example/x", false, false); !errors.Is(err, ErrBlockedName) {
+	if err := CheckURLWith("http://a.blocked-example/x", Allow{Private: false, Loopback: false}); !errors.Is(err, ErrBlockedName) {
 		t.Errorf("扩展后缀名单应生效，实得 %v", err)
 	}
 	// 默认名单一个都不能少。断言同样落在 ErrBlockedName 上：
@@ -181,7 +181,7 @@ func TestExtraBlockedNamesCannotDisableDefaults(t *testing.T) {
 		"http://svc.internal/x", "http://printer.local/x", "http://svc.localdomain/x",
 		"http://box.lan/x",
 	} {
-		if err := CheckURL(u, false, false); !errors.Is(err, ErrBlockedName) {
+		if err := CheckURLWith(u, Allow{Private: false, Loopback: false}); !errors.Is(err, ErrBlockedName) {
 			t.Errorf("%s: 扩展表不应能摘掉默认名单项，实得 %v", u, err)
 		}
 	}
@@ -201,7 +201,7 @@ func TestExtraSuffixNormalizedOnInjection(t *testing.T) {
 	for _, u := range []string{
 		"http://a.corp/x", "http://A.CORP/x", "http://svc.corp-internal/x",
 	} {
-		if err := CheckURL(u, false, false); !errors.Is(err, ErrBlockedName) {
+		if err := CheckURLWith(u, Allow{Private: false, Loopback: false}); !errors.Is(err, ErrBlockedName) {
 			t.Errorf("%s: 归一化后应命中扩展后缀，实得 %v", u, err)
 		}
 	}
@@ -242,10 +242,10 @@ func TestExtraSuffixRejectionKeepsPrevious(t *testing.T) {
 	if err := SetExtraBlockedHostSuffixes(".good-example", "nodot"); !errors.Is(err, ErrInvalidBlockedSuffix) {
 		t.Fatalf("含非法项的批次应整批被拒，实得 %v", err)
 	}
-	if err := CheckURL("http://a.good-example/x", false, false); err == nil {
+	if err := CheckURLWith("http://a.good-example/x", Allow{Private: false, Loopback: false}); err == nil {
 		t.Error("被拒批次里的合法项不应被部分安装")
 	}
-	if err := CheckURL("http://a.keep-example/x", false, false); !errors.Is(err, ErrBlockedName) {
+	if err := CheckURLWith("http://a.keep-example/x", Allow{Private: false, Loopback: false}); !errors.Is(err, ErrBlockedName) {
 		t.Errorf("被拒批次不应动到上一份名单，实得 %v", err)
 	}
 }
@@ -306,7 +306,7 @@ func TestExtraBlockedConcurrentSetAndClassify(t *testing.T) {
 
 // TestCheckChainBlockedNameEveryHop 名字层对每一跳都生效（CheckChain 逐跳过 CheckURL）。
 func TestCheckChainBlockedNameEveryHop(t *testing.T) {
-	err := CheckChain("https://example.com/start", []string{"http://svc.internal/x"}, false, false, 0)
+	err := CheckChainWith("https://example.com/start", []string{"http://svc.internal/x"}, Allow{Private: false, Loopback: false}, 0)
 	var hd *HopDeniedError
 	if !errors.As(err, &hd) || hd.Hop != 2 {
 		t.Fatalf("第二跳跳进拦截后缀应报 Hop=2，实得 %v", err)

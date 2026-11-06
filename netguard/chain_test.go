@@ -35,7 +35,7 @@ func TestResolveLocationProtocolRelative(t *testing.T) {
 		t.Fatalf("协议相对地址应解析为跨主机绝对地址（继承 scheme），实得 %q", got)
 	}
 	// 解析后再校验：必须能看出目标在链路本地并拒掉
-	if err := CheckURL(got, false, false); err == nil {
+	if err := CheckURLWith(got, Allow{Private: false, Loopback: false}); err == nil {
 		t.Fatal("解析后应能看出目标在链路本地并拒掉")
 	}
 }
@@ -52,7 +52,7 @@ func TestResolveLocationInvalid(t *testing.T) {
 
 // TestCheckChainAllowsCleanChain 全程落在公网时应放行。
 func TestCheckChainAllowsCleanChain(t *testing.T) {
-	err := CheckChain(okPublic, []string{"/a", "https://example.com/b"}, false, false, 0)
+	err := CheckChainWith(okPublic, []string{"/a", "https://example.com/b"}, Allow{Private: false, Loopback: false}, 0)
 	if err != nil {
 		t.Fatalf("干净链应放行: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestCheckChainAllowsCleanChain(t *testing.T) {
 
 // TestCheckChainRejectsStartURL 起始 URL 即被拒时报 Hop=1。
 func TestCheckChainRejectsStartURL(t *testing.T) {
-	err := CheckChain(badMeta, nil, false, false, 0)
+	err := CheckChainWith(badMeta, nil, Allow{Private: false, Loopback: false}, 0)
 	var hd *HopDeniedError
 	if !errors.As(err, &hd) || hd.Hop != 1 {
 		t.Fatalf("起始跳被拒应为 Hop=1 的结构化错误，实得 %v", err)
@@ -73,7 +73,7 @@ func TestCheckChainRejectsStartURL(t *testing.T) {
 // TestCheckChainRejectsLaterHop **逐跳**重验的核心断言：
 // 首跳干净、后续跳跳到元数据地址，必须被抓到。
 func TestCheckChainRejectsLaterHop(t *testing.T) {
-	err := CheckChain(okPublic, []string{"/step1", "/step2", "http://169.254.169.254/creds"}, false, false, 0)
+	err := CheckChainWith(okPublic, []string{"/step1", "/step2", "http://169.254.169.254/creds"}, Allow{Private: false, Loopback: false}, 0)
 	var hd *HopDeniedError
 	if !errors.As(err, &hd) {
 		t.Fatalf("后续跳被拒应为结构化错误，实得 %v", err)
@@ -86,7 +86,7 @@ func TestCheckChainRejectsLaterHop(t *testing.T) {
 // TestCheckChainRelativeHopIntoPrivate 相对 Location 指向内网也必须被抓——
 // 这正是「不解析就只校验首跳」的漏法。
 func TestCheckChainRelativeHopIntoPrivate(t *testing.T) {
-	err := CheckChain("https://example.com", []string{"http://127.0.0.1:8080/"}, false, false, 0)
+	err := CheckChainWith("https://example.com", []string{"http://127.0.0.1:8080/"}, Allow{Private: false, Loopback: false}, 0)
 	var hd *HopDeniedError
 	if !errors.As(err, &hd) || hd.Hop != 2 {
 		t.Fatalf("第二跳跳回环应被拒且报 Hop=2，实得 %v", err)
@@ -99,12 +99,12 @@ func TestCheckChainHopLimit(t *testing.T) {
 	for i := range hops {
 		hops[i] = "/x"
 	}
-	err := CheckChain(okPublic, hops, false, false, 3)
+	err := CheckChainWith(okPublic, hops, Allow{Private: false, Loopback: false}, 3)
 	if !errors.Is(err, ErrTooManyHops) {
 		t.Fatalf("超过 maxHops 应报 ErrTooManyHops，实得 %v", err)
 	}
 	// 恰好等于上限仍放行
-	if err := CheckChain(okPublic, hops[:2], false, false, 3); err != nil {
+	if err := CheckChainWith(okPublic, hops[:2], Allow{Private: false, Loopback: false}, 3); err != nil {
 		t.Fatalf("未超限应放行: %v", err)
 	}
 }
@@ -116,11 +116,11 @@ func TestCheckChainDefaultsMaxHops(t *testing.T) {
 		hops[i] = "/x"
 	}
 	// 恰好 DefaultMaxHops 跳：允许（起始之外允许 10 次跳转）
-	if err := CheckChain(okPublic, hops, false, false, 0); err != nil {
+	if err := CheckChainWith(okPublic, hops, Allow{Private: false, Loopback: false}, 0); err != nil {
 		t.Fatalf("恰好 %d 跳应放行: %v", DefaultMaxHops, err)
 	}
 	// 第 11 跳：拒
-	err := CheckChain(okPublic, append(hops, "/x"), false, false, 0)
+	err := CheckChainWith(okPublic, append(hops, "/x"), Allow{Private: false, Loopback: false}, 0)
 	if !errors.Is(err, ErrTooManyHops) {
 		t.Fatalf("超过缺省上限应拒，实得 %v", err)
 	}
@@ -133,10 +133,10 @@ func TestCheckChainHopCountOffByOne(t *testing.T) {
 	for i := range hops {
 		hops[i] = "/x"
 	}
-	if err := CheckChain(okPublic, hops, false, false, 3); err != nil {
+	if err := CheckChainWith(okPublic, hops, Allow{Private: false, Loopback: false}, 3); err != nil {
 		t.Fatalf("maxHops=3 应允许 3 跳: %v", err)
 	}
-	if err := CheckChain(okPublic, append(hops, "/x"), false, false, 3); !errors.Is(err, ErrTooManyHops) {
+	if err := CheckChainWith(okPublic, append(hops, "/x"), Allow{Private: false, Loopback: false}, 3); !errors.Is(err, ErrTooManyHops) {
 		t.Fatalf("第 4 跳应拒，实得 %v", err)
 	}
 }
@@ -152,7 +152,7 @@ func TestCheckChainValidatesStartBeforeBudget(t *testing.T) {
 		hops[i] = "/x"
 	}
 	// 起始即非法，且 5 跳 > 上限 2：两条错误都成立，必须报先发生的那条。
-	err := CheckChain(badMeta, hops, false, false, 2)
+	err := CheckChainWith(badMeta, hops, Allow{Private: false, Loopback: false}, 2)
 	var hd *HopDeniedError
 	if !errors.As(err, &hd) {
 		t.Fatalf("应为结构化错误，实得 %v", err)
@@ -171,11 +171,11 @@ func TestCheckChainValidatesStartBeforeBudget(t *testing.T) {
 // TestCheckChainAllowFlagsForwarded 放行面参数要能透传到每一跳。
 func TestCheckChainAllowFlagsForwarded(t *testing.T) {
 	// allowLoopback=true 时，探测回环地址是合法场景，整链应放行
-	if err := CheckChain("http://127.0.0.1:9/a", []string{"/b"}, true, true, 0); err != nil {
+	if err := CheckChainWith("http://127.0.0.1:9/a", []string{"/b"}, Allow{Private: true, Loopback: true}, 0); err != nil {
 		t.Fatalf("放行回环时应放行: %v", err)
 	}
 	// 关掉就必须拒
-	if err := CheckChain("http://127.0.0.1:9/a", nil, true, false, 0); err == nil {
+	if err := CheckChainWith("http://127.0.0.1:9/a", nil, Allow{Private: true, Loopback: false}, 0); err == nil {
 		t.Fatal("allowLoopback=false 时回环应被拒")
 	}
 }
@@ -204,7 +204,7 @@ func TestResolveLocationEmptyTerminates(t *testing.T) {
 // 且**其后的跳不再被校验**——这正是「停了而不是跳回自己」的可观察证据：
 // 若仍按「跳回自己」处理，第 3 个 hop（链路本地地址）会被抓出来报错。
 func TestCheckChainEmptyLocationStopsChain(t *testing.T) {
-	if err := CheckChain(okPublic, []string{"/a", "", badMeta}, false, false, 3); err != nil {
+	if err := CheckChainWith(okPublic, []string{"/a", "", badMeta}, Allow{Private: false, Loopback: false}, 3); err != nil {
 		t.Fatalf("空 Location 应终止链条而非拒绝，实得 %v", err)
 	}
 }
@@ -212,11 +212,11 @@ func TestCheckChainEmptyLocationStopsChain(t *testing.T) {
 // TestCheckChainEmptyLocationNoBudget 空 Location 不吃跳数预算：
 // 终止点之后的 hops 既不算跳数，也不参与校验。
 func TestCheckChainEmptyLocationNoBudget(t *testing.T) {
-	if err := CheckChain(okPublic, []string{"/a", "", "/b", "/c"}, false, false, 1); err != nil {
+	if err := CheckChainWith(okPublic, []string{"/a", "", "/b", "/c"}, Allow{Private: false, Loopback: false}, 1); err != nil {
 		t.Fatalf("真实跳转数只有 1 跳、未超上限，应放行，实得 %v", err)
 	}
 	// 对照：真的给了 2 跳且上限为 1 仍应超限拒——证明上一条不是因为上限失效
-	if err := CheckChain(okPublic, []string{"/a", "/b"}, false, false, 1); !errors.Is(err, ErrTooManyHops) {
+	if err := CheckChainWith(okPublic, []string{"/a", "/b"}, Allow{Private: false, Loopback: false}, 1); !errors.Is(err, ErrTooManyHops) {
 		t.Fatalf("2 跳对上限 1 应报 ErrTooManyHops，实得 %v", err)
 	}
 }
