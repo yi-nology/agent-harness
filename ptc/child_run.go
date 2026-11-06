@@ -16,18 +16,9 @@ import (
 // 判定环不在这里——它在**父侧**（宿主工具与判定环都在父侧，子进程里只有一个
 // 发请求的桩）。故子进程形态不弱化门禁。
 func runProgramInChild(start *wire.Start, call bindingCaller) wire.Result {
-	timeout := start.Budget.WallClock
-	if timeout <= 0 {
-		timeout = DefaultTimeout
-	}
-	maxCalls := start.Budget.MaxCalls
-	if maxCalls <= 0 {
-		maxCalls = DefaultMaxCalls
-	}
-	maxBytes := start.Budget.MaxBytes
-	if maxBytes <= 0 {
-		maxBytes = DefaultMaxBytes
-	}
+	// 缺省口径与父侧、进程内入口同一份（见 limits.go）：子进程里的预算不能
+	// 比父侧宽，也不能比父侧窄——两处各写一遍就必然有一处先漂。
+	lim := normalizeLimits(start.Budget.WallClock, start.Budget.MaxCalls, start.Budget.MaxBytes)
 
 	// 绑定清单还原成本地 Binding：只有名字与调用形态，**Call 是远程桩**。
 	bindings := bindingsFromStart(start.Bindings)
@@ -64,10 +55,10 @@ func runProgramInChild(start *wire.Start, call bindingCaller) wire.Result {
 	}
 
 	// 墙钟：子进程侧的 ctx 期限。
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), lim.timeout)
 	defer cancel()
 
-	res := execute(ctx, start.Program, bindings, timeout, maxCalls, maxBytes, nil, nil, call, &Result{})
+	res := execute(ctx, start.Program, bindings, lim.timeout, lim.maxCalls, lim.maxBytes, nil, nil, call, &Result{})
 	return resultToWire(res, start.ResultID)
 }
 

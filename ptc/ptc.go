@@ -217,18 +217,8 @@ type Result struct {
 // error 痕），程序随后被 Interrupt 收口。审批挂起=终止+已执行步骤留痕（spec §4 P2
 // 取舍：暂停恢复复杂度不值）。
 func Run(ctx context.Context, program string, bindings []Binding, opts Options) (res Result) {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = DefaultTimeout
-	}
-	maxCalls := opts.MaxCalls
-	if maxCalls <= 0 {
-		maxCalls = DefaultMaxCalls
-	}
-	maxBytes := opts.MaxBytes
-	if maxBytes <= 0 {
-		maxBytes = DefaultMaxBytes
-	}
+	// 三项上限的缺省口径只此一份（三处入口共用，见 limits.go）。
+	lim := normalizeLimits(opts.Timeout, opts.MaxCalls, opts.MaxBytes)
 
 	// 建议在唯一的收口处统一补，不在每个 return 分支里各写一遍——分支一多必然
 	// 漏一处，而漏掉的后果是「模型收到一条没有修复建议的失败」这种安静退化。
@@ -290,7 +280,7 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 		}
 	}
 
-	return execute(ctx, program, bindings, timeout, maxCalls, maxBytes, opts.Discover, opts.Stages, localCaller(bindings), &res)
+	return execute(ctx, program, bindings, lim.timeout, lim.maxCalls, lim.maxBytes, opts.Discover, opts.Stages, localCaller(bindings), &res)
 }
 
 // failFrom 执行期错误分类：中断哨兵→预算/超时 kind；ctx 取消→runtime（带原文）；

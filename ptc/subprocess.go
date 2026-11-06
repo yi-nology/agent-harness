@@ -147,18 +147,10 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 		}
 		exe = self
 	}
-	timeout := p.opts.Timeout
-	if timeout <= 0 {
-		timeout = DefaultTimeout
-	}
-	maxCalls := p.opts.MaxCalls
-	if maxCalls <= 0 {
-		maxCalls = DefaultMaxCalls
-	}
-	maxBytes := p.opts.MaxBytes
-	if maxBytes <= 0 {
-		maxBytes = DefaultMaxBytes
-	}
+	// 三项上限走同一份缺省口径（limits.go）：这里归一后写进 Start 帧发给子进程，
+	// 子进程收到后仍过同一个函数（Start 帧可能来自旧版父侧）。两处**同一份实现**
+	// 才谈得上「父侧改了子侧自动跟」——各写一遍必然分叉。
+	lim := normalizeLimits(p.opts.Timeout, p.opts.MaxCalls, p.opts.MaxBytes)
 
 	// 管道与子进程：见 childpipes.go（建立四条管道 + 装好子进程的那一侧）。
 	pipes, err := newChildPipes(exe)
@@ -222,14 +214,14 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 		Program:  p.opts.Program,
 		Bindings: startBindings(p.opts.Bindings),
 		Budget: wire.StartBudget{
-			WallClock: timeout,
-			MaxCalls:  maxCalls,
-			MaxBytes:  maxBytes,
+			WallClock: lim.timeout,
+			MaxCalls:  lim.maxCalls,
+			MaxBytes:  lim.maxBytes,
 			MaxMemory: p.opts.MaxMemory,
 		},
 		ResultID: "r-1",
 	}
-	res, startErr := startWithDeadline(ctx, starter, start, timeout)
+	res, startErr := startWithDeadline(ctx, starter, start, lim.timeout)
 
 	// 收尾顺序：**先取状态，再收刀**。
 	//
