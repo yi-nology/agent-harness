@@ -15,7 +15,12 @@
 //
 // 本包不关心「轮」是什么，只认 Turns 提供的在途计数与批量取消能力。
 //
-// ## 日志：走 logx.Delegating，不收回调
+// ## 两个排水档位共用同一份收敛循环
+//
+// 全局（Drain）与会话级（DrainSession，见 session.go）只差「问哪个计数」与
+// 「怎么取消」，循环本身在 converge.go——停机路径上的并发控制不该有两份。
+//
+// ## 日志：走 logx.Delegating，不回收调
 //
 // 留痕一律经 oekit/logx 的包级 Delegating logger（懒解析宿主后端）。宿主用
 // logx.SetDefault 换后端即可，**不需要把日志函数传进来**——旧版 Drain 带
@@ -43,20 +48,35 @@ var ErrDeadline = errors.New("停机排水超时，轮次强制中断")
 // **须 ≥ 本值 + 启动对账余量**，否则外层 SIGKILL 会先于本包收刀，排水形同虚设。
 const DefaultTimeout = 60 * time.Second
 
-// pollInterval 收敛轮询间隔。
-const pollInterval = 200 * time.Millisecond
+// DrainBudget 排水预算。
+//
+// 它是**命名类型**而不是 time.Duration 别名，这是刻意的编译期护栏：
+// `context.WithTimeout(ctx, drain.Budget(x))` 因此是编译错误，而不是运行期
+// 得到一个立即过期的 ctx——收尾协程秒退、一句错都不报，症状是「优雅停机
+// 静默变硬切」。收尾预算一律走 ShutdownBudget（它返回普通 time.Duration）。
+//
+// 本类型只在 Budget / Drain / DrainSession / DetachCtx 之间流动。需要当普通
+// 时长用时显式写 `time.Duration(b)`——那个转换就是一次「我知道自己在做什么」。
+type DrainBudget time.Duration
 
 // Budget 解析排水预算（0=缺省）。日志与部署口径共用此函数，避免两处各写一遍。
 //
-// **负值原样透传**：<0 是本包 Drain / DetachCtx 的「整体关闭排水」配置语义，
-// 本函数不做归一——宿主拿 Budget 的返回值去 context.WithTimeout 时若配置
-// 可能为负，请改用 ShutdownBudget（它把负值也归到缺省），否则负 ctx 立即
-// 过期，收尾协程秒退且无任何报错。
-func Budget(d time.Duration) time.Duration {
+// **负值原样透传，且这是刻意的**：<0 是本包 Drain / DrainSession / DetachCtx 的
+// 「整体关闭排水」配置语义。本函数**不得**把负值归一——那会把「关闭排水」
+// 静默翻成「排水 60 秒」，方向由「少做」变成「多做」且配置意图被吞掉（issue #24）。
+//
+// **返回值不能喂给 context.WithTimeout**：一是语义不对（负值得到立即过期的 ctx），
+// 二是类型不对（DrainBudget 不是 time.Duration，编译期即拒）。收尾预算一律走
+// ShutdownBudget；两者的正确接线范式见 docs/USAGE.md §3.8.2 的 ③。
+//
+// 两个方向由 drain_test.go 的 TestBudget、TestShutdownBudget 与
+// TestBudgetAndShutdownBudgetAreNotInterchangeable 钉住，
+// 后者的注释写明如何反向验证（把 d == 0 改成 d <= 0 必红）。
+func Budget(d time.Duration) DrainBudget {
 	if d == 0 {
-		return DefaultTimeout
+		return DrainBudget(DefaultTimeout)
 	}
-	return d
+	return DrainBudget(d)
 }
 
 // ShutdownBudget 解析**停机收尾预算**（0=缺省；负值同 0=缺省）。
@@ -88,35 +108,16 @@ type Turns interface {
 //
 // budget < 0 = 整体关闭（轮 ctx 未脱钩，天然随根 ctx 取消，本函数无操作）。
 // 留痕经 logx 出往宿主后端；本函数无返回值——排水失败不阻断关停链。
-func Drain(ctx context.Context, t Turns, budget time.Duration) {
+//
+// 期限由 ctx 承载、不由 budget 承载：budget 进留痕并决定部署侧宽限口径
+// （见 DefaultTimeout），超时判定看 ctx。故调用方须传入会到点的 ctx。
+func Drain(ctx context.Context, t Turns, budget DrainBudget) {
 	if budget < 0 {
 		return // 脱钩关闭态：无排水语义（存量行为）
 	}
-	active := t.Active()
-	if active == 0 {
-		log.CtxInfo(ctx, "轮次排水：无在途轮，直接进入关停")
-		return
-	}
-	log.CtxInfo(ctx, "轮次排水开始：等在途轮自然收敛",
-		"active", active, "budget", Budget(budget))
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			if left := t.Active(); left > 0 {
-				log.CtxWarn(ctx, "轮次排水超时：强制中断（留启动对账收敛）",
-					"left", left, "cause", ErrDeadline.Error())
-				t.CancelAll(ErrDeadline)
-			}
-			return
-		case <-ticker.C:
-			if t.Active() == 0 {
-				log.CtxInfo(ctx, "轮次排水完成：在途轮全部自然收敛")
-				return
-			}
-		}
-	}
+	awaitConverged(ctx,
+		convergeTarget{active: t.Active, cancel: t.CancelAll},
+		msgGlobal, budget)
 }
 
 // DetachCtx 轮 ctx 与根 ctx 取消脱钩：值保留、取消传播切断。
@@ -124,7 +125,7 @@ func Drain(ctx context.Context, t Turns, budget time.Duration) {
 //
 // 脱钩后**必须**仍有一条取消通路兜底（轮内超时 / Drain 的强制收刀），
 // 否则轮会真的泄漏——这是本包唯一危险的使用前提。
-func DetachCtx(ctx context.Context, budget time.Duration) context.Context {
+func DetachCtx(ctx context.Context, budget DrainBudget) context.Context {
 	if budget < 0 {
 		return ctx
 	}

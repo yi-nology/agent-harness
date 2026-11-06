@@ -64,7 +64,7 @@ func (f *fakeSessionTurns) seed(sessionID string, n int) {
 // TestDrainSessionNoActive 无在途轮时立即返回，不触发任何取消。
 func TestDrainSessionNoActive(t *testing.T) {
 	f := newFakeSessionTurns()
-	DrainSession(context.Background(), f, "s-1", time.Second)
+	DrainSession(context.Background(), f, "s-1", Budget(time.Second))
 	if len(f.cancelAll) != 0 || len(f.cancelled) != 0 {
 		t.Fatalf("无在途轮不应触发取消: all=%v one=%v", f.cancelAll, f.cancelled)
 	}
@@ -85,7 +85,7 @@ func TestDrainSessionWaitsForConvergence(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	DrainSession(ctx, f, "s-1", 2*time.Second)
+	DrainSession(ctx, f, "s-1", Budget(2*time.Second))
 
 	if _, killed := f.cancelled["s-1"]; killed {
 		t.Fatal("自然收敛不应触发强制取消")
@@ -105,7 +105,7 @@ func TestDrainSessionForceCancelOnlyThatSession(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 已耗尽的预算
 
-	DrainSession(ctx, f, "s-stuck", time.Second)
+	DrainSession(ctx, f, "s-stuck", Budget(time.Second))
 
 	if got := f.cancelled["s-stuck"]; got != ErrDeadline {
 		t.Fatalf("目标会话应被强杀且 cause 为 ErrDeadline，实得 %v", got)
@@ -128,7 +128,7 @@ func TestDrainSessionEmptyIDDoesNotFallBackToGlobal(t *testing.T) {
 	f.seed("s-1", 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	DrainSession(ctx, f, "", time.Second)
+	DrainSession(ctx, f, "", Budget(time.Second))
 	if len(f.cancelAll) != 0 || len(f.cancelled) != 0 {
 		t.Fatalf("空会话标识不得触发任何取消: all=%v one=%v", f.cancelAll, f.cancelled)
 	}
@@ -143,7 +143,7 @@ func TestDrainSessionBudgetNegativeNoOp(t *testing.T) {
 	f.seed("s-1", 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	DrainSession(ctx, f, "s-1", -1)
+	DrainSession(ctx, f, "s-1", Budget(-1))
 	if len(f.cancelAll) != 0 || f.ActiveOf("s-1") != 1 {
 		t.Fatalf("budget<0 应完全无操作: all=%v active=%d", f.cancelAll, f.ActiveOf("s-1"))
 	}
@@ -176,7 +176,7 @@ func TestGlobalDrainStillWorks(t *testing.T) {
 	// 故这里必须给一个会到点的 ctx——传 context.Background() 会永久阻塞在 select 上。
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	Drain(ctx, f, time.Second)
+	Drain(ctx, f, Budget(time.Second))
 	if f.Active() != 0 {
 		t.Fatalf("全局 Drain 应排空所有在途轮，实余 %d", f.Active())
 	}

@@ -1,9 +1,6 @@
 package drain
 
-import (
-	"context"
-	"time"
-)
+import "context"
 
 // 会话寻址面。
 //
@@ -36,8 +33,12 @@ type SessionTurns interface {
 // 其余会话的在途轮原样继续。
 //
 // 这是 DrainSessions 的会话级版本；两者都不改全局 Drain 的语义。
-// budget < 0 = 脱钩关闭态，无排水动作（与 Drain 同约定）。
-func DrainSession(ctx context.Context, t SessionTurns, sessionID string, budget time.Duration) {
+// budget 与 Drain 同型同约定：DrainBudget 的负值 = 脱钩关闭态，无排水动作
+// （同一个解析入口 Budget，别在这里另开一个数）。
+//
+// 收敛循环与 Drain 共用同一份（converge.go），差别只有计数与取消的绑定——
+// 停机路径上的并发控制若各写一份，先修的那份与后修的那份必然分叉。
+func DrainSession(ctx context.Context, t SessionTurns, sessionID string, budget DrainBudget) {
 	if budget < 0 {
 		return
 	}
@@ -47,29 +48,10 @@ func DrainSession(ctx context.Context, t SessionTurns, sessionID string, budget 
 		log.CtxWarn(ctx, "轮次排水：会话标识为空，跳过（不退化为全局取消）")
 		return
 	}
-	active := t.ActiveOf(sessionID)
-	if active == 0 {
-		log.CtxInfo(ctx, "会话排水：无在途轮，直接返回", "session", sessionID)
-		return
-	}
-	log.CtxInfo(ctx, "会话排水开始：等该会话在途轮自然收敛",
-		"session", sessionID, "active", active, "budget", Budget(budget))
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			if left := t.ActiveOf(sessionID); left > 0 {
-				log.CtxWarn(ctx, "会话排水超时：仅强杀该会话（其余会话不受影响）",
-					"session", sessionID, "left", left, "cause", ErrDeadline.Error())
-				t.CancelOf(sessionID, ErrDeadline)
-			}
-			return
-		case <-ticker.C:
-			if t.ActiveOf(sessionID) == 0 {
-				log.CtxInfo(ctx, "会话排水完成：在途轮自然收敛", "session", sessionID)
-				return
-			}
-		}
-	}
+	awaitConverged(ctx,
+		convergeTarget{
+			active: func() int { return t.ActiveOf(sessionID) },
+			cancel: func(cause error) { t.CancelOf(sessionID, cause) },
+		},
+		msgSession, budget, "session", sessionID)
 }
