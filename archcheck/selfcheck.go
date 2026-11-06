@@ -123,16 +123,12 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 	// 它可以长到 1000 行、可以挂 60 个方法，阈值门禁一声不吭。
 	// 本仓真实发生过（guardset），所以这条自校验是必须项而非锦上添花。
 	if pol.Thresholds.Enforce && (pol.Thresholds.MaxFileLines > 0 || pol.Thresholds.MaxMethodsPerType > 0) {
-		scanned := map[string]bool{}
-		for _, sr := range pol.Thresholds.ScanRoots {
-			scanned[sr] = true
-		}
 		for _, m := range pol.Modules {
 			for _, r := range m.Roots {
 				if r == "" {
 					continue
 				}
-				if !scanned[r] {
+				if !coveredByAnyRoot(pol.Thresholds.ScanRoots, r) {
 					add(policyPath, 0,
 						"包 %q 登记在 modules 段却不在 thresholds.scan_roots 段："+
 							"它对「超长文件」「god object」两条阈值门禁隐形（可长到任意行数而不报）", r)
@@ -187,6 +183,32 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		}
 	}
 
+	// ── 目录级豁免必须指向真实存在的目录 ──
+	//
+	// ignore_dirs 是比 exceptions **更宽**的豁免口：按目录整棵跳过、不要求逐项
+	// 签字、也不用写拆除条件。它唯一还能自证的东西是「这个目录真的存在」——
+	// 指向不存在目录的豁免，与指向空目录的包根是同一种偏离：**声明还在，事实没了**。
+	//
+	// 而它的失效形态比陈旧包根更隐蔽：陈旧包根至少还有人看报告；一条没人命中过的
+	// 豁免会一直躺在 policy 里，等着将来某个恰好同名的新包出现时**无声地把它也
+	// 豁免掉**——而那时没有人会重新判断「这个新包该不该被豁免」。
+	// 这正是 issue #35 记的那件事：cmd/ 从 2 个包长到 3 个，前缀豁免顺带盖住了
+	// 第三個，理由是「archcheck / docsync 是工具」，实际面已经不同。
+	for _, sec := range ignoreDirSections(pol) {
+		for _, d := range sec.dirs {
+			if d == "" {
+				add(policyPath, 0, "%s 的 ignore_dirs 有空条目（空字符串不豁免任何目录，只让清单看起来更长）", sec.name)
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(d))); err != nil {
+				add(policyPath, 0,
+					"%s 的 ignore_dirs 项 %q 指向的目录不存在：这条豁免今天什么都没豁免，"+
+						"却会在将来出现同名目录时**无声地**把它整棵跳过（豁免必须指向真实存在的目录）",
+					sec.name, d)
+			}
+		}
+	}
+
 	// ── 例外登记的完整性 ──
 	for _, ex := range pol.Exceptions {
 		if ex.Rule == "" {
@@ -202,6 +224,51 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		}
 	}
 
+	return out
+}
+
+// coveredByAnyRoot 报告某个包根是否被 thresholds.scan_roots 里的某一项**覆盖**。
+//
+// 覆盖是**祖先关系**，不是逐字相等：scan_roots 里的 "cmd" 覆盖 "cmd/docsync"。
+//
+// 为什么必须按祖先判（issue #35 顺带修）：旧实现逐字比相等，于是「登记了
+// cmd/ptcchild 这个模块、而 scan_roots 写的是 cmd」会**假红**——阈值其实
+// 覆盖着它（scan 是按目录递归走的），报错却逼人把每个 cmd 子目录逐个列一遍。
+// 那是「假红」最坏的形态：判据把正确的工作判成错的，而唯一的解是给清单灌水
+// 直到它和目录树同构。量纲要与前提对齐：这里问的是「有没有人扫它」，
+// 不是「有没有逐字写它」。
+func coveredByAnyRoot(scanRoots []string, root string) bool {
+	root = strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(root)), "/")
+	for _, sr := range scanRoots {
+		sr = strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(sr)), "/")
+		if sr == "" {
+			continue
+		}
+		if sr == "." || root == sr || strings.HasPrefix(root, sr+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// ignoreSection 是一段带目录级豁免的 policy 段（报错要点名是哪一段）。
+type ignoreSection struct {
+	name string
+	dirs []string
+}
+
+// ignoreDirSections 取全部「有目录级豁免」的段。
+//
+// 集中在这里而不是在判定处逐个写：新增一段豁免时，忘掉下面那条自校验的
+// 代价是「那一段的豁免永远不受管辖」——而豁免不受管辖正是这条自校验要防的事。
+func ignoreDirSections(pol *Policy) []ignoreSection {
+	out := []ignoreSection{{"dependency_direction", pol.DepDir.IgnoreDirs}}
+	if pol.SandboxProviders != nil {
+		out = append(out, ignoreSection{"sandbox_providers", pol.SandboxProviders.IgnoreDirs})
+	}
+	if pol.ExecutionPaths != nil {
+		out = append(out, ignoreSection{"execution_paths", pol.ExecutionPaths.IgnoreDirs})
+	}
 	return out
 }
 
