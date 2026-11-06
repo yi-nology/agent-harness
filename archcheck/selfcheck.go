@@ -92,6 +92,17 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 					"policy 里没有 forbid_call_regex / allow_paths 这两个字段，写了会被 YAML 静默丢弃",
 				r.ID)
 		}
+		// 有执行体却 scope 为空 ⇒ 一行都不判。
+		//
+		// ruleFiles 只遍历 Scope 里的目录，空清单返回空文件集；于是这条规则有正则、
+		// severity 是 error、报告里也计入「N 条规则」，但它永远不触发。
+		// 这与「字段名拼错」是同一类，只是拼错已由 Load 的严格解析兜住；
+		// 而 `scope: []` 是合法 YAML、拼写也对，只能靠这条判据。
+		if (r.ForbidRegex != "" || r.ForbidImport != "") && len(r.Scope) == 0 {
+			add(policyPath, 0,
+				"规则 %q 有执行体但 scope 为空：判定面只遍历 scope 里的目录，空清单等于它**一行都不判**——"+
+					"规则在、severity 是 error、报告里也计入条数，只是永不触发", r.ID)
+		}
 		switch r.Severity {
 		case "", "error", "warn":
 		default:
@@ -105,11 +116,18 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		for _, problem := range exampleViolations(r) {
 			add(policyPath, 0, "%s", problem)
 		}
-		if pol.RequireRuleExamples && (r.ForbidRegex != "" || r.ForbidImport != "") && len(r.Examples) == 0 {
-			add(policyPath, 0,
-				"规则 %q 没有自带 examples（require_rule_examples: true 已开）："+
-					"有执行体却没有样例的规则，无法在加载期证明它还判得动——词表被改名、"+
-					"module 路径被迁走之后，它会静静地不再命中，而门禁继续绿着", r.ID)
+		if pol.RequireRuleExamples {
+			if (r.ForbidRegex != "" || r.ForbidImport != "") && len(r.Examples) == 0 {
+				add(policyPath, 0,
+					"规则 %q 没有自带 examples（require_rule_examples: true 已开）："+
+						"有执行体却没有样例的规则，无法在加载期证明它还判得动——词表被改名、"+
+						"module 路径被迁走之后，它会静静地不再命中，而门禁继续绿着", r.ID)
+			}
+			// 「有样例」还不等于「样例够」：只有反例的规则只能证明判据不乱报，
+			// 证明不了判据还判得动（见 exampleCoverageProblems 头注）。
+			for _, problem := range exampleCoverageProblems(r) {
+				add(policyPath, 0, "%s", problem)
+			}
 		}
 
 		// ── import_exempt 项的形状必须可能生效 ──

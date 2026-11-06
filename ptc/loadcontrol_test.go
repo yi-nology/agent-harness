@@ -28,6 +28,16 @@ package ptc_test
 // 在空载机器上由固定下限兜住（判据保持原来的严格度），在满载机器上随负载
 // 同步放大（不再假红）。而被测代码的真劣化**不会**抬高标尺——它只抬高自己。
 //
+// # 实测：它在什么负载下才起作用（2026-11-06，本机）
+//
+//	空载    标尺 7.9–8.8ms   ×20 = 157–176ms  < 250ms ⇒ **K×标尺项不生效**，上界仍由固定下限兜住
+//	12 路重活 标尺 49.5ms    ×20 = 990ms               ⇒ 上界随负载放大，实测 25.7ms 通过
+//
+// 也就是说：**空载时这条判据与原来一样严**（它不松），重载时才靠比值救回假红。
+// 代价要说明白——它能抓的劣化量级是**空载 ≥65×、满载 ≥38×**，是一条**烟测级**上界，
+// 不是精度判据。想抓小劣化请改判**成本构成**（调用次数 / 字节数）或加微基准，
+// 别把上界收到贴着实测值：那只会让它变回随负载翻面的是非题。
+//
 // # 这个做法判不了什么（写明，而不是假装覆盖）
 //
 //   - 它抓不住「子进程本身变慢」：那是另一个量，标尺不跟着变；
@@ -78,4 +88,70 @@ func boundWithControl(floor time.Duration, k float64, control time.Duration) tim
 		return scaled
 	}
 	return floor
+}
+
+// boundWithControl 是 issue #33 的**唯一逻辑核心**：两条墙钟判据的上界都由它
+// 算出来。它此前没有任何用例——换算写反（比如把 max 写成 min、把 K 乘到 floor 上）
+// 时两条判据会**悄悄换一种严格度**：min 版在满载时退回固定下限（假红照旧），
+// 而 K 乘 floor 的版本在空载时就把上界放大 K 倍（假绿）。
+//
+// 用例必须成对：单测「满载时放大」的用例，在一个「恒返回 floor」的实现下也全绿
+// （floor 恰好是那些用例的期望值），故必须同时有「floor 该赢」与「scaled 该赢」两组。
+func TestBoundWithControl(t *testing.T) {
+	cases := []struct {
+		name    string
+		floor   time.Duration
+		k       float64
+		control time.Duration
+		want    time.Duration
+	}{
+		{
+			name:  "空载：K 倍标尺小于下限 ⇒ 由固定下限兜住",
+			floor: 250 * time.Millisecond, k: 20, control: 5 * time.Millisecond,
+			want: 250 * time.Millisecond,
+		},
+		{
+			name:  "满载：K 倍标尺压过下限 ⇒ 随负载放大",
+			floor: 250 * time.Millisecond, k: 20, control: 50 * time.Millisecond,
+			want: time.Second,
+		},
+		{
+			name:  "恰好相等：返回下限（不留浮点误差的尾巴）",
+			floor: 250 * time.Millisecond, k: 20, control: 12500 * time.Microsecond,
+			want: 250 * time.Millisecond,
+		},
+		{
+			name:  "小系数（边际成本那条判据用 0.125）",
+			floor: time.Millisecond, k: 0.125, control: 4 * time.Millisecond,
+			want: time.Millisecond,
+		},
+		{
+			name:  "小系数但标尺很大 ⇒ 放大生效",
+			floor: time.Millisecond, k: 0.125, control: 64 * time.Millisecond,
+			want: 8 * time.Millisecond,
+		},
+		{
+			name:  "k=0（关闭放大）：只剩固定下限",
+			floor: 250 * time.Millisecond, k: 0, control: time.Hour,
+			want: 250 * time.Millisecond,
+		},
+		{
+			name:  "control=0（标尺测不出来）：不得让上界塌成 0",
+			floor: 250 * time.Millisecond, k: 20, control: 0,
+			want: 250 * time.Millisecond,
+		},
+		{
+			name:  "control 为负（不可能但必须安全）：退回下限",
+			floor: 250 * time.Millisecond, k: 20, control: -time.Second,
+			want: 250 * time.Millisecond,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := boundWithControl(c.floor, c.k, c.control); got != c.want {
+				t.Fatalf("boundWithControl(%v, %v, %v) = %v, want %v",
+					c.floor, c.k, c.control, got, c.want)
+			}
+		})
+	}
 }

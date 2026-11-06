@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -80,43 +81,66 @@ func importViolations(root string, r Rule) ([]Violation, error) {
 	}
 
 	var out []Violation
-	fset := token.NewFileSet()
 	for _, path := range files {
-		f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-		if perr != nil {
-			return nil, fmt.Errorf("规则 %s 解析 %s 失败（门禁给不出结论，不得静默跳过）: %w", r.ID, path, perr)
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil, rerr
 		}
 		rel, _ := filepath.Rel(root, path)
-		for _, im := range f.Imports {
-			p, uerr := strconv.Unquote(im.Path.Value)
-			if uerr != nil {
-				continue
-			}
-			loc := re.FindStringIndex(p)
-			if loc == nil {
-				continue
-			}
-			// import 路径级的**精确**例外（issue #15）。
-			//
-			// 粒度是「**恰好这条 import 路径**」——不是前缀、不是子串：
-			// 若豁免 `a/b` 时连 `a/b/c` 一起放行，那它等价于「放宽整棵子树」，
-			// 而上游将来在 `a/b` 下新增一个包就会被**静默放行**
-			// （一条被静默放宽的声明等于没有声明）。
-			if importExempt(r.ImportExempt, p) {
-				continue
-			}
-			// 豁免判据面 = import 路径（与文本分支同构：都是被匹配的那段文本）。
-			if neutralized(p, loc[0], loc[1], r.NegFollow) {
-				continue
-			}
-			out = append(out, Violation{
-				Rule: r.ID,
-				Path: rel,
-				Line: fset.Position(im.Path.Pos()).Line,
-				Text: fmt.Sprintf("import %q（禁止的依赖路径）", p),
-				Kind: "forbid_import",
-			})
+		vs, verr := importViolationsIn(r, re, rel, src)
+		if verr != nil {
+			return nil, verr
 		}
+		out = append(out, vs...)
+	}
+	return out, nil
+}
+
+// importViolationsIn 是 forbid_import 的**判定核**：判**一份源码**的 import 声明。
+//
+// 两个调用方共用它：文件遍历（importViolations）与加载期样例（examples.go 的
+// sampleHits）。理由与 forbid_regex 一侧相同（一份判据只有一处实现，见 scan.go 的
+// regexViolationsIn 头注），而这里更要紧：样例若改成「拿正则比一段字符串」，
+// 别名导入 / 分组导入 / raw string / 空白导入的差异全在 AST 那一侧——
+// 样例照样能过，真判定却可能早已不认那些形态。
+//
+// rel 只用于报告与解析位置（parser 的 file name），不参与判定。
+func importViolationsIn(r Rule, re *regexp.Regexp, rel string, src []byte) ([]Violation, error) {
+	fset := token.NewFileSet()
+	f, perr := parser.ParseFile(fset, rel, src, parser.SkipObjectResolution)
+	if perr != nil {
+		return nil, fmt.Errorf("规则 %s 解析 %s 失败（门禁给不出结论，不得静默跳过）: %w", r.ID, rel, perr)
+	}
+	var out []Violation
+	for _, im := range f.Imports {
+		p, uerr := strconv.Unquote(im.Path.Value)
+		if uerr != nil {
+			continue
+		}
+		loc := re.FindStringIndex(p)
+		if loc == nil {
+			continue
+		}
+		// import 路径级的**精确**例外（issue #15）。
+		//
+		// 粒度是「**恰好这条 import 路径**」——不是前缀、不是子串：
+		// 若豁免 `a/b` 时连 `a/b/c` 一起放行，那它等价于「放宽整棵子树」，
+		// 而上游将来在 `a/b` 下新增一个包就会被**静默放行**
+		// （一条被静默放宽的声明等于没有声明）。
+		if importExempt(r.ImportExempt, p) {
+			continue
+		}
+		// 豁免判据面 = import 路径（与文本分支同构：都是被匹配的那段文本）。
+		if neutralized(p, loc[0], loc[1], r.NegFollow) {
+			continue
+		}
+		out = append(out, Violation{
+			Rule: r.ID,
+			Path: rel,
+			Line: fset.Position(im.Path.Pos()).Line,
+			Text: fmt.Sprintf("import %q（禁止的依赖路径）", p),
+			Kind: "forbid_import",
+		})
 	}
 	return out, nil
 }
