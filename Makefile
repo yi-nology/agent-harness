@@ -16,8 +16,39 @@ EXPORT   :=
 GOENV    := CGO_ENABLED=0
 # cover-gate 覆盖率阈值（内核仓门禁应随成熟度上调；参照宿主仓做法设真阈值而非永不红）。
 COV_MIN  := 60
+# 逐包下限。全局 85% 会**掩盖单个包的塌方**——2026-11-06 实测：全局 85.5%，
+# 而 cmd/docsync 只有 23.6%、sandbox 60.0%，两个数字都被大盘盖住，没有任何信号。
+# 全局阈值管「整体没退步」，逐包下限管「没有一个包躲在大盘后面」，两者不能互相代替。
+PKG_COV_MIN := 70
+# 逐包下限的显式豁免（逗号分隔，按包路径**后缀**匹配）。
+#
+# 纪律同 policy 的 exceptions：豁免必须写原因 + 拆除条件，且**到期即拆**——
+# 豁免包一旦自己达到下限，cover-gate 会报「豁免失效」并拒绝变绿，
+# 逼人当天删掉这一行，而不是让它无限期留着变成装饰。
+#
+# 当前唯一豁免：cmd/docsync（23.6%）。
+#   原因：它的判定逻辑全在 `package main` 里，且 run() 把 `README.md` 写成
+#         相对路径、失败走 os.Exit——没有可注入的接缝，想测就得先改造它。
+#         这不是「CLI 天然测不了」，是**判定逻辑没落在可导入包里**的债。
+#   拆除条件：把 run() 的重算逻辑搬进可导入包（cmd 只留装配）后，删掉本行。
+#   为什么不必现在拆：本条先让「有没有信号」成立；有豁免登记 + 失效即红，
+#         比「因为难测就干脆不设逐包下限」强，也比静默豁免强。
+PKG_COV_EXEMPT := cmd/docsync
+# -race 必须开 cgo：Linux 上 `-race requires cgo`（实测 GOOS=linux 下
+# `CGO_ENABLED=0 go test -race -c` 直接报这句）。故 race 目标**不能**跟着
+# 全局的 GOENV(CGO_ENABLED=0)——那样它在 CI 上必红。本机 cgo=1 已验证可
+# 完整链接全仓（`CGO_ENABLED=1 go test -race -run '^$' ./...` 零输出）。
+RACE_ENV := CGO_ENABLED=1
+# 交叉构建矩阵：只声明**真的验过**的平台。
+# windows 不在列：上游 github.com/oagentkit/runtime/procx 用了 unix 专属
+# syscall（SysProcAttr.Setpgid / syscall.Kill），本仓改不了它。
+# ⇒ 处理方式是**显式声明不支持**（README 平台矩阵），不是假装支持、
+#   也不是为一个编不过的平台留一条永远不跑的门禁。
+CROSS_TARGETS := linux/amd64 linux/arm64 darwin/arm64
+# govulncheck 版本口径：CI 装这个版本，与本机验证过的一致（同 lint 的理由）。
+GOVULNCHECK_VERSION := v1.7.0
 
-.PHONY: build fmt-check vet lint test race cover cover-gate architecture-check docsync check tidy devlink devunlink clean
+.PHONY: build fmt-check vet lint test race cover cover-gate vuln crossbuild architecture-check docsync check tidy devlink devunlink clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -53,14 +84,18 @@ lint: ## 静态检查（未安装时明确报错退出，与宿主仓同口径�
 test:
 	$(EXPORT) $(GOENV) go test ./... -count=1
 
-race:
-	$(EXPORT) $(GOENV) go test ./... -race -count=1
+race: ## 竞态检测（**开 cgo**：Linux 上 -race 强制要求 cgo，见 RACE_ENV 注释）
+	@# 这条门禁此前从未被跑过：race 目标存在，但既不在 check 的依赖链里，
+	@# ci.yml 也全文没有它 ⇒ 「有没有数据竞争」在本仓永远没人判。
+	@# 竞态是本类内核最贵的一类缺陷（代次/闸/共享 map 都在并发路径上，
+	@# 而它们的失效形态是「偶尔给错答案」，单线程用例永远绿）。
+	$(EXPORT) $(RACE_ENV) go test ./... -race -count=1
 
 cover:
 	$(EXPORT) $(GOENV) go test ./... -coverprofile=coverage.out -count=1
 	go tool cover -func=coverage.out | tail -1
 
-cover-gate: ## 覆盖率阈值门禁（阈值应随内核成熟度上调，不设则门禁形同虚设）
+cover-gate: ## 覆盖率阈值门禁（全局门槛 + 逐包下限；阈值应随内核成熟度上调）
 	@# 测试输出先落临时文件：成功时静默（与原口径一致），失败时把日志打出来。
 	@#
 	@# 原口径是 `go test ... >/dev/null`——**用例失败也只剩一句 "Error 1"**。
@@ -71,18 +106,60 @@ cover-gate: ## 覆盖率阈值门禁（阈值应随内核成熟度上调，不�
 	@# 用例且**输出可见**，所以 cover-gate 自己失败只可能是「第一次绿、第二次红」
 	@# ——即**抖动**。而抖动是唯一一次能看见抖动用例的机会，输出被丢掉就再也
 	@# 没线索了（本轮实测撞到过一次）。
+	@#
+	@# 两条判据：全局门槛（COV_MIN）管「整体没退步」，逐包下限（PKG_COV_MIN）
+	@# 管「没有一个包躲在大盘后面」。两者判的是两件事，故都要跑；判定细则见
+	@# scripts/pkgcov.awk 的头注。
+	@#
+	@# 日志必须留到逐包判定之后再删：原实现「成功即 rm 日志」，于是逐包数字在
+	@# 判定前就已经没了——这正是它此前只能判全局的实现层原因。
+	@#
+	@# ⚠️ 注释只能写在块**外**：下面是一个用 `\` 续行的 shell 块，块内出现的 `#`
+	@# 会把该行连同续行符一起变成注释，报 "syntax error: unexpected end of file"。
 	@log=$$(mktemp); \
-	$(EXPORT) $(GOENV) go test ./... -coverprofile=coverage.out -count=1 >"$$log" 2>&1 || { \
+	$(EXPORT) $(GOENV) go test ./... -cover -coverprofile=coverage.out -count=1 >"$$log" 2>&1 || { \
 	  echo "覆盖率测试未通过——失败详情："; \
 	  cat "$$log"; \
 	  rm -f "$$log"; \
 	  exit 1; \
 	}; \
-	rm -f "$$log"
-	@total=$$(go tool cover -func=coverage.out | tail -1 | awk '{print substr($$3, 1, length($$3)-1)}'); \
+	total=$$(go tool cover -func=coverage.out | tail -1 | awk '{print substr($$3, 1, length($$3)-1)}'); \
 	echo "harness 覆盖率: $$total% (门槛 $(COV_MIN)%)"; \
-	awk -v t="$$total" -v m="$(COV_MIN)" 'BEGIN { exit (t+0 >= m+0) ? 0 : 1 }' || \
-	{ echo "覆盖率 $$total% 低于阈值 $(COV_MIN)%"; exit 1; }
+	if ! awk -v t="$$total" -v m="$(COV_MIN)" 'BEGIN { exit (t+0 >= m+0) ? 0 : 1 }'; then \
+	  echo "覆盖率 $$total% 低于阈值 $(COV_MIN)%"; \
+	  rm -f "$$log"; \
+	  exit 1; \
+	fi; \
+	if ! awk -v m="$(PKG_COV_MIN)" -v ex="$(PKG_COV_EXEMPT)" -f scripts/pkgcov.awk "$$log"; then \
+	  rm -f "$$log"; \
+	  exit 1; \
+	fi; \
+	rm -f "$$log"
+
+vuln: ## 依赖与标准库漏洞扫描（govulncheck）
+	@# 这条同样此前从未进过门禁。价值不在「扫出第三方 CVE」——本仓依赖面窄，
+	@# 而在**标准库**：2026-11-06 首次跑出 6 条，全部在 stdlib（crypto/x509、
+	@# net/http 系列、crypto/tls），修法是抬 go 指令到 1.27.3。而这类漏洞的
+	@# 载体正是「下游用本仓编出来的那个二进制」，本仓不判就没人判。
+	@#
+	@# 未安装时明确报错退出（与 lint 同口径），不静默跳过：门禁缺失的形态必须是
+	@# 变红，不能是变绿。
+	@command -v govulncheck >/dev/null 2>&1 || { \
+	  echo "govulncheck 未安装：go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)"; \
+	  exit 1; }
+	$(EXPORT) $(GOENV) govulncheck ./...
+
+crossbuild: ## 交叉构建矩阵（声明支持的平台必须真的编得过）
+	@# 为什么这条要有：本仓是**给宿主当依赖编进二进制**的，本机 darwin 绿不等于
+	@# linux 绿。此前没有任何东西判这件事——2026-11-06 实测 GOOS=linux 能过、
+	@# GOOS=windows 编不过（上游 procx 的 unix syscall），而这个事实从未被记录。
+	@# 判据取 `go build ./...`：它覆盖全部生产代码，且不需要 cgo。
+	@for t in $(CROSS_TARGETS); do \
+	  os=$${t%/*}; arch=$${t#*/}; \
+	  echo "交叉构建 $$os/$$arch"; \
+	  $(EXPORT) CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build ./... || exit 1; \
+	done
+	@echo "交叉构建矩阵 ✓（$(CROSS_TARGETS)；windows 显式不支持，见 README 平台矩阵）"
 
 architecture-check: ## 架构治理门禁（域词污染红线 + 依赖方向）
 	$(EXPORT) $(GOENV) go run ./cmd/archcheck $(if $(findstring --report,$(MAKECMDGOALS)),--report,)
@@ -125,7 +202,12 @@ modwork: ## go.work / go.work.sum 不得入库（只应存在于本机）
 	fi
 	@echo "go.work 未入库 ✓"
 
-check: fmt-check vet lint test cover-gate architecture-check docsync modreplace modwork ## 提交前门禁聚合
+# check 的依赖链就是「提交前必须全绿」的定义。2026-11-06 复核时补上三条
+# **此前根本没被跑过**的门禁：race（竞态）、vuln（依赖与标准库漏洞）、
+# crossbuild（声明支持的平台必须真编得过）。它们的共同点是「目标/文档里有，
+# 但没人执行」——与 lint 当年同样的形态，故按同一条纪律接进 check，
+# 不挂到 ci.yml 上变回「推送后门禁」。
+check: fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync modreplace modwork ## 提交前门禁聚合
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy

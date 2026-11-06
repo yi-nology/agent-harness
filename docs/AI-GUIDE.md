@@ -347,13 +347,22 @@ make check
 | `vet` | go vet | 按提示改 |
 | `lint` | golangci-lint（未安装时**明确报错退出**，不静默跳过） | `brew install golangci-lint`；CI 钉 v2.14.0 |
 | `test` | 全量单测 | 看失败断言 |
-| `cover-gate` | 覆盖率 < 60%（当前实测 84.9%） | 补测试，别降阈值 |
-| `architecture-check` | 8 条规则 + 5 门包 + 28 包依赖方向 | 见下表 |
+| `cover-gate` | 全局覆盖率 < 60%（当前实测 85.0%）**或**任一包 < 70%（`scripts/pkgcov.awk`） | 补**该包**的用例，别降阈值；豁免登记在 Makefile 的 `PKG_COV_EXEMPT`，失效即红 |
+| `architecture-check` | 8 条规则 + 5 门包 + 32 包依赖方向 | 见下表 |
+| `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**） | 依赖漏洞抬版本；**标准库**漏洞抬 go.mod 的 `go` 指令（`toolchain` 指令会被忽略）|
+| `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）| 按报告的 goroutine 栈修共享状态；别把该目标改成 `CGO_ENABLED=0` |
+| `crossbuild` | 声明支持的平台（linux/amd64、linux/arm64、darwin/arm64）编不过 | 看是否引入了平台专属符号；windows **不在**矩阵内（上游 `procx` 用 unix syscall）|
 | `docsync` | README **包表** ↔ 仓库实际（包名 / 行数 / 依赖列 / 职责列）| 重算行数与依赖，改 README 包表。**注意「工程底座」表不在判定面内**，那几个数字要自己手算 |
 | `modreplace` | go.mod 含 `replace` | 改用 `make devlink` |
 | `modwork` | go.work / go.work.sum 被跟踪 | `git rm --cached` |
 
-### 4.1 架构门禁的 9 条规则
+### 4.1 架构门禁的规则表
+
+> **条数口径**：`make architecture-check` 打印的是「8 条规则 + 5 个门面包 + 32 个包的
+> 依赖方向」——「8 条」指 policy `rules` 段的条目数，**不含**用 `go/ast` 判的结构规则
+> （门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径）。下表把两类都列出来，故行数比
+> 「8 条」多。**别再按表的行数改「N 条规则」那句话**：那句话对着 `rules` 段，
+> 两者本来就不同量纲（此前标题写「9 条规则」属实是拿混了）。
 
 | 规则 | 拦什么 | 典型修法 |
 |---|---|---|

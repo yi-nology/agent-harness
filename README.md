@@ -184,10 +184,10 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 | 指标 | 实测 |
 |---|---|
 | 生产代码 | 19,624 行 / 113 文件（不含 `_test.go`） |
-| 测试 | 139 个测试文件 |
-| 覆盖率 | **85.5%**（门槛 60%，真阈值不是摆设） |
+| 测试 | 140 个测试文件 |
+| 覆盖率 | **85.0%**（全局门槛 60% + **逐包下限 70%**；两条判据判两件事，见下） |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
-| 门禁 | 8 条规则（`rules` 段）+ 4 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 32 包依赖方向 + README 包表一致性 |
+| 门禁 | 8 条规则（`rules` 段）+ 4 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 32 包依赖方向 + README 包表一致性 + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** |
 | 例外登记 | **0** |
 
 > ⚠️ **上表不在 `docsync` 的判定面内**——`docsync` 只校验下面那张「包清单」表的
@@ -288,7 +288,57 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 > ```
 >
 > 覆盖率取 `make cover` 的最后一行（`go tool cover -func=coverage.out | tail -1`）。
+>
+> 2026-11-06 第八轮校准（同一批用例，**生产代码一行没动**）：上一版记的 19,624 行 /
+> 113 文件未变，测试文件 139 → **140**（新增 `sandbox/forwarders_test.go`），覆盖率
+> 85.5% → **85.0%**。覆盖率这 0.5 个百分点**不是本轮改动造成的**（本轮只加测试、
+> 不改生产代码），而是与 `-cover` 全量重测的结果对齐——这恰好是这张表最该被记住
+> 的一条：**它是散文，数字会随测量口径与批次漂，改前请按上面三条命令手算**。
+>
+> 同日补的第四条门禁口径：`cover-gate` 从「只判全局」变成「全局 + 逐包下限 70%」。
+> 起因是全局 85.5% 同时掩盖着 `cmd/docsync` 23.6% 与 `sandbox` 60.0%——单个包的
+> 塌方在大盘里完全看不见。`sandbox` 的 60% 已补到 **100%**（门面包的每条语句就是
+> 一句转发，转发目标或参数顺序写错编译得过、语义却错，故对门面包而言语句覆盖率
+> 恰好是恰当的度量）；`cmd/docsync` 登记为显式豁免并写明拆除条件（判定逻辑仍在
+> `package main` 里，没有可注入的接缝）。
 
+
+### 平台支持矩阵（2026-11-06 补齐）
+
+此前本仓**从未声明支持哪些平台**，也没有任何东西验过——本机 darwin 全绿，而本仓是
+「被宿主编进二进制」的库，真正的交付面是 linux。2026-11-06 实测才发现 Windows
+根本编不过，而这个事实在仓里**一个字都没有**。
+
+| 平台 | `go build ./...` | 依据 |
+|---|---|---|
+| linux/amd64 | ✅ 支持 | `make crossbuild` 每次 `make check` 都验 |
+| linux/arm64 | ✅ 支持 | 同上 |
+| darwin/arm64 | ✅ 支持 | 同上（本机开发面） |
+| **windows/amd64** | ❌ **不支持** | 上游 `github.com/oagentkit/runtime/procx` 用了 unix 专属符号（`syscall.SysProcAttr.Setpgid`、`syscall.Kill`），**编译期**即失败，本仓改不了它 |
+
+处置方式：**显式声明不支持**，而不是留着「看起来支持、其实编不过」。`make crossbuild`
+只判 `CROSS_TARGETS` 里列出的平台——为一条永远编不过的目标留门禁不是严谨，是把红线
+泡软：它会常年红，然后被人忽略，连带把别的红一起忽略掉。
+
+要在 Windows 上使用，前提是上游 `procx` 先给出可移植的进程组实现；在那之前本仓
+`ptc` 的子进程后端不适用于 Windows。这条限制**不在本仓能力范围内**，故不做兼容层。
+
+### 三条「目标存在但没人跑」的门禁（2026-11-06 补齐）
+
+2026-11-06 的仓库审计里有三条门禁的共同形态：**目标/文档里有，但没有任何东西执行它**。
+这和 `lint` 当年一模一样（见 Makefile 的 lint 注释），处置方式也一样——接进
+`make check`，不挂到 `ci.yml` 上变回「推送后门禁」。
+
+| 门禁 | 此前状态 | 它漏掉的东西（实测） |
+|---|---|---|
+| `race` | `race` 目标存在，但 `check` 依赖链与 `ci.yml` **都没有它** | 本仓的并发面（策略代次、提交闸、共享 map）从没被竞态检测过。补上时踩到一个硬事实：linux 上 `-race requires cgo`，而 `GOENV := CGO_ENABLED=0` ⇒ race 目标**不能**跟着 GOENV，否则在 CI 上必红 |
+| `vuln` | Makefile 里没有这个目标，`govulncheck` **从未跑过** | 首次跑出 **6 条漏洞，全部在标准库**（`crypto/x509` / `net/http` 系列 / `crypto/tls`），修法是抬 `go` 指令到 1.27.3。载体正是「下游用本仓编出来的那个二进制」 |
+| `crossbuild` | 没有任何交叉构建门禁 | 见上一节：Windows 编不过这件事从来没被记录过 |
+
+顺带补上的第四条：**覆盖率此前只判全局**。全局 85.5% 同时掩盖着 `cmd/docsync` 23.6%
+与 `sandbox` 60.0%——大盘涨 1% 就能抵消一个包从 70 掉到 20 的塌方，而报告里只有一行
+「85.5%，绿」。故 `cover-gate` 现在跑**两条**判据（见 `scripts/pkgcov.awk`），
+且逐包下限的豁免**失效即红**（豁免包一旦自己达标，门禁会要求当天删掉那条豁免）。
 
 ## 头号红线：不得长出领域知识
 
@@ -541,7 +591,7 @@ goroutine 怎么起、回调怎么声明、errors 怎么包），没有一条查
 ```bash
 make build          # 编译 archcheck
 make test           # 全量单测
-make check          # fmt + vet + lint + test + cover-gate + architecture-check + docsync + 仓库卫生
+make check          # fmt + vet + lint + test + cover-gate + vuln + race + crossbuild + architecture-check + docsync + 仓库卫生
 make architecture-check --report   # 看全量违规清单（默认前 10 条）
 ```
 
