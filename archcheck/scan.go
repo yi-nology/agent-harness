@@ -161,24 +161,42 @@ func checkRule(root string, r Rule) ([]Violation, error) {
 		if err != nil {
 			return nil, err
 		}
-		for i, line := range strings.Split(string(data), "\n") {
-			// 注释行不判：policy 的说明性中文里出现领域词属正常。
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "//") {
-				continue
-			}
-			loc := re.FindStringIndex(line)
-			if loc == nil {
-				continue
-			}
-			if neutralized(line, loc[0], loc[1], r.NegFollow) {
-				continue
-			}
-			rel, _ := filepath.Rel(root, f)
-			out = append(out, Violation{Rule: r.ID, Path: rel, Line: i + 1, Text: strings.TrimSpace(line), Kind: "forbid_regex"})
-		}
+		rel, _ := filepath.Rel(root, f)
+		out = append(out, regexViolationsIn(r, re, rel, string(data))...)
 	}
 	return out, nil
+}
+
+// regexViolationsIn 是 forbid_regex 的**判定核**：判一段内容里有没有违规行。
+//
+// 两个调用方共用它：文件遍历（checkRule）与加载期样例（examples.go 的 sampleHits）。
+//
+// # 为什么必须共用（而不是让样例另写一套近似判定）
+//
+// 样例的用途是证明「这条规则还判得动」。若样例走的是另一套实现，那么它证明的只是
+// **那套实现**还判得动——而两套实现各自漂移，样例那套通常漂得更慢（它只看几个字符串），
+// 于是绿灯更久：这正是「从没见过它触发的规则等于没有规则」最隐蔽的形态。
+//
+// 共用之后，样例与生产判定在结构上不可能不一致：同一条正则、同一条注释豁免、
+// 同一段 negative_follow 中和逻辑。
+func regexViolationsIn(r Rule, re *regexp.Regexp, rel, content string) []Violation {
+	var out []Violation
+	for i, line := range strings.Split(content, "\n") {
+		// 注释行不判：policy 的说明性中文里出现领域词属正常。
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		loc := re.FindStringIndex(line)
+		if loc == nil {
+			continue
+		}
+		if neutralized(line, loc[0], loc[1], r.NegFollow) {
+			continue
+		}
+		out = append(out, Violation{Rule: r.ID, Path: rel, Line: i + 1, Text: trimmed, Kind: "forbid_regex"})
+	}
+	return out
 }
 
 // firstLine 取多行说明的首行（例外回显用，避免刷屏）。

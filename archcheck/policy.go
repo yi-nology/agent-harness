@@ -7,6 +7,7 @@
 package archcheck
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,8 +62,9 @@ type Rule struct {
 	// 每一个复用本判据的宿主仓里跑。规则会随包名/命令名/词表漂移，而漂移
 	// 不会报错：它只是静静地不再命中，门禁继续绿着。
 	//
-	// 判据复用**真实判定路径**（同一份 matchSample），不是另写一套近似实现——
-	// 另写一套的话，样例过了也说明不了真判定能过。
+	// 判据复用**真实判定核**（regexViolationsIn / importViolationsIn，与文件遍历
+	// 调的是同一份代码），不是另写一套近似实现——另写一套的话，样例过了也说明不了
+	// 真判定能过（两套实现各自漂移，而样例那套只看几个字符串、漂得更慢）。
 	Examples []RuleExample `yaml:"examples"`
 }
 
@@ -337,9 +339,21 @@ func Load(path string) (*Policy, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 空文件不是「没有规则」而是「没有门禁」：静默接受它等于让一次误清空变成全绿。
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, fmt.Errorf("policy 文件 %s 是空的（空 policy 等于没有门禁，不当作合法输入）", path)
+	}
 	var pol Policy
-	if err := yaml.Unmarshal(data, &pol); err != nil {
-		return nil, fmt.Errorf("解析 policy 失败: %w", err)
+	// **严格模式**：未知键直接报错（KnownFields），不静默丢弃。YAML 对拼错的键
+	// 是静默忽略的，而每个键都对应一条判定面：`scope` 拼错 ⇒ 规则**一行都不扫**
+	// （有执行体、severity: error、报告里计入条数，只是永不触发）；`import_exempt`
+	// 拼错 ⇒ 该放的 import 全被拒（假红，作者只看到「我的例外没生效」）。
+	// 失败形态全是门禁变绿或误诊，故在这里一次掐掉。
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&pol); err != nil {
+		return nil, fmt.Errorf("解析 policy 失败（严格模式：未知键会被 YAML 静默丢弃，"+
+			"而一个拼错的键等于一条判不动的声明，故这里直接报错）: %w", err)
 	}
 	pol.Path = path
 	return &pol, nil

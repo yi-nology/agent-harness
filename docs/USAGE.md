@@ -2099,7 +2099,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时明确报错退出，不静默跳过）|
 | `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）|
 | `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64；**windows 不支持**）|
-| `architecture-check` | 8 条规则 + 5 个门包 + 32 个包的依赖方向 |
+| `architecture-check` | 8 条规则 + 5 个门包 + 各包依赖方向（包数以该命令输出为准）|
 | `docsync` | README 包表 ↔ 仓库实际（生产行数 / 外部依赖） |
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |
