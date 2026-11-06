@@ -54,14 +54,19 @@
 2. **展示文案归宿主。** 标题、兜底、品牌词一律走 `RenderOptions` 注入。
 3. **测试夹具用合成数据。** 夹具是契约的示例，示例带领域味等于把契约钉死在某个领域上。
 
-### 1.3 29 个包分五组
+### 1.3 41 个包分五组（另有 `taskboard/boardtest` 一个子包）
+
+> 口径：与 README 包表（41 行，`make docsync` 判）逐行对齐；policy `modules` 段登记 **42 个**
+> 包目录（多出来的那个是 `taskboard/boardtest`，它计在 `taskboard` 行内）。
+> 上一版此表写「29 个包 / 门面 3 个」，与实际差在两处：`toolfail` / `sandbox` 早已转入
+> 门面（门面共 5 个），而 `trajectory` / `ticket` 漏登记。
 
 | 组 | 包 | 特征 |
 |---|---|---|
-| **机制面**（22 个） | `protocol` `statemachine` `contract` `eventbus` `spill` `budget` `offload` `toolfail` `tooldisclose` `toolname` `guardset` `sandbox` `ptc` `watchdog` `checkpoint` `commitgate` `delta` `pending` `drain` `pii` `netguard` `sideeffect` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
-| **契约套件**（1 个） | `sidetest` | 判「宿主的实现是否满足契约」的**判据**，不是能力本身。只给「怎么判」，不给「一份能用的实现」——见 AGENTS.md「共享契约测试套件」那条纪律。 |
-| **组合机制**（2 个） | `retryplan` `gatecheck` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。`retryplan` 只回答「该走哪条路径」；`gatecheck` 把审批层与沙箱层合成一条判定（两层都同意才放行）。两者都**不重新判定**任何东西。 |
-| **门面**（3 个） | `dispatch` `policy` `reminder` | **只能有四种声明**：类型别名、常量别名、单条上游转发函数、允许集合内的 import。加真逻辑三者必居其一 → 门禁红。核心在 `oagentkit/*`。 |
+| **机制面**（31 个） | `protocol` `statemachine` `contract` `eventbus` `spill` `budget` `offload` `tooldisclose` `toolname` `guardset` `ptc` `watchdog` `checkpoint` `commitgate` `delta` `pending` `drain` `pii` `netguard` `sideeffect` `trajectory` `ticket` `cmdpolicy` `egress` `sessionref` `taskboard` `skilldisclose` `hookengine` `memorypipe` `delegate` `worktree` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
+| **契约套件**（1 个 + 1 个子包） | `sidetest`（+ `taskboard/boardtest`） | 判「宿主的实现是否满足契约」的**判据**，不是能力本身。只给「怎么判」，不给「一份能用的实现」——见 AGENTS.md「共享契约测试套件」那条纪律。`boardtest` 是同一形态：`taskboard` 的原子性由存储保证，本仓只能给判据（`ConcurrentClaim` 跑一遍，成功者必须恰好 1 个）。 |
+| **组合机制**（3 个） | `retryplan` `gatecheck` `preset` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。`retryplan` 只回答「该走哪条路径」；`gatecheck` 把审批层与沙箱层合成一条判定（两层都同意才放行）；`preset` 把档位 × 审批 × 出口收成一份具名组合。三者都**不重新判定**任何东西。**依赖方向是 preset → gatecheck**（高层组装件认识低层判据，反过来不行）。 |
+| **门面**（5 个） | `dispatch` `policy` `reminder` `toolfail` `sandbox` | **只能有四种声明**：类型别名、常量别名、单条上游转发函数、允许集合内的 import。加真逻辑三者必居其一 → 门禁红。核心在 `oagentkit/*`（`guardx/toolfail`、`guardx/sandbox`）。 |
 | **门禁执行体**（1 个 + 2 个 CLI） | `archcheck` / `cmd/archcheck` `cmd/docsync` | policy 的可执行面。可导入包，宿主可复用同一套判据。 |
 
 > 门面包不可变是**硬约束**，不是建议。`docs/OAGENTKIT-OVERLAP.md` 里那句
@@ -87,7 +92,7 @@
 |---|---|---|---|
 | 1 | [README](../README.md) 的「边界」与「包清单」两节 | 3 min | 哪个包管什么事 |
 | 2 | [AGENTS.md](../AGENTS.md) 的「边界纪律」+「工程门禁」 | 5 min | 什么不能做、什么会红 |
-| 3 | `architecture-policy.yaml` 的 `modules` 段（29 个 id + requires） | 2 min | 哪个包能依赖哪个 |
+| 3 | `architecture-policy.yaml` 的 `modules` 段（42 个 id + requires） | 2 min | 哪个包能依赖哪个 |
 | 4 | 你要动的那一个包的包头注释 | 3 min | 这个包为什么长这样 |
 | 5 | 那个包的 `_test.go` | — | 契约的实际形状（比注释准） |
 
@@ -100,8 +105,8 @@
 ```bash
 cd /Users/zhangyi/my_project/agent-harness
 
-make test                 # 全量单测（当前 102 个测试文件，~35s）
-make architecture-check   # 架构门禁（当前 8 规则 + 5 门包 + 28 包依赖方向全绿）
+make test                 # 全量单测（当前 156 个测试文件）
+make architecture-check   # 架构门禁（当前 8 规则 + 5 门包 + 42 包依赖方向全绿）
 ```
 
 **上手第一步就跑一次**，这样后面每次红都知道是自己造成的，不是本来就红的。
@@ -213,8 +218,14 @@ make architecture-check   # 架构门禁（当前 8 规则 + 5 门包 + 28 包�
 
 ### 3.3 任务 C：加或改一条门禁规则
 
-**规则源**：`architecture-policy.yaml` 的 `rules` 段（正则类）
-或 `facades` 段（AST 类，门面包专用）。
+**规则源**：`architecture-policy.yaml` 的 `rules` 段（正则类）、`facades` 段（AST 类，
+门面包专用），或**「有执行体的声明表」那类段落**——`sandbox_providers` / `execution_paths` /
+`egress_paths`。三类要分清，塞错地方不会报错、只会让规则变成空转：
+
+- `rules` 段是**正则表**，只判文本形态（领域词、import 路径、裸 goroutine 的调用形态）；
+- `facades` 段与上面三张声明表要**判结构或跨表一致**，执行体在 `archcheck/*.go` 里走 `go/ast`；
+  它们**不在 `rules` 段**，因为正则表达不出「函数体是不是只有一条转发语句」
+  或「这个 spawn 点之前有没有真的生成 env」。
 
 **加规则**：
 
@@ -241,7 +252,13 @@ make architecture-check   # 架构门禁（当前 8 规则 + 5 门包 + 28 包�
    单行 import、别名 import、括号同行全漏。
 4. **例外必须显式登记**（`exceptions` 段：rule + path + line 三元组 + `until` + 拆除条件）。
    当前例外数 = 0。**不做静默豁免。**
-5. **反向验证**（[§6](#6-反向验证改门禁必做)）：注入违规 → 门禁报错 + 退出码 1。
+5. **规则必须自带能过的样例**（`require_rule_examples: true`，判定在 `archcheck/examples.go`）。
+   `examples` 段写 `match` 与 `not_match`，`make architecture-check` 会拿它们跑**真实判定路径**：
+   正则写错、词表漂移、规则被改成永不命中，都在这里红。
+   **缺样例即红**，不是建议——「从没见过它触发的规则等于没有规则」，
+   而样例是唯一能让规则自证「我还在判」的东西。样例本身也会过领域词检查，
+   所以样例文本必须是**合成数据**（写成真实场景就等于把领域钉进契约）。
+6. **反向验证**（[§6](#6-反向验证改门禁必做)）：注入违规 → 门禁报错 + 退出码 1。
 
 **改规则**：先确认现有规则**真的在判**——本仓有 5 处「规则照常出现在报告里、
 severity 照常是 error，唯独一件事都不判」的历史静默失效（`AGENTS.md` 有逐条记录）。
@@ -358,11 +375,14 @@ make check
 
 ### 4.1 架构门禁的规则表
 
-> **条数口径**：`make architecture-check` 打印的是「8 条规则 + 5 个门面包 + 32 个包的
-> 依赖方向」——「8 条」指 policy `rules` 段的条目数，**不含**用 `go/ast` 判的结构规则
-> （门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径）。下表把两类都列出来，故行数比
-> 「8 条」多。**别再按表的行数改「N 条规则」那句话**：那句话对着 `rules` 段，
-> 两者本来就不同量纲（此前标题写「9 条规则」属实是拿混了）。
+> **条数口径**：`make architecture-check` 打印的是「8 条规则 + 5 个门面包 + 42 个包的
+> 依赖方向」——「8 条」指 policy `rules` 段的条目数，**不含**用 `go/ast` 判的 5 条结构规则
+> （门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口**）+ 1 条 policy 自校验。
+> 下表把两类都列出来，故行数比「8 条」多。**别再按表的行数改「N 条规则」那句话**：
+> 那句话对着 `rules` 段，两者本来就不同量纲（此前标题写「9 条规则」属实是拿混了）。
+>
+> 另记：`require_rule_examples: true` 让每条 `rules` 条目**必须自带能过的样例**——
+> 缺样例即红。这使「8 条」这个数字有了下限保证：不会因为某人删了样例而变成空转。
 
 | 规则 | 拦什么 | 典型修法 |
 |---|---|---|
@@ -377,6 +397,9 @@ make check
 | `harness-sandbox-provider-declared` | 执行沙箱后端的档位没登记在 `sandbox_providers` 段，或登记与代码事实不一致 | 补登记 / 同步登记的档位常量名（LevelNone/LevelProcess/LevelOS/LevelMachine）|
 | `harness-facade-stays-facade` | 三个门面包长出实现 | 逻辑放上游 `oagentkit/*`，本仓只留转发 |
 | `harness-module-dependency-direction` | 越界内部依赖 / 越界跨仓依赖 / **未登记包目录** | 改 `modules` 段登记 `requires` |
+| `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离（构造器改名 / 档位没人造）| 同步 `execution_paths` 段与代码 |
+| `harness-subprocess-egress` | 子进程启动点没在 `egress_paths` 登记；登记 `proxy` 却在 spawn 前看不到 env 兑现证据；登记 `denied`（本层无法兑现）；登记已陈旧 | 补登记 / 在启动函数里真的用 `egress.Spec.Env` 生成 env / 改档位。**`denied` 在本层是造假，不是配置** |
+| `harness-policy-self-check` | policy 自相矛盾：规则无执行体、id 重复、`scan_roots` 与 `modules` 不一致、例外无 `until`、**包根指向空目录** | 补执行体 / 改声明 / 删陈旧包根 |
 
 > 最后一条的第三种形态最隐蔽：**未登记的包对本门禁完全隐形**——
 > 任何模块都能 import 它而不判违规。判定粒度是**包目录**，不是顶层目录。

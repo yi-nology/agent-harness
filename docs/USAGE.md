@@ -1923,6 +1923,156 @@ msg := reminder.Wrap("alert", reminder.SanitizeBody(webhookText))
   取指令待遇），`injectband` 封系统侧（系统带外注入的身份标记不得被伪造）。
   只做前者时，攻击者不必逃出数据区，只需在内容里写一个像系统注入的标签即可抬升身份。
 
+### 3.13 判定面向下延伸与协作面（2026-11-06 新增的十个包）
+
+> 这十个包按 [GAP-ANALYSIS-20261106.md](GAP-ANALYSIS-20261106.md) 落地。它们与前面各节
+> **不是替代关系**：`toolfail` 判「失败怎么处置」，`egress` 判「这次执行要求多宽的出口」，
+> `cmdpolicy` 判「工具内部那条命令能不能跑」——三个维度可以同时接。**按需接，接一个也是一个。**
+
+#### `egress` + `ptc`：子进程出口（**有代码变更，优先看**）
+
+```go
+import (
+	"github.com/yi-nology/agent-harness/egress"
+	"github.com/yi-nology/agent-harness/ptc"
+)
+
+spec := egress.Spec{Mode: egress.ModeProxy, Proxy: "http://127.0.0.1:7897"}
+if err := spec.Validate(); err != nil {
+	return err            // 加载期自检：早于任何一次执行，别等到 spawn 时才发现
+}
+
+prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+	Program:  program,    // 原有字段一律不变
+	Bindings: bindings,
+	Stages:   stages,
+	Egress:   spec,       // 新增字段。零值 = 不限制，与旧版**逐字一致**
+})
+// 之后按 sandbox 登记簿的常规用法注册（reg.Register(prov)）；
+// **不要**直接调 prov.Exec——那会绕开档位下限与预算可兑现性（见 §4.4）。
+// 子进程后端还需在 main 里加一行 ptc.MaybeRunChild()（re-exec 宿主自己的二进制）。
+```
+
+**三条必须知道的**
+
+- `Spec.Env(base)` 生成子进程环境；**生成失败即不起子进程**（fail closed）。
+  所以 `ModeDenied` 在本层**必然报错**——那一档只能由执行后端兑现，靠 env 兑现它是造假。
+- `Spec.SatisfiedBy(provider)` 问后端「你能不能兑现这一档」。**后端不实现 `Enforcer` 就按最弱处理**，
+  不是「没说不支持 = 支持」；否则一个从没实现过出口控制的后端会被选中，而声明与实际之间的落差没有信号。
+- 本仓有一条门禁 `harness-subprocess-egress`：判「每个 spawn 点都登记了档位，且 `proxy` 档
+  在 spawn 之前**看得见** env 兑现证据」。宿主仓复用同一份执行体，在自己的 policy 里写
+  `egress_paths` 段即可（见 §4.4 后半）。
+
+#### `preset`：把「档位 × 审批 × 出口」收成一份具名组合
+
+散参数的病不是难写，是**改一处漏两处**：档位调到 OS 级而出口忘开代理、审批放到 auto 而沙箱仍是进程内，
+组合出来的权限谁都没声明过。
+
+```go
+import (
+	"github.com/yi-nology/agent-harness/egress"
+	"github.com/yi-nology/agent-harness/gatecheck"
+	"github.com/yi-nology/agent-harness/policy"
+	"github.com/yi-nology/agent-harness/preset"
+	"github.com/yi-nology/agent-harness/sandbox"
+)
+
+set, err := preset.New([]preset.Preset{
+	{Name: "readonly", Level: sandbox.LevelOS, Mode: policy.ModeConfirm,
+		Egress: egress.Spec{Mode: egress.ModeProxy, Proxy: proxyURL}},
+	{Name: "open", Level: sandbox.LevelNone, Mode: policy.ModeAuto,
+		Egress: egress.Spec{Mode: egress.ModeUnrestricted},
+		Unsafe: true, Justification: "仅本机调试用，不进生产配置"},
+})
+
+p, err := set.Resolve(cfg.Preset)                  // 未登记名字 → **报错，不降级**
+req, err := set.GateRequest(baseReq, cfg.Preset)   // 三面一次性展开进审批请求
+```
+
+**坑**
+
+- **三面全松必须显式 `Unsafe` 且写理由**。这条不是为了拦你，是为了让「先跑起来」这个决定留下痕迹。
+- **两个名字同一份组合即报错**：配置里看起来是「两个选择」，而执行报告里出现两个名字，
+  读者会以为执行过两种权限。
+- **依赖方向是 preset → gatecheck**。`gatecheck` 不认识 `preset`，别反向接——
+  低层判据认识高层组装件会立刻出现循环。
+
+#### `cmdpolicy`：一次审批通过之后，那条命令怎么判
+
+`policy` / `gatecheck` 的判定面停在**工具名**上：一次 `exec` 审批通过后，它内部跑的是
+`git status` 还是 `rm -rf /`，此前没有任何机制面看得见。
+
+```go
+import "github.com/yi-nology/agent-harness/cmdpolicy"
+
+pol, err := cmdpolicy.New([]cmdpolicy.Rule{
+	{
+		Name:     "git-status",
+		Prefix:   cmdpolicy.Prefix{{"git", "status"}},   // 每段是**备选集合**
+		Decision: cmdpolicy.DecisionAllow,
+		Match:    []string{"git status"},                  // 加载期必须被本规则命中
+		NotMatch: []string{"git remote update"},           // 加载期必须判不中
+	},
+	{
+		Name:     "rm",
+		Prefix:   cmdpolicy.Prefix{{"rm"}},
+		Decision: cmdpolicy.DecisionForbidden,
+		Match:    []string{"rm -rf /tmp/x"},
+	},
+})
+
+for _, one := range cmdpolicy.SplitCommands(cmdline) {   // ← 关键：先切再判
+	argv, err := cmdpolicy.Split(one)
+	v := pol.Decide(argv)
+	if v.Decision != cmdpolicy.DecisionAllow { return v.Explain() }
+}
+```
+
+**坑**
+
+- **必须 `SplitCommands` 后再逐条判**。对整串只判一次时，`git status; rm -rf /` 的前缀是 `git`，
+  一条 `git` 的 allow 规则会放行后半段。
+- **规则自带 `Match` / `NotMatch` 样例**，`New` 会在加载期用真实判定路径跑一遍；不一致即报错。
+  规则会随命令名漂移，而漂移**不会报错**，只会静静地不再命中。
+- 本包**不内置任何命令词表**——词表是你的资产。本仓只给判据与样例机制。
+
+#### `taskboard` + `boardtest`：多 agent 的认领与依赖
+
+`dispatch` 只回答「能不能派」；派出去之后「谁负责哪个子任务、依赖谁、怎么还回去」没有任何机制面。
+各宿主拿一张表兜着，于是「同一子任务被两个 agent 同时认领」在报告里读起来完全正常。
+
+```go
+import (
+	"github.com/yi-nology/agent-harness/taskboard"
+	"github.com/yi-nology/agent-harness/taskboard/boardtest"
+)
+
+// 1) 你的存储实现 Board 四个方法（原子性由存储保证，本仓只判结果）
+// 2) 快照不变量：
+for _, p := range taskboard.Check(tasks) { /* 环 / 重复 id / 认领态与租约不一致… */ }
+
+// 3) 并发判据：成功者必须恰好 1 个（在你的 CI 里跑）
+winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID{"a", "b", "c"}, leaseFor)
+```
+
+**坑**
+
+- **不给存储实现**是刻意的：给一份参考实现你就会照着改它，最后两份真相并存（与 `checkpoint.StoreCAS` 同一分工）。
+- **释放 / 完成凭令牌不凭内容**：同名 agent 与「失败 → 释放 → 重试」都会让内容比对认错人。
+- **`failed` 不是终态**。把它当终态会让补救路径静默失效——一次失败就把子任务永久钉死。
+- `ConcurrentClaim` 区分三种结果：`ErrTaken`（有输家，说明原子性成立）、`ErrBlocked`（压根没到争用）、
+  其它 = **基础设施故障**。把后者当成「原子性没问题」是本判据最容易犯的误读。
+
+#### 其余六个：什么时候你需要它
+
+| 包 | 你需要它的信号 | 最容易接错的一点 |
+|---|---|---|
+| `sessionref` | 要把**另一个会话的结论**注入当前上下文 | 只判 TTL 不判版本。长 TTL + 源高频更新是最常见的失效形态；版本**回退**同样要判 stale |
+| `skilldisclose` | 技能数量多到不能全塞进 prompt | 把「相关度」和「点名」混成一个分数——用户已明确表达的意图会被相关度压过去 |
+| `hookengine` | 要支持 hooks，但不想被某一种传输（外部进程 / 插件包）焊死 | 让非阻塞 hook 参与裁决。它一旦能影响裁决就只是「慢的阻塞 hook」，而你会以为它是旁路的 |
+| `memorypipe` | 要把长期记忆注入 prompt | `scope` 做父级兜底。按 `project` 查却回退到 `global`，作用域就失去了意义，而报告完全正常 |
+| `delegate` | 要把任务交给异构执行方（ACP 一类） | 按配置书写顺序取第一个执行方。一次无关重排就会换掉执行方——应取能力**最少**者 |
+| `worktree` | 多个 agent 各在自己的工作区里跑 | 以为只读区重叠也算冲突，或指望通配。**不支持通配**是写明的局限：`*` 与 `**` 各实现语义不同 |
 ---
 
 ## 4. 门禁与提交前检查
@@ -1971,13 +2121,17 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-single-errors-package` | **error** | stdlib `"errors"` 与 `github.com/pkg/errors`（全仓只允许 `oekit/pkg/errors` 一套） |
 | `harness-sandbox-execution-single-entry` | **error** | 执行沙箱的后端不得多入口（执行路径与声明路径必须一致） |
 
-另有三条**不走正则表、由 `go/ast` 判定**的结构性规则（判据是语法结构，逐行看文本判不出）：
+另有**五条不走正则表、由 `go/ast` 判定**的结构性规则 + 一条 policy 自校验（判据是语法结构，
+逐行看文本判不出）：
 
 | 规则 | 拦什么 | 落点 |
 |---|---|---|
 | `harness-facade-stays-facade` | `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 长出实现 | `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
 | `harness-module-dependency-direction` | 包间依赖超出 `modules[].requires` 声明；**以及未登记的包目录** | `policy.yaml` 的 `modules` 段 + `archcheck/deps.go` |
 | 沙箱档位登记 | 执行沙箱后端未在 `sandbox_providers` 段登记，或登记的档位与代码事实漂移 | `policy.yaml` 的 `sandbox_providers` 段 + `archcheck/sandbox.go` |
+| `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离 | `policy.yaml` 的 `execution_paths` 段 + `archcheck/execution.go` |
+| `harness-subprocess-egress` | spawn 点未登记出口档位；登记 `proxy` 却在 spawn 前看不到 env 兑现证据；登记 `denied`（本层兑现不了）| `policy.yaml` 的 `egress_paths` 段 + `archcheck/egresspaths.go` |
+| `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 | `archcheck/selfcheck.go` |
 
 > 「未登记的包目录」这条更隐蔽：未登记的包对本门禁完全隐形，
 > 任何模块都能 import 它而不判违规。
@@ -2065,6 +2219,39 @@ out, err := sandbox.Execute(ctx, reg, wantLevel, sandbox.Request{
 - **判不了的**：持有后端实例直接调 `provider.Exec(...)`——那要判**接收者的静态类型**，
   而 AST 拿不到变量的类型（要 `go/types`）。这类绕过靠人工 review 与接线纪律兜。
 
+#### 同族第二条：子进程出口（`egress_paths`）
+
+`execution_paths` 管的是「**进程内**执行不许绕开登记簿」；`egress_paths` 管的是「**子进程**起来之后
+往哪儿连」。两者形态一样（声明表 + AST 判据 + 执行体可复用），但**判的是两件事**，
+所以是两张表而不是一张：一张表两个含义，就会出现「登记了执行路径以为出口也管了」。
+
+```yaml
+# 宿主仓的 architecture-policy.yaml
+egress_paths:
+  enabled: true
+  severity: error
+  entries:
+    - path: internal/exec/spawn.go     # 相对仓根
+      fn: Start                        # 该文件里的启动函数（留空 = 整个文件）
+      mode: proxy                      # unrestricted / proxy / denied
+      notes: |
+        为什么是这个档。这段会进报告，是给下一个读代码的人看的。
+```
+
+**四条判据（每条都对应一种「看起来登记了、其实没管」）**
+
+1. **未登记即红**：扫生产代码里的 `exec.Command` / `os.StartProcess` 一类调用点，
+   没进表就是违规。**`unrestricted` 也必须显式写**——「没登记」与「明确不限制」是两件事，
+   前者的成因通常是漏了。
+2. **`proxy` 必须在启动函数里看得见兑现证据**：光在表里写 `proxy` 不算，要在 spawn 之前
+   真的看到 `egress.Spec.Env(...)`（或带 `egress` import 的接收者形态）。否则表里写「已代理」、
+   子进程实际裸连——这是本判据存在的全部理由。
+3. **`denied` 直接红**：本层（进程内 spawn 前改 env）**兑现不了**禁网。写了就是造假，
+   报告会显示「已兑现」而网络其实通着。真要禁网，靠执行后端（`sandbox.LevelMachine` 一类）。
+4. **陈旧登记即红**：登记的函数在仓里不存在了 ⇒ 报出来，否则「这条路径没人管」会看起来有人管过。
+
+**本仓自己的实例**：`ptc/childpipes.go` 的 `newChildPipes` 登记为 `proxy`，
+兑现方式是把 `SubprocessOptions.Egress` 交给 `spec.Env(base)` 生成子进程环境（失败即不起子进程）。
 ### 4.5 在本仓加新包的正确顺序
 
 **先改 policy 再写代码。**
