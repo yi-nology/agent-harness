@@ -126,11 +126,22 @@ func TestSubprocessMarginalCallCost(t *testing.T) {
 	bin := buildChildProgram(t)
 	ctx := context.Background()
 
-	// T(n)：同一个子进程内跑 n 次调用，取多次的中位数（减少调度抖动）。
+	// T(n)：同一个子进程内跑 n 次调用，取**最小值**——不是中位数。
+	//
+	// # 为什么最小值才是对的统计量
+	//
+	// 本用例的判据是「往返成本的**上界**」，而调度抖动、被并行跑的其它包抢 CPU、
+	// GC 停顿**只会把耗时推高**，不会产生「比真成本更快」的样本。故最小值是最接近
+	// 真成本的估计，且随机器负载升高**不跟着漂**——噪声只污染上界，不污染下界。
+	//
+	// 中位数会漂（本轮实录：机器同时在跑别的包，三次中位数的 T(51) 把边际成本
+	// 抬到 1.154ms 越线，而同一轮 5 个样本里的最小值对应 0.19ms——越线的是采样
+	// 统计量，不是往返成本）。这与本文件 TestSubprocessOverheadIsBounded 记下的
+	// 那条是同一个教训：绝对时间上界要么差分、要么让统计量对负载不敏感。
 	measure := func(n int) time.Duration {
 		prog := benchProgram(n)
 		var samples []time.Duration
-		for i := 0; i < 3; i++ {
+		for i := 0; i < 5; i++ {
 			p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
 				ExePath:  bin,
 				Program:  prog,
@@ -152,7 +163,10 @@ func TestSubprocessMarginalCallCost(t *testing.T) {
 			samples = append(samples, elapsed)
 		}
 		sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
-		return samples[len(samples)/2]
+		// 最小值：见上「为什么最小值才是对的统计量」。最大值一并留痕，
+		// 便于下次复现抖动时直接看出这台机器当时有多忙。
+		t.Logf("n=%d 样本: 最小 %v / 最大 %v", n, samples[0], samples[len(samples)-1])
+		return samples[0]
 	}
 
 	const one, many = 1, 51
@@ -162,7 +176,15 @@ func TestSubprocessMarginalCallCost(t *testing.T) {
 
 	t.Logf("1 次调用: %v；%d 次调用: %v；边际每次: %v", t1, many, tN, marginal)
 
-	// 门槛：固定的绝对值，**贴着实测值**（实测 ≈ 174µs）。
+	// 门槛：固定的绝对值（实测 min-of-5 ≈ 30µs，5 次连跑 22–41µs）。
+	//
+	// 换了统计量之后这个数是**重新标定**的，别拿旧值（中位数口径下的 174µs）当基线：
+	// 同一个往返在最小值口径下只有 30µs，故 1ms 现在约等于 **30 倍余量**，它守的是
+	// 「慢 CI runner 上也不会误红」＋「真劣化一个数量级」（多一次进程/多一层拷贝这种
+	// 量级）。**它抓不住**「每次多一次管道往返」这种一倍级劣化——那需要台账里另一条
+	// 路（控制组对照），本用例的初版注释已记过：去掉往返后边际成本反而从 174µs 变
+	// 112µs，噪声大于信号。不要为了让这一条更「灵敏」而把上界收到贴着 30µs：
+	// 那只会把判据变回一个随机器负载翻面的是非题。
 	//
 	// # 为什么不用宽松上界
 	//
