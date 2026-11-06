@@ -2,6 +2,123 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.17.0] — 2026-11-06
+
+### 重构(ptc)：三处「三项上限 <=0 即缺省」预算归一收成 ptc/limits.go
+
+进程内 Run、子进程父侧 run、子进程内 runProgramInChild 各写一遍同一套归一，而这三处
+分处**两个进程**：改一处就只剩一个进程跟着变，症状是「换个后端跑，程序莫名先超时了」。
+收成 runLimits + normalizeLimits 一份，三处只保留各自的装配差异。
+下游要做什么：无（纯内部重构，公开面与口径逐字未变）。
+
+### 重构(pii)!：删除 Redact / RedactValue 面无关门面与死代码
+
+删三样：
+① Redact / RedactValue：面无关门面拿不到 blocked 信号——宿主把策略配成 block 时它只会
+   静默打码，而「打码」与「阻断」是两件事。Deprecated 标记不是防线，它只是提醒。
+   唯一入口改为 Apply / ApplyValue，必须显式指定面。
+② applyAny / applyAnyValue：无调用点的死代码。
+③ dispose.go 里与 policy.go 逐字重复的 20 行文件头（改为一句指路）。
+护栏不跟着函数名走：pii/facade_test.go 的三条（策略必须生效 / 面关闭必须透传 /
+结构下探不得丢失）原样迁到 pii/apply_test.go 的 Apply/ApplyValue 上，
+pii_test.go 改写为面感知 API。
+下游要做什么：Redact(v) → Apply(face, v)、RedactValue(v) → ApplyValue(face, v)，
+face 按你的实际用途显式给。若你的代码依赖「策略配 block 时只打码」的旧行为，
+这次会变成按策略阻断——那是修复，不是回归。
+
+### 重构(netguard)!：删除 CheckURL / CheckChain 双 bool 包装
+
+放行面唯一形态改为 CheckURLWith(url, Allow{...}) / CheckChainWith(chain, Allow{...})。
+删它们的理由不是省行数：双 bool 包装里写反两个位置**不会编译报错**，只会静默改变放行面——
+而放行面是本包存在的全部理由（SSRF 边界）。Allow 具名类型出现后，包装的唯一价值是
+「不破宿主 API」，代价却是一条读不出意图的入口常年可用；删掉后「哪个 bool 是哪个」
+这个问题在类型层面消失。
+连带：36 处测试调用点改写为 With + Allow；「两种形态逐位穷举等价」的用例随包装一起删
+（包装不存在，等价性无从谈起）。顺带把生产注释里的宿主用例枚举改成
+「面向不可信输入的出口 / 面向可信目标的访问」——本仓不放领域词。
+下游要做什么：CheckURL(u) → CheckURLWith(u, Allow{...})；CheckChain(c) →
+CheckChainWith(c, Allow{...})。两个 bool 的位置不再需要记（写反不报错、只是静默改变放行面）。
+
+### 重构(drain)!：收敛循环合并为一份 + 排水预算改为命名类型 DrainBudget
+
+两件事同属一个包且互相咬合（收敛循环的参数就是 DrainBudget），故一次落地。
+一、Drain / DrainSession 的收敛循环合并成 converge.go 一份。两者差别只有「问哪个计数、
+怎么批量取消」，循环本身逐字相同；而这段代码跑在停机路径上，先修一份另一份不跟的症状是
+「全局排水修好了，会话级还在旧行为」——两条路径都只在「进程正在死」的那一刻执行，
+最难复现也最难判断是哪一份没跟上。
+二、Budget 返回命名类型 DrainBudget，Drain / DrainSession / DetachCtx 只收它。
+配置里一个 time.Duration 同时被当成「要不要做轮排水」（负 = 关闭）与「停机收尾给多久」
+（必须恒正）。旧签名下把 Budget(x) 喂给 context.WithTimeout 是完全合法的 Go 代码，
+运行期得到一个立即过期的 ctx——收尾协程秒退、一句错都不报，症状是「优雅停机静默变硬切」。
+命名类型把这条误用变成编译错误。
+反向验证（两个方向都跑过）：go vet -overlay 注入误用探针 ⇒
+`cannot use Budget(...) (value of type DrainBudget) as time.Duration value`，退出码 1；
+改成显式 time.Duration(Budget(x)) ⇒ 退出码 0——证明红的位置就是护栏本身，
+不是相邻的偶然原因。TestBudgetIsNotATimeDuration 另钉住「别把它改回 time.Duration 别名」：
+改回去时所有调用点照样编译、用例全绿，护栏会静默消失。
+刻意不做兼容包装：包装会让「直接传原始配置值」继续编译，而那正是要消灭的入口。
+下游要做什么：
+① Drain / DrainSession / DetachCtx 的实参包一层 drain.Budget(cfg.X)——语义不变
+   （正值与负值都原样返回，只有 0 补缺省）；
+② 喂 context.WithTimeout 的那一个数改走 drain.ShutdownBudget(cfg.X)（d <= 0 归缺省、保恒正）；
+③ 千万别把 Budget 的负值归一：<0 是「关闭轮排水」的语义，归一会把「少做」静默翻成
+   「多做 60 秒」，配置里写下的意图被吞掉。
+
+### 重构(subhub)：三份快照式订阅表收编到 internal/subhub
+
+netguard/subscribe.go、pii/subscribe.go、guardset/assembly_subscribe.go 此前是近乎逐字
+的三份副本，各自包头写着「与 netguard 的 notifyPolicy 同款」——交叉引用本身就是重复的自白。
+代价不在多写百来行，而在这是一段**并发正确性**代码（copy-on-write 发布、句柄单调、
+通知在锁外、回调 panic 隔离）：任一份先被修，另两份不会跟着改，同一个不变量于是在三个包里
+有三种成色，而失效形态是偶发漏通知 / 偶发误留订阅——不红不报，只在长跑进程里慢慢显形。
+故收成一份泛型 Registry[T]：atomic.Pointer 整体替换（读侧无锁、永不看到半张名单）、
+Add/Remove/Notify/Len、由本包铸造的单调句柄（0 = 无效）、Invoke/Do 做回调 panic 隔离。
+「fn 为 nil 报哪个错、哨兵叫什么」刻意留在三个使用方——共用哨兵会逼着
+`errors.Is` 判定链统一到别人的错误类型上。
+为什么放 internal/ 而不是顶层包：它不是公开 API，是三个包共用的实现细节；顶层包意味着
+对外承诺（README 包表要给行数与依赖列，还会被宿主直接 import，之后再也不能自由改签名）。
+policy 里登记 `requires: []`——「零依赖的机制件」这个承诺本身由依赖方向门禁判定。
+下游要做什么：无。三个包的公开面逐字未变，internal/subhub 不构成对外 API。
+
+- 杂务(deps)：oekit / oagentkit 家族与第三方依赖抬到本轮最新
+
+oekit/pkg v0.30.0→v0.35.0、oekit/concurrency v0.23.0→v0.25.1、oekit/logx v0.8.0→v0.8.3；
+oagentkit/agent v0.11.0→v0.13.0、guardx v0.17.0→v0.19.0、runtime v0.7.2→v0.8.0、
+toolgate v0.12.5→v0.13.0、mcpkit v0.9.0→v0.11.0；cloudwego/eino v0.9.21→v0.9.22、
+dop251/goja 与 santhosh-tekuri/jsonschema v6.0.2→v6.0.3 等（全量见 go.mod）。
+顺带删掉根目录 tools.go：那五个 blank import 是版本钉子，而本仓已无代码用到
+oagentkit/{llm,obs,textx} 与 oekit/core —— 钉子只会让它们以「本仓依赖」的身份
+留在 go.mod 里，每次抬地板都得跟着动，且下游会误以为这是本仓的承诺。
+下游要做什么：
+① `go mod tidy`——地板抬升对下游是隐式 breaking，不跑就报
+   `updates to go.mod needed`，且报错不提真正原因。
+② 若你靠本仓间接拉起过 oagentkit/{llm,obs,textx} 或 oekit/core 的版本地板，
+   请在 go.mod 里显式钉——本仓不再声明它们。
+
+
+- 文档：结清 2026-10-21 台账，补 harness#24 的接线面与编译期护栏
+
+- docs/USAGE.md §3.8.2：接线范式补第 ③ 段（配置侧形态：ShutdownBudget 给 WithTimeout、
+  Budget 给 Drain），并写清「为什么是两个函数」「类型层面也分开了」「负值不得归一」三条。
+  此前该节从头到尾只写 Budget(0)，下游照手册写只能自己补 d<0→0 —— 这是「修复停在库里」的
+  真正缺口。
+- docs/AI-GUIDE.md：新增 §5.16「『修复已发版』当成『问题已解决』」——判据取调用点，
+  不取 issue 状态；能让编译器拒的别只靠文档和用例。
+- AGENTS.md：新增「修复落在库里 ≠ 修复到达调用点」五条纪律（含 go vet -overlay 做反向验证）。
+- README：工程底座重算（19,624 行 / 113 文件 / 139 测试文件 / 85.5%）、drain 包表 291→309、
+  新增 v0.17.0「下游升级须知」行。
+- protocol：fenceRe 为什么不换 jsonrepair.StripCodeFence——上游用第一个闭合围栏收尾
+  （惰性 .*?），报告字段里含代码块时会把 payload 截断在字符串中间，而截断产物经 Repair 补括号
+  即可「解析成功」，正是「残缺内容以成功放行」那种形态。
+- netguard/dial.go：为什么不直接收编 urlguard.SafeDialFunc 的理由重写——上游自 v0.34 起
+  提供 WithCheckIPFunc / WithCheckHostFunc，旧理由部分过期，剩下三条仍然成立（判定顺序与
+  构造态豁免要把同一份语义表达两次；上游无可注入解析器 ⇒ rebinding 判据不可验；错误契约归本包）。
+- 台账：GAP-ANALYSIS / SANDBOX-DESIGN / OAGENTKIT-OVERLAP / HARNESS-BENCHMARK / SPLIT_PLAN /
+  SELF-AUDIT 逐条结清——能落地的落地，已落地但文档过期的改文档，纯宿主侧项如实标注
+  「不在本仓判定面」。
+下游要做什么：无（纯文档与注释，不改任何行为）。
+
+
 ## [v0.16.0] — 2026-11-06
 
 ### 修复(test)：nil-ctx 契约测试豁免 SA1012（钉的就是 nil 形态）
