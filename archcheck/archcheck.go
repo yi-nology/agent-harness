@@ -181,6 +181,20 @@ func Run(root string, pol *Policy) (*Result, error) {
 		res.Violations = append(res.Violations, vs...)
 	}
 
+	// 子进程出口门禁：每个 spawn 点都要登记出口档位，要求经代理的必须看得见兑现
+	// （egresspaths.go）。段缺省也算开启——「这个子进程在强制面内吗」必须有人问。
+	egPaths := EgressPaths{}
+	if pol.EgressPaths != nil {
+		egPaths = *pol.EgressPaths
+	}
+	if egPaths.on() {
+		vs, err := egressPathViolations(root, egPaths)
+		if err != nil {
+			return nil, err
+		}
+		res.Violations = append(res.Violations, vs...)
+	}
+
 	// policy 自校验：门禁自己也得能被检查（规则没有执行体、id 重复、
 	// 阈值判定面漏包、例外指向不存在的规则……）。详见 selfcheck.go。
 	res.Violations = append(res.Violations, selfCheckViolations(root, pol)...)
@@ -209,6 +223,9 @@ func Run(root string, pol *Policy) (*Result, error) {
 	}
 	if execPaths.on() {
 		sevOf[executionPathRuleID] = sevOrError(execPaths.Severity)
+	}
+	if egPaths.on() {
+		sevOf[egressPathRuleID] = sevOrError(egPaths.Severity)
 	}
 	// 自校验恒为 error：policy 结构有问题时，门禁必须响亮失败，
 	// 而不是「其他规则都绿就当通过」——那正是它要防的那种静默失效。
@@ -276,6 +293,13 @@ func Run(root string, pol *Policy) (*Result, error) {
 			ID:       executionPathRuleID,
 			Desc:     executionPathsDesc(execPaths),
 			Severity: sevOf[executionPathRuleID],
+		})
+	}
+	if egPaths.on() {
+		res.Rules = append(res.Rules, RuleInfo{
+			ID:       egressPathRuleID,
+			Desc:     egressPathsDesc(egPaths),
+			Severity: sevOf[egressPathRuleID],
 		})
 	}
 	res.Rules = append(res.Rules, RuleInfo{

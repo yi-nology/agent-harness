@@ -98,6 +98,20 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 			add(policyPath, 0, "规则 %q 的 severity %q 非法（只允许 error / warn / 缺省）", r.ID, r.Severity)
 		}
 
+		// ── 规则自带的样例必须与判据一致（加载期验活）──
+		//
+		// 这是 P1-5 的落点：把「这条规则还活着吗」从**事故后回答的问题**变成
+		// **加载期的断言**。判据复用真实判定路径（见 examples.go 头注）。
+		for _, problem := range exampleViolations(r) {
+			add(policyPath, 0, "%s", problem)
+		}
+		if pol.RequireRuleExamples && (r.ForbidRegex != "" || r.ForbidImport != "") && len(r.Examples) == 0 {
+			add(policyPath, 0,
+				"规则 %q 没有自带 examples（require_rule_examples: true 已开）："+
+					"有执行体却没有样例的规则，无法在加载期证明它还判得动——词表被改名、"+
+					"module 路径被迁走之后，它会静静地不再命中，而门禁继续绿着", r.ID)
+		}
+
 		// ── import_exempt 项的形状必须可能生效 ──
 		//
 		// 例外的语义是「放行这一条 import 路径」。若某一项**形状上就不可能

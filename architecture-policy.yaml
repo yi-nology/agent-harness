@@ -18,6 +18,17 @@
 
 version: 1
 
+# 每条**有执行体**的规则必须自带 examples（正例/反例），加载期自检。
+#
+# 为什么本仓开 true 而缺省值是 false：这条口径若只写在注释里就是散文。
+# 规则会随词表改名、module 路径迁移而**静静地不再命中**——它照常编译、照常参与
+# 报告、severity 照常是 error，唯独一件事都判不了。测试能证明「今天它还判得动」，
+# 但测试在 CI 里跑一次；examples 在**每一次**门禁运行时跑，包括别人复用了这份
+# 判据的宿主仓。
+#
+# 对复用方的缺省保持 false：强制补样例会让一次「升级判据」变成一次「策略改写」。
+require_rule_examples: true
+
 # ── 模块清单（requires = 允许的内部依赖方向）──
 modules:
   - id: protocol
@@ -160,7 +171,7 @@ modules:
   # 从未被执行过，连漂移都没人发现（执行体见 archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
-    requires: [toolname, sandbox, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg", "ext:github.com/oekit/logx"] # guardx 含 sandbox/wire（跨进程协议） # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包；sandbox 是执行档位与后端协议
+    requires: [toolname, sandbox, egress, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg", "ext:github.com/oekit/logx"] # guardx 含 sandbox/wire（跨进程协议） # 工具名→JS 标识符的规整规则，唯一的真相在 toolname 包；sandbox 是执行档位与后端协议
     owner: harness
     managed: true
     notes: 程序化工具编排沙箱（goja VM，三重预算替代 OS 沙盘）
@@ -250,9 +261,77 @@ modules:
       走幂等键重放）。与 guardset 同族：**组合逻辑归内核，判定归各自机制**。
       零内部依赖（不 import sideeffect：两者是契约上的衔接，不是代码耦合）。
 
+  - id: preset
+    roots: [preset]
+    requires: [egress, gatecheck, policy, sandbox, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      命名权限预设：把「隔离档位 × 审批模式 × 出口策略」三件散参数收成一份**具名、
+      不可变、可自检**的整份配置。
+
+      补的是「零件齐了但组装件没有」。三面的零件本仓都有（sandbox.Level /
+      policy.Mode / egress.Spec），但每次执行由宿主自己拼，而拼错不会报错：
+      档位传成零值 ⇒ 沙箱层不构成约束而调用点看起来「声明了档位」；出口漏传 ⇒
+      零值即「不要求」而这次执行自由出网；两个参数配成互不相容的组合 ⇒ 没有任何
+      一处会对此说一句话。
+
+      自检项里最关键的一条是「**三面全松必须显式承认**」：档位 none × 模式 full ×
+      出口不限时必须写 Unsafe 与理由。目的不是拦住这个决定，而是让它留下签字——
+      否则它就变成「反正先跑起来」留下的、没人认领的松口。
+
+      另一条是「语义相同的两个名字要报错」：两个名字一份组合在配置里看起来是
+      「两个选择」，真正的伤害在留痕——报告里出现两个名字，读者会以为执行过两种权限。
+
+      Resolve 遇到未登记名字**报错而不降级**：降级到缺省的方向不可预测（可能更松），
+      而「打错一个字就用上另一档权限」没有任何信号。
+
+  - id: cmdpolicy
+    roots: [cmdpolicy]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      命令级判据：把判定面从「工具调用」向下延伸到「工具内部实际执行的那条命令」。
+
+      此前判定边界停在工具名上：一次 tools.exec 被审批通过之后，它内部跑的是
+      git status 还是 rm -rf / 没有任何机制面看得见。宿主只能用正则黑名单兜，
+      而黑名单在「写法与语义不一致」时必然失效（多空格、变量拼接、子命令替换）。
+      本包改用**前缀 token 规则**：先分词再比 token，判据不随引号/转义/空白漂移，
+      且拒绝理由可解释、能直接回给模型。
+
+      三态裁决（allow / prompt / forbidden）与 toolgate 的裁决词表同义，不引入
+      第二套口径——prompt 直接接 gatecheck 的「需人审」档。
+
+      **规则自带样例，加载即自检**：每条规则可带 Match / NotMatch，New 在加载期
+      用真实判定路径跑一遍，不一致即报错。这是「从没见过它触发的规则等于没有规则」
+      那条纪律的机器化——规则会随命令名漂移，而漂移不会报错，只会静静地不再命中。
+
+      SplitCommands 单独存在是因为前缀判据有一个典型绕过："git status; rm -rf /" 的
+      前缀是 git，对整串只判一次就会让一条 git 的 allow 规则放行后半段。
+
+  - id: egress
+    roots: [egress]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      出口策略：三档（不限制 / 只经代理 / 完全禁网）+ 声明自检 + 兑现判据。
+
+      本包**不含代理本体**（那是上游 guardx 与宿主的活）——它只回答三件此前没人回答
+      的事：①这次执行要求哪一档出口；②宿主给的环境变量是否**真的**兑现了那一档；
+      ③某个沙箱后端能不能兑现它。
+
+      底层的判据是「**沉默按最弱处理**」：后端不声明 Enforcer 就视为不限制，
+      而不是视为满足——否则一个从没实现过出口控制的后端会因为「没说不支持」而被
+      选中，声明与实际之间的落差没有信号。
+
+      **禁网档拒绝伪造**：ModeDenied 的 Env/Verify 直接报错而不是「尽力而为」。
+      假装禁网比明确拒绝更危险——报告会显示「已兑现」，而网络其实通着。
+
   - id: gatecheck
     roots: [gatecheck]
-    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/toolgate", "ext:github.com/oekit/pkg"]
+    requires: [egress, "ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/toolgate", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -262,12 +341,145 @@ modules:
       这个判定没有单点——落在各宿主手里必然漂移。本包只做**合成**，
       不重新实现任何一层（那会造成与上游并存的第二份真相）。
 
+  - id: taskboard
+    roots: [taskboard, taskboard/boardtest]
+    requires: ["ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      多 agent 协调面的**存储中立契约 + 一致性判据**（P1-4）。
+
+      dispatch 只回答「能不能派」。派出去之后的三件事——谁负责哪个子任务、
+      它依赖谁、怎么把认领还回去——此前没有任何机制面：各宿主自己拿一张表
+      兜着，于是「同一子任务被两个 agent 同时认领」这种错在报告里读起来
+      完全正常（两条分支都干完了活，各自都以为自己是负责人）。
+
+      本包**不给存储实现**：表结构、事务边界、持久化形态是宿主资产，给一份
+      参考实现宿主就会照着改它，最后两份真相并存（与 checkpoint.StoreCAS
+      同一条分工）。给的是三样：Board 接口、快照不变量判据（Check，纯函数）、
+      并发正确性判据（ConcurrentClaim，返回成功者数量而不是「测过没」）。
+
+      三条口径值得单说：① 认领必须**原子**由存储保证，本包只判结果；
+      ② 释放/完成**凭令牌不凭内容**（同名 agent 与「失败→释放→重试」都会让
+      内容比对认错人，这是 commitgate 踩过的坑）；③ **failed 不是终态**
+      （一次失败不能把子任务永久钉死，否则宿主的补救路径静默失效）。
+
+  - id: skilldisclose
+    roots: [skilldisclose]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      技能披露：确定性挑出该给模型看的那几个技能（P2 里唯一立刻可做的一项）。
+
+      与 tooldisclose 的分工不是「重复」：tooldisclose 的检索键是**工具调用需求**，
+      而技能的触发信号有三种且**强度不同**——点名 > 资源命中 > 描述相关。
+      混成一个分数会让「相关」压过「点名」，而那正是用户已经明确表达过的意图。
+
+      三条判据：点名权重必须高于任何相关度信号；同分按名字（不依赖 map 顺序）；
+      预算裁剪必须显式（静默截断会让宿主以为「就这几个相关」）。空结果必须
+      写明原因——「没有检查」与「检查通过」在调用方看起来一样。
+
+  - id: hookengine
+    roots: [hookengine]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      Hooks 的**判定面**：什么时候该跑、跑了算不算拒绝（P2 里最需要划边界的一项）。
+
+      Codex 是「外部进程协议 + 规则文件」，DSH 是「动态插件包」——形态**已经分叉**。
+      此时由内核定一种形态等于替宿主选边（把传输/加载焊进契约），故只定三件跨形态
+      恒定的事：匹配、裁决、顺序与收口。传输与加载归宿主（Runner 是唯一接缝）。
+
+      两条 fail-closed：阻塞 hook 执行失败 ⇒ deny（跑不起来不等于没问题）；
+      超时的裁决必须显式声明（缺省 deny），否则超时会被 ctx 取消掩盖成「这次没拒绝」。
+      非阻塞 hook 不参与裁决但失败必须留痕——它一旦能影响裁决，就只是「慢的阻塞 hook」。
+
+  - id: memorypipe
+    roots: [memorypipe]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      记忆注入的三段：**注入 / 引用 / 打标**（读写时机归宿主，与 budget 的 Summarizer
+      同一条边界——内核不替宿主决定「这次值不值得记住」）。
+
+      注入侧有三件事与策略无关、各宿主各写一遍又必然各判一套：① **来源是前提**
+      （没有来源的记忆与模型的猜测在文本上无法分辨 ⇒ 不注入、显式丢弃并说明）；
+      ② **逐条打标**（id/source/at 三样缺一就少一条追溯路径）；③ **裁剪显式**。
+
+      scope 精确匹配、**不做父级兜底**：按 project 查却回退到 global 看起来更友好，
+      代价是作用域失去意义——只该在某个项目里生效的记忆会在任何会话里生效，
+      而报告完全正常。
+
+  - id: delegate
+    roots: [delegate]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      异构委托的**契约面**：请求能不能交出去、交出去算不算完成（P2 里的协议面）。
+
+      ACP 一类的东西同时是**协议 + 传输**，线格式归上游；本包只定跨传输恒定的三条：
+      ① 能力必须**子集**（做不到就拒，不许「尽力而为」——尽力而为的结果无法判定
+      「没做到」与「本来就没要求」）；② **最小能力原则**选执行方（多个都能接时取能力
+      最少者；按顺序取第一个会让一次无关的配置重排换掉执行方）；③ 回执状态**三值**
+      （把「被拒绝执行」混进「执行失败」会让委托方去修一个不存在的 bug）。
+
+  - id: worktree
+    roots: [worktree]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      工作区隔离的**声明面与冲突判据**（不碰真实文件系统——本仓至今不碰 FS 语义）。
+
+      并行工作区会不会互相踩这件事此前没人判：两个 agent 各自「在自己的目录里工作」，
+      而可写区完全重叠时，任何一边的写入都会让另一边的结论失效，报告里却只有两份
+      「各自成功」。故本包判三件：声明自检（同一工作区不得既只读又可写）、
+      **可写区重叠即冲突**（只读重叠不算）、无命中即不可读写（fail-closed——
+      默认允许会让漏写的一行声明变成全域可写）。
+
+      **不支持通配**（写明的局限）：* 与 ** 的语义各实现不同，进契约就会出现
+      「按 A 的理解写、按 B 的理解判」。需要更强表达力时宿主自己展开成多条精确声明。
+
   - id: reminder
     roots: [reminder]
     requires: ["ext:github.com/oagentkit/guardx"]
     owner: harness
     managed: true
     notes: 系统注入提示的防伪包裹（source 声明 + 伪造标签转义）
+
+  - id: sessionref
+    roots: [sessionref]
+    requires: [reminder, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      跨会话引用快照：把「另一个会话的结论」以**有界、带来源、带失效点**的片段
+      注入当前上下文，并把「新鲜度」变成可机械判定的一维。
+
+      它补的是 budget / spill / offload 都不管的那一段：三者回答的都是「**同一份
+      上下文**里内容放不下怎么办」，而「引用另一个会话的结论」是另一件事——那份
+      内容不在当前上下文里，它的边界与保鲜度没有任何机制面管。不管的后果不是
+      「引用得不好」，是把**当时的**结论当成**现在的**结论用，而这类错误在报告里
+      读起来完全正常（那段话当时确实是真的）。
+
+      三条判据都走结构而非约定：① 裁剪上限在采集时给定，且裁剪了必须显式标出
+      （@Truncated@ + @OriginalBytes@，外加注入面的 @truncated=true@）——静默截断
+      会让模型以为看到的是全文；② @Source@ / @SourceVersion@ / @CapturedAt@ /
+      @ExpiresAt@ 随快照走，失效判定只需「现在几点 + 源现在第几版」；③ 渲染时
+      把 @state=fresh|expired|stale@ 写进包裹体。
+
+      版本这一维不可省：TTL 是**采集者猜的**，源是否前进是**事实**，长 TTL + 高频
+      源更新是最常见的失效形态，只靠时间会一路判有效。版本**回退**同样判 stale
+      （同一个 id 指向的已不是同一段历史）。两者同时成立时报 expired：时间已过是
+      宿主必须无条件重采的那条。
+
+      渲染**不拒绝、只标注**：拒不渲染会让「引用过期」变成「引用消失」，宿主无从
+      区分「本来就没引用」与「引用了但过期」。防伪不另写一套——走 @reminder.Wrap@
+      统一包裹（防伪实现只允许一份）。
 
   - id: drain
     roots: [drain]
@@ -436,6 +648,12 @@ rules:
     ignore_test: true   # 测试夹具由下一条规则单独体检
     scope_exclude: [cmd]
     forbid_regex: '(故障链|巡检流|故障诊断|告警|根因分析|运维|主机构建|本机|远程主机|集群健康|节点诊断|内存分析|IO\s*分析|网络分析|安全基线|变更管控|处置验证|审批单|工单)'
+    examples:
+      - text: 'var steps = 故障链判定()'
+        want: hit
+      - text: 'var buf bytes.Buffer'
+        want: miss
+
     # 说明：以上均为**运维领域中文词**。刻意不拦 host/cluster/pod 等通用技术词——
     # 它们在协议字段名（如 ImpactScopes 的 host 级）中合法出现，硬拦会误杀。
     # 判定范围只覆盖「词表/编排图」语境：真正的机制判定（如深度上限、allow 矩阵）
@@ -454,6 +672,14 @@ rules:
     only_test: true
     scope_exclude: [cmd]
     forbid_regex: '(故障链|巡检流|故障诊断|告警|根因分析|运维|本机|远程主机|集群健康|内存分析|IO\s*分析|网络分析|安全基线|变更管控|处置验证|工单)'
+    examples:
+      - text: 'name := "运维Agent"'
+        want: hit
+      # 断言「不得出现某词」的测试意图必须能写出那个词——negative_follow 的
+      # 豁免面在这里被样例钉住：锚点写错一个字，这条会从 miss 变 hit。
+      - text: 'if strings.Contains(out, "运维") {'
+        want: miss
+
     # 负向前置：**断言「不得出现某词」的用例**本身必须写出那个词，否则无法断言。
     # 这类命中是测试意图而非领域知识，用 negative_follow 结构化豁免（RE2 无后顾断言）。
     # 升 error 后此豁免更关键：protocol/generality_test.go:87 正是断言
@@ -484,6 +710,12 @@ rules:
     # （github.com/yi-nology/bianque），只写 `/` 会漏掉它——而那恰恰是最可能被
     # 直接引用的那个包。漏掉的形态是门禁变绿，不是变红。
     forbid_import_regex: 'git\.enjoye\.top/enjoydream/bianque(/|$)|github\.com/yi-nology/bianque(/|$)'
+    examples:
+      - text: 'github.com/yi-nology/bianque/internal/engine'
+        want: hit
+      - text: 'github.com/oekit/pkg/errors'
+        want: miss
+
 
   # 规则三：harness 包不得依赖宿主的运行时原语库。
   # 2026-10-18 起**不再允许门面 agentkit**（上游私有旧门面仓）：
@@ -498,6 +730,12 @@ rules:
     ignore_test: true
     scope_exclude: [cmd]
     forbid_import_regex: 'git\.enjoye\.top/enjoydream/(bianque|ekit|agentkit)(/|$)|github\.com/yi-nology/(bianque|ekit|agentkit)(/|$)'
+    examples:
+      - text: 'github.com/yi-nology/ekit/flow'
+        want: hit
+      - text: 'github.com/yi-nology/agent-harness/protocol'
+        want: miss
+
 
   # ── oekit 家规（矩阵一致性）──
   #
@@ -522,7 +760,21 @@ rules:
     # 旧写法只拦 `go func(`，漏了 `go someFunc()`——而后者的 panic 同样
     # **无法被外层 recover 捕获**（panic 发生在被调函数内部，裸 goroutine 没有
     # 任何 recover 边界），风险与前者完全相同。漏掉的形态是门禁变绿。
-    forbid_regex: '^\s*go\s+(func\(|[A-Za-z_]\w*\()'
+    # 第三种形态也拦得住：`go m.Start()` 这类**方法调用**。旧正则要求标识符后
+    # 紧跟 `(`，于是带点的调用链整体不命中——而它的 panic 同样无法被外层 recover。
+    # 这一处是 examples 自检上线当天抓出来的（正例 `\tgo worker.Start()` 判不中）：
+    # 判据比它自己的注释窄，而注释是散文、examples 才是断言。
+    forbid_regex: '^\s*go\s+(func\(|(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*\()'
+    examples:
+      - text: "\tgo func() {"
+        want: hit
+      # 第二种形态也必须判得中：裸 goroutine 的 panic 无法被外层 recover，
+      # 与是不是匿名函数无关（漏掉这一形态是旧实现的漏洞）。
+      - text: "\tgo worker.Start()"
+        want: hit
+      - text: "\tgoFunc := 1"
+        want: miss
+
 
   # 规则五：SDK 包不得把 printf 风格日志回调焊进公开 API。
   # 留痕一律走 logx.Delegating 懒解析——宿主用 logx.SetDefault 换后端，
@@ -540,6 +792,13 @@ rules:
     # 回调的常见写法。旧写法 `func\(string` 只认「首参无名的裸 string」，
     # 于是最常见的那种形态（带参数名的 format string）反而漏检。
     forbid_regex: '\b(logf|logFunc|logFn|logger)\s+func\(\s*(?:[A-Za-z_]\w*\s+)?string\b'
+    examples:
+      # 最常见的那种形态：首参**带参数名**的 format string。
+      - text: 'func New(logf func(format string, args ...any)) *X {'
+        want: hit
+      - text: 'func New(log func(string) error) *X {'
+        want: miss
+
 
   # 规则六：类型同一性红线——一个进程只允许一套 errors 包。
   # **2026-10-18 已清偿**：oekit/pkg ≥ v0.12.0 起 New/As/Is/Unwrap 与 stdlib 同型透传
@@ -563,6 +822,13 @@ rules:
     ignore_test: false
     scope_exclude: [cmd]
     forbid_import_regex: '^errors$|^github\.com/pkg/errors$'
+    examples:
+      - text: 'errors'
+        want: hit
+      # 同一套 errors 在 oekit 里是**允许**的那一套（路径不同即类型不同）。
+      - text: 'github.com/oekit/pkg/errors'
+        want: miss
+
 
   # 规则八（2026-10-21）：外部程序执行的入口必须唯一。
   #
@@ -592,6 +858,12 @@ rules:
     # 只是那个包从「sandbox 执行面」变成了「ptc 执行面」。
     scope_exclude: [cmd, ptc]
     forbid_import_regex: '^os/exec$'
+    examples:
+      - text: 'os/exec'
+        want: hit
+      - text: 'os'
+        want: miss
+
 
 # ── 门面包不可变 ──
 #
@@ -847,6 +1119,39 @@ execution_paths:
   # ptc.Run 一条，且它只在本仓的 ptc 包内部被调用（无限定符 ⇒ 不是绕过）。
   raw_entries: []
 
+# ── 子进程出口 ──
+#
+# 每个 **os/exec 启动点**都必须在这里登记它的出口档位。这是 P0-2 的后半：
+# egress 给了词表与判据（env 生成 / Verify / 后端能力问询），但词表不会自己跑到
+# 子进程上——子进程起来之后，它的出站流量完全在本进程 netguard 之外，
+# 「声明了受限出口」在那一侧**没有任何东西兑现**，而报告全绿，因为没有判据在问
+# 「这个 spawn 点在强制面内吗」。
+#
+# 判据四条（执行体见 archcheck/egresspaths.go）：
+#   1. **未登记的启动点即红**——方向是 fail-closed：「没登记」不等于「不要求出口」，
+#      而是「没人声明过它的出口是什么」。放成宽松侧的话，加一个 spawn 点就是一次
+#      静默扩大判定面：未登记的启动点越多，判定面越小。
+#   2. **mode: proxy 的必须在启动函数里看得见兑现证据**（Env / Verify 调用）。
+#      看不见就等于是靠 env 自我声明，那正是「声明了但没人执行」的形态。
+#   3. **mode: denied 直接红**——环境变量拦不住静态二进制、UDP 与原始 socket，
+#      写在登记里等于把「假装禁网」写进 policy。禁网只能由带能力声明的后端强制。
+#   4. **陈旧登记即红**——文件/函数不存在，或那个函数里没有启动调用。
+#      声明与事实偏离而无人红，是无声漂移（与「陈旧包根当天即红」同一把尺子）。
+egress_paths:
+  enabled: true
+  severity: error
+  desc: 每个子进程启动点都必须登记出口档位，且要求经代理的必须在 spawn 之前看得见 env 的生成/校验
+  entries:
+    - path: ptc/childpipes.go
+      fn: newChildPipes
+      mode: proxy
+      notes: |
+        ptc 子进程后端的唯一 spawn 点（re-exec 宿主自己的可执行文件）。登记成 proxy 是
+        **结构性事实而非本仓的策略选择**：本仓给这一层能施加影响的唯一时点就是 spawn
+        之前，故这里保证的是「只要宿主声明了代理，env 一定按声明生成，生成不出就不起
+        子进程」——SubprocessOptions.Egress 的零值（不限制）逐字返回原 env，旧调用点行为
+        不变。真正的强制（代理本体、deny 列表）归上游与宿主：本仓不造第二套网络栈。
+
 # ── 全局阈值 ──
 thresholds:
   max_file_lines: 400
@@ -887,7 +1192,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

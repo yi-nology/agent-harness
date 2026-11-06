@@ -53,7 +53,39 @@ type Rule struct {
 	// 粒度必须是**精确 import 路径**（不是正则前缀——后者等于放宽整棵树）。
 	// 未登记的包**仍然被拒** ⇒ 上游新增包不会静默放行。
 	ImportExempt []string `yaml:"import_exempt"`
+
+	// Examples 规则自带的样例：**加载期**就判「这条规则还活着吗」。
+	//
+	// 与 tests 的分工：测试证明「今天这条规则能判」，examples 证明「这次加载
+	// 这条规则确实判得动」——前者在 CI 里跑一次，后者在**每一次**门禁运行、
+	// 每一个复用本判据的宿主仓里跑。规则会随包名/命令名/词表漂移，而漂移
+	// 不会报错：它只是静静地不再命中，门禁继续绿着。
+	//
+	// 判据复用**真实判定路径**（同一份 matchSample），不是另写一套近似实现——
+	// 另写一套的话，样例过了也说明不了真判定能过。
+	Examples []RuleExample `yaml:"examples"`
 }
+
+// RuleExample 一条规则的样例。
+//
+// Text 的**判据面**随规则类型而定，与真实判定同构：
+//   - forbid_regex 规则：Text 是一行源码；
+//   - forbid_import_regex 规则：Text 是一条 import 路径（不含引号）。
+//
+// Want 只接受 hit / miss 两个值。**拼写错误必须报错**：把 want 写成 hitt 时
+// 若按「非 hit 即 miss」处理，一条判据彻底坏掉的规则会因为「反例都通过」而绿。
+type RuleExample struct {
+	// Text 样例（源码行或 import 路径）。
+	Text string `yaml:"text"`
+	// Want 期望：hit = 必须被判违规；miss = 必须不被判违规。
+	Want string `yaml:"want"`
+}
+
+// 样例期望的取值域。
+const (
+	exampleWantHit  = "hit"
+	exampleWantMiss = "miss"
+)
 
 // Threshold 是结构债阈值：超长文件与 god object 的机械判据。
 type Threshold struct {
@@ -276,6 +308,19 @@ type Policy struct {
 	// 不是「登记了才管」。没登记的裸入口不会被这条门禁抓到（判据面有限，
 	// 见 execution.go 的「判不了什么」），但默认开着总比默认关着好。
 	ExecutionPaths *ExecutionPaths `yaml:"execution_paths"`
+
+	// EgressPaths 是子进程出口门禁的声明面（逐个启动点登记出口档位）。
+	//
+	// 段缺省即启用：「子进程在不在出口强制面内」这个问题必须有人问，
+	// 而不是「宿主登记了才问」——不登记就没人问，正是这条门禁要防的静默失效。
+	EgressPaths *EgressPaths `yaml:"egress_paths"`
+
+	// RequireRuleExamples 要求每条**有执行体**的规则都自带 examples。
+	//
+	// 默认 false：宿主仓不必为了升级判据而先给全部规则补样例（那会让一次
+	// 依赖升级变成一次策略改写）。本仓自己开 true——口径是「本仓的每条规则
+	// 都必须能被加载期验活」，而这条口径若只写在注释里就是散文，不是门禁。
+	RequireRuleExamples bool `yaml:"require_rule_examples"`
 
 	// Path 记录 policy 文件路径。自校验违规要指向它，而宿主仓的 policy
 	// 不一定叫 architecture-policy.yaml——写死文件名等于让复用方永远看到

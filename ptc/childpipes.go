@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+
+	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/agent-harness/egress"
 )
 
 // 本文件是「怎么把父子之间的管道接起来」——与 subprocess.go 里的
@@ -38,7 +42,15 @@ type childPipes struct {
 // newChildPipes 建立四条管道并把子进程那一侧配好（**不启动**）。
 //
 // 启动与「放进 cgroup」在调用方做——因为它们需要与失败路径的收尾放在一起。
-func newChildPipes(exe string) (*childPipes, error) {
+//
+// # 出口声明在这里兑现，而不在别处
+//
+// 子进程一旦起来，它内部的出站流量就**完全在本进程的 netguard 之外**——
+// 「声明了受限出口」在那一侧没有任何东西兑现。本仓能给的最强保证是：
+// **在 spawn 之前**把出口档位的环境一次生成出来，生成不出就**不起子进程**。
+//
+// spec 的零值（不限制）逐字返回 base，故旧调用点行为不变。
+func newChildPipes(exe string, spec egress.Spec) (*childPipes, error) {
 	p := &childPipes{}
 
 	// 四条单向管道：启动读/启动写/调用请求写/调用响应读（子进程侧视角）。
@@ -70,11 +82,21 @@ func newChildPipes(exe string) (*childPipes, error) {
 	// 无界缓冲会把父进程内存也吃进去，那正是这个后端要防的形态。
 	p.stderrTail = &tailBuffer{limit: childStderrLimit}
 	child.Stderr = p.stderrTail
-	child.Env = append(os.Environ(),
+	// 出口档位的 env **必须**经过 egress 生成：直接 append 会跳过
+	// 「代理变量覆盖旧值」「NO_PROXY 排序确定性」两条口径，而 egress 的
+	// 判据（Spec.Verify）正是拿这份 env 去对照声明的。
+	// 生成失败 ⇒ **不起子进程**（fail closed）：假装受限比明确拒绝更危险。
+	base := append(os.Environ(),
 		childModeEnv+"=1",
 		childCallReqFDEnv+"=3",
 		childCallRespFDEnv+"=4",
 	)
+	childEnv, err := spec.Env(base)
+	if err != nil {
+		p.closeAll()
+		return nil, errors.Wrap(err, "ptc: 子进程出口声明兑现不了")
+	}
+	child.Env = childEnv
 	p.child = child
 	return p, nil
 }

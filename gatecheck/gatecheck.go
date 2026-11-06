@@ -65,6 +65,8 @@ import (
 
 	"github.com/oagentkit/guardx/sandbox"
 	"github.com/oagentkit/toolgate/policy"
+
+	"github.com/yi-nology/agent-harness/egress"
 )
 
 // Outcome 联合判定的结论。
@@ -86,6 +88,12 @@ const (
 	// 它**独立**于前面的几态：不是「不该执行」而是「执行了但没成」——
 	// 宿主的处置是「看错误决定要不要重试」，与「需人审」完全不同。
 	OutcomeExecutionFailed
+	// OutcomeEgressShort 出口策略兑现不了（后端没声明能力 / 能力不够）。
+	//
+	// 与 OutcomeLevelShort 分开列：两者对宿主的处置不同——
+	// 档位不足该「换更强的后端」，出口兑现不了该「换到能强制出口的后端，
+	// 或把要求降下来」，混在一起会让宿主在两个错的动作里二选一。
+	OutcomeEgressShort
 )
 
 func (o Outcome) String() string {
@@ -102,6 +110,8 @@ func (o Outcome) String() string {
 		return "plan_only"
 	case OutcomeExecutionFailed:
 		return "execution_failed"
+	case OutcomeEgressShort:
+		return "egress_short"
 	default:
 		return "unknown"
 	}
@@ -135,6 +145,12 @@ type Request struct {
 	//
 	// 零值表示不要求任何预算上限。
 	Budget sandbox.Budget
+	// Egress 出口策略要求（零值 = 不要求）。
+	//
+	// 这一维**不能省**：netguard 只覆盖本进程内走它的 HTTP 出站，
+	// 子进程与宿主自起的命令行工具都在它之外。要求了出口策略而这里不判，
+	// 就成了「策略写得很严、实际流量自由出网」。
+	Egress egress.Spec
 	// Program 要执行的程序体（语义由后端定，见 sandbox.Provider）。
 	//
 	// 只有 ExecuteAndRun 用它；纯判定（Check）不看它。
@@ -189,15 +205,28 @@ func Check(ctx context.Context, gate *policy.Gate, registry *sandbox.Registry, r
 		return d
 	}
 
-	// ② 沙箱层：只有审批放行了才轮到它。
-	if req.MinLevel == sandbox.LevelNone {
-		// 不要求隔离强度 ⇒ 沙箱层不构成约束，放行。
+	// ② 出口策略声明自检：配置写错即拒绝（不静默降级）。
+	if err := req.Egress.Validate(); err != nil {
+		d.Outcome = OutcomeEgressShort
+		d.Reason = "出口策略声明不可兑现：" + err.Error()
+		return d
+	}
+	needEgress := req.Egress.Mode != egress.ModeUnrestricted
+
+	// ③ 沙箱层：只有审批放行了才轮到它。
+	if req.MinLevel == sandbox.LevelNone && !needEgress {
+		// 既不要隔离强度、也不要出口策略 ⇒ 沙箱层不构成约束，放行。
 		d.Outcome = OutcomeProceed
-		d.Reason = "审批放行，且未要求隔离强度"
+		d.Reason = "审批放行，且未要求隔离强度与出口策略"
 		return d
 	}
 	if registry == nil {
-		// 要求了隔离强度却没有登记簿 ⇒ 兑现不了 ⇒ 拒绝（fail-closed）。
+		// 要求了却兑现不了 ⇒ 拒绝（fail-closed）。
+		if req.MinLevel == sandbox.LevelNone {
+			d.Outcome = OutcomeEgressShort
+			d.Reason = fmt.Sprintf("要求出口策略 %s，但没有可用的执行后端（没有后端就没有兑现者）", req.Egress.Mode)
+			return d
+		}
 		d.Outcome = OutcomeLevelShort
 		d.Reason = fmt.Sprintf("要求隔离档位 %s，但没有可用的执行后端登记簿", req.MinLevel)
 		return d
@@ -208,9 +237,17 @@ func Check(ctx context.Context, gate *policy.Gate, registry *sandbox.Registry, r
 		d.Reason = fmt.Sprintf("选不到满足档位 %s 的执行后端：%v", req.MinLevel, err)
 		return d
 	}
+	// ④ 出口策略的兑现判据：后端必须**声明**能力，沉默按最弱处理。
+	if needEgress {
+		if eerr := req.Egress.SatisfiedBy(provider); eerr != nil {
+			d.Outcome = OutcomeEgressShort
+			d.Reason = "出口策略兑现不了：" + eerr.Error()
+			return d
+		}
+	}
 	d.Outcome = OutcomeProceed
 	d.Provider = provider
-	d.Reason = "两层都同意"
+	d.Reason = "三层都同意（审批 × 档位 × 出口）"
 	return d
 }
 

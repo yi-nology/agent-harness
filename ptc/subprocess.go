@@ -45,6 +45,8 @@ import (
 	"github.com/oagentkit/guardx/wire"
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/agent-harness/egress"
 )
 
 // SubprocessProviderID 子进程后端的标识（登记在 policy 的 sandbox_providers 段）。
@@ -68,6 +70,12 @@ type SubprocessOptions struct {
 	MaxMemory int64
 	// Discover 可选：程序内工具发现入口。
 	Discover Discoverer
+	// Egress 子进程的出口要求（零值 = 不限制，行为与旧版逐字一致）。
+	//
+	// 为什么这个字段必须在**配置**上而不是靠子进程自己读环境：子进程起来之后
+	// 它的出站流量完全在本进程 netguard 之外，父侧唯一能施加影响的时点就是
+	// spawn 之前。装配（谁决定这一档）归宿主；兑现与判据归 egress。
+	Egress egress.Spec
 	// ExePath 子进程可执行文件路径。空 = 用宿主自己的可执行文件（re-exec）。
 	//
 	// **re-exec 宿主自己的二进制**是默认：随包发小二进制要宿主额外安装，
@@ -153,7 +161,7 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 	lim := normalizeLimits(p.opts.Timeout, p.opts.MaxCalls, p.opts.MaxBytes)
 
 	// 管道与子进程：见 childpipes.go（建立四条管道 + 装好子进程的那一侧）。
-	pipes, err := newChildPipes(exe)
+	pipes, err := newChildPipes(exe, p.opts.Egress)
 	if err != nil {
 		return wire.Result{}, err
 	}
