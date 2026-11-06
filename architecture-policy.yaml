@@ -62,14 +62,14 @@ modules:
 
   - id: pii
     roots: [pii]
-    requires: ["ext:github.com/oekit/pkg"]
+    requires: [subhub, "ext:github.com/oekit/pkg"] # 策略变更订阅表复用 subhub（快照式订阅的单一实现）
     owner: harness
     managed: true
     notes: 个人信息价值面脱敏（正则），与宿主日志脱敏面互补
 
   - id: netguard
     roots: [netguard]
-    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
+    requires: [subhub, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"] # 策略变更订阅表复用 subhub（快照式订阅的单一实现）
     owner: harness
     managed: true
     notes: 出站 URL 守卫（SSRF），纯 stdlib 叶子层
@@ -290,7 +290,7 @@ modules:
 
   - id: guardset
     roots: [guardset]
-    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
+    requires: [subhub, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"] # 换份订阅表复用 subhub（快照式订阅的单一实现）
     owner: harness
     managed: true
     notes: |
@@ -371,6 +371,34 @@ modules:
       requires 为空：只依赖 stdlib 与 yaml.v3，不依赖本仓任何机制包——
       门禁必须是**最底层**的东西，否则「用它判别人」就变成「它自己也在被判定」，
       门禁的红绿会依赖它所判的代码。
+
+  # 2026-11-05 新增：快照式订阅表的**单一实现**（本仓内部件，不进公开 API）。
+  #
+  # 此前本仓有三份近乎逐字相同的实现：netguard/subscribe.go、pii/subscribe.go、
+  # guardset/assembly_subscribe.go。三份包头各自写着「与 netguard 的 notifyPolicy
+  # 同款」——**交叉引用本身就是重复的自白**。代价不在多写百来行，而在这是一段
+  # **并发正确性代码**（copy-on-write 发布、句柄单调、通知在锁外、回调 panic 隔离）：
+  # 只要有一份先被修，另外两份不会跟着改，同一个不变量于是在三个包里有三种成色，
+  # 而失效形态是**偶发漏通知 / 偶发误留订阅**——不红不报，只在长跑进程里慢慢显形。
+  #
+  # 为什么放 internal/ 而不是顶层包：它不是公开 API，是三个包共用的**实现细节**。
+  # 顶层包意味着对外承诺（README 包表要给行数、依赖列，且被 docsync 反向收录判定），
+  # 而它一旦被宿主直接 import，三个使用方就再也不能自由改它的签名。
+  #
+  # 判据仍是可判定的（不靠自觉）：requires 为空即纯 stdlib，任何人给它加依赖都会
+  # 在此门禁红——这条边就是「零依赖的机制件」这个承诺本身。
+  - id: subhub
+    roots: [internal/subhub]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      快照式订阅表的单一实现：atomic.Pointer 整体替换（读侧无锁、永不看到半张名单）、
+      Registry.Add/Remove/Notify/Len、由本包铸造的单调句柄（0 = 无效）、
+      回调 panic 隔离（Invoke / Do）。
+      **零依赖、零公开 API**：语义判定（fn 为 nil 报哪个错、哨兵叫什么）刻意留在
+      三个使用方——共用哨兵会让 `errors.Is(err, netguard.ErrNilSubscriber)` 这类
+      既有调用点的判定链断掉。
 
 # ── 可执行规则 ──
 rules:
@@ -819,7 +847,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, gatecheck, trajectory, ticket, archcheck, cmd]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

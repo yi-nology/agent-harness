@@ -81,6 +81,8 @@ package guardset
 import (
 	"context"
 	"sync/atomic"
+
+	"github.com/yi-nology/agent-harness/internal/subhub"
 )
 
 // assemblyState 装配面发布出去的当前状态：一份集合 + 它的代次。
@@ -146,13 +148,11 @@ type SwapRecord struct {
 type SwapGate func(ctx context.Context, next *Set) error
 
 // Subscription 订阅句柄，传给 `Unsubscribe` 注销。0 表示无效。
+//
+// 它是**本包自己的命名类型**（底层 uint64），不是 subhub.Handle 的别名：
+// 别名会让 guardset.Subscription 与 netguard.Subscription 变成同一个类型，
+// 把别处的句柄传进本包 Unsubscribe 将编译通过然后静默什么都不注销。
 type Subscription uint64
-
-// subscriber 一个订阅者：句柄 + 回调。
-type subscriber struct {
-	handle Subscription
-	fn     func(SwapRecord)
-}
 
 // AssemblyOption 装配面的可选装配件。
 type AssemblyOption func(*assemblyConfig)
@@ -194,20 +194,20 @@ func WithSwapRecorder(f func(SwapRecord)) AssemblyOption {
 // # 并发
 //
 // 判定路径**不加锁**（读一个 atomic.Pointer）；换份走 CAS 循环。
-// 订阅表用 `atomic.Pointer` 整体替换（copy-on-write）：通知时取一次快照、
-// 在锁外遍历它——读侧永远看不到改了一半的名单。
+// 订阅表是 internal/subhub 的 `Registry`（copy-on-write 整体替换）：通知时取一次
+// 快照、在锁外遍历它——读侧永远看不到改了一半的名单。
 type Assembly struct {
 	current atomic.Pointer[assemblyState]
 
 	gate     SwapGate
 	recorder func(SwapRecord)
 
-	// subs 订阅表。整体替换（copy-on-write），与 netguard 同款。
-	subs atomic.Pointer[[]subscriber]
-
-	// subSeq 订阅句柄的分配器。它**不是**状态投影（不回答「换过没有」），
-	// 只是句柄 ID 的来源，故与代次无关。
-	subSeq atomic.Uint64
+	// subs 换份订阅表。机制（快照式替换 + 句柄铸造 + 锁外通知 + panic 隔离）
+	// 在 internal/subhub，与 netguard、pii 共用同一份实现。零值可用。
+	//
+	// 句柄分配器（原 subSeq）也一并收进 Registry：它**不是**状态投影
+	// （不回答「换过没有」），只是句柄 ID 的来源，故与代次无关。
+	subs subhub.Registry[SwapRecord]
 }
 
 // NewAssembly 构造装配面，初始装入 s。

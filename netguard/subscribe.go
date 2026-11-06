@@ -14,34 +14,43 @@
 // 订阅把这件事一次做完：变更发生的**那一刻**由写侧直接把新快照推到订阅者手上，
 // 收到即所见，不靠事后比对推断。
 //
-// # 为什么订阅表是快照式替换，而不是一把读写锁
+// # 订阅表的机制不在本文件
 //
-// 通知必须在**锁外**调用订阅者。订阅者要做 I/O（重算派生视图、写审计、打日志），
-// 在锁内调用等于把策略面锁死；订阅者回调里再调 SetPolicy 则会自锁死锁。
+// 「快照式替换的订阅表 + 铸造句柄 + 锁外通知 + 回调 panic 隔离」这套机制在
+// internal/subhub，与 pii、guardset 共用**同一份实现**。
 //
-// 读写锁解决不了这件事——它只能让「取名单」不阻塞，「遍历名单并逐个调用」仍然
-// 落在读锁里。故订阅表用 atomic.Pointer 整体替换：写侧复制出新切片再换回去
-// （读侧无锁，也永远看不到改了一半的名单），通知时取一次快照、在锁外遍历这个快照。
-// 快照一经发布便不再被改写，故遍历期间的并发增删不会把名单撕裂。
+// 它此前在本仓有三份近乎逐字相同的副本，每份的包头都写着「与 netguard 的
+// notifyPolicy 同款」——**交叉引用本身就是重复的自白**。代价不在多写百来行，
+// 而在这是一段并发正确性代码（copy-on-write 发布、句柄单调、通知在锁外、
+// 回调 panic 隔离）：只要有一份先被修，另外两份不会跟着改，同一个不变量于是
+// 在三个包里有三种成色，而失效形态是**偶发漏通知 / 偶发误留订阅**——不红不报，
+// 只在长跑进程里慢慢显形。
 //
-// 这与本包「不可撕裂读」是同一条纪律，只是作用对象从策略换成了订阅名单：
-// 通知遍历看到的必须是某一时点的完整名单，不能是半张。
+// 本文件因此只剩两件事：**本包的语境**（下面两条纪律）与**语义判定**
+// （fn 为 nil 怎么报、报什么）。
 //
 // # 为什么订阅者 panic 不得影响策略面
 //
 // 一次成功的交换**已经落地**，此时让某个订阅者抛异常就把整次变更说成「交换失败」，
 // 等于把已经发生的事实改写成没发生——而这恰恰是本文件要消灭的那类失效。故逐个
-// recover，让其余订阅者继续收到通知。
+// recover，让其余订阅者继续收到通知（实现见 subhub.Invoke）。
 //
 // 另一条同源的纪律：订阅者回调里再调 SetPolicy 是**允许**的（无锁，不会自锁），
 // 但那会再触发一轮通知，递归深度由订阅者自己收敛，本包不做环检测。
+//
+// # 为什么句柄是本包自己的类型而不是 subhub.Handle 的别名
+//
+// 别名会让 netguard.Subscription 与 pii.Subscription 变成**同一个类型**：把 pii
+// 的句柄传给 Unsubscribe 将编译通过，然后静默什么也不注销。句柄各自定义成独立
+// 命名类型（底层仍是 uint64），跨包误用仍是编译错误——这正是句柄存在的意义
+// （「这次注销是不是我登记的那一次」），别名把它抹掉了。转换只发生在调用 subhub 处。
 
 package netguard
 
 import (
-	"sync/atomic"
-
 	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/agent-harness/internal/subhub"
 )
 
 // Subscription 订阅句柄，传给 Unsubscribe 注销。0 表示无效。
@@ -51,20 +60,13 @@ type Subscription uint64
 //
 // 登记一个必然 panic 的订阅者毫无意义，故直接报错并返回零句柄：调用方能**凭返回值**
 // 知道订阅没生效，而不是等到第一次变更时才发现「原来一直没跟上」。
+//
+// 判在**本包**而不是 subhub：三个使用方各有自己的哨兵与语境文案，共用一个会让
+// `errors.Is(err, netguard.ErrNilSubscriber)` 这类既有调用点判定链断掉。
 var ErrNilSubscriber = errors.New("扩展策略订阅回调为空")
 
-// subscriber 一个订阅者：句柄 + 回调。
-type subscriber struct {
-	handle Subscription
-	fn     func(*Policy)
-}
-
-// subs 当前订阅表。**只整体替换，永不原地改**——读侧一次 Load 拿到的就是某一时点
-// 的完整名单，遍历它不会被并发增删撕裂。
-var subs atomic.Pointer[[]subscriber]
-
-// subSeq 句柄发号器。单调递增，0 留给「无效句柄」。
-var subSeq atomic.Uint64
+// subs 策略变更订阅表。零值可用（subhub.Registry 的零值就是「空表 + 0 号已占用」）。
+var subs subhub.Registry[*Policy]
 
 // Subscribe 登记一个策略变更订阅者，返回句柄与是否成功。
 //
@@ -82,9 +84,8 @@ func Subscribe(fn func(*Policy)) (Subscription, error) {
 	if fn == nil {
 		return 0, ErrNilSubscriber
 	}
-	h := Subscription(subSeq.Add(1))
-	addSubscriber(subscriber{handle: h, fn: fn})
-	callSubscriber(fn, CurrentPolicy())
+	h := Subscription(subs.Add(fn))
+	subhub.Invoke(fn, CurrentPolicy())
 	return h, nil
 }
 
@@ -93,32 +94,7 @@ func Subscribe(fn func(*Policy)) (Subscription, error) {
 // 有了它，订阅者才能在长生命周期场景下解绑：否则回调闭包连同它捕获的一切
 // （宿主对象、配置缓存）会被订阅表永久留住，而这条泄漏不会自己显形。
 func Unsubscribe(h Subscription) {
-	if h == 0 {
-		return
-	}
-	for {
-		cur := subs.Load()
-		if cur == nil {
-			return
-		}
-		old := *cur
-		idx := -1
-		for i, s := range old {
-			if s.handle == h {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			return
-		}
-		next := make([]subscriber, 0, len(old)-1)
-		next = append(next, old[:idx]...)
-		next = append(next, old[idx+1:]...)
-		if subs.CompareAndSwap(cur, &next) {
-			return
-		}
-	}
+	subs.Remove(subhub.Handle(h))
 }
 
 // notifyPolicy 把新快照推给全部订阅者。**由写侧在交换落地之后、锁外调用。**
@@ -126,34 +102,5 @@ func Unsubscribe(h Subscription) {
 // 遍历的是一次快照：并发增删订阅者不会让本次通知看到半张名单，且同一次变更对每个
 // 订阅者送出的都是**同一份**策略——与「不可撕裂读」同源。
 func notifyPolicy(p *Policy) {
-	cur := subs.Load()
-	if cur == nil {
-		return
-	}
-	for _, s := range *cur {
-		callSubscriber(s.fn, p)
-	}
-}
-
-// addSubscriber 以整体替换的方式加一个订阅者，CAS 失败则重试。
-func addSubscriber(s subscriber) {
-	for {
-		cur := subs.Load()
-		var old []subscriber
-		if cur != nil {
-			old = *cur
-		}
-		next := make([]subscriber, 0, len(old)+1)
-		next = append(next, old...)
-		next = append(next, s)
-		if subs.CompareAndSwap(cur, &next) {
-			return
-		}
-	}
-}
-
-// callSubscriber 调用一个订阅者并吞掉它的 panic。
-func callSubscriber(fn func(*Policy), p *Policy) {
-	defer func() { _ = recover() }()
-	fn(p)
+	subs.Notify(p)
 }
