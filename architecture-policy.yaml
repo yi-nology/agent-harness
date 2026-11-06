@@ -1137,6 +1137,12 @@ execution_paths:
 #      写在登记里等于把「假装禁网」写进 policy。禁网只能由带能力声明的后端强制。
 #   4. **陈旧登记即红**——文件/函数不存在，或那个函数里没有启动调用。
 #      声明与事实偏离而无人红，是无声漂移（与「陈旧包根当天即红」同一把尺子）。
+#   5. **判定面覆盖的形态**（收集器在 archcheck/spawnsites.go）：限定符调用（**别名**同样命中，
+#      按 import 路径解析不按名字猜）、**点导入**（`import . "os/exec"`，调用没有限定符）、
+#      **包级初始化**（`var cmd = exec.Command(...)`，不在任何函数里）。入口表按 import 路径归，
+#      除 os/exec 还含 os.StartProcess 与 syscall.Exec/ForkExec/StartProcess——它们同样绕开
+#      出口强制面，也各自接受 Env。这三类形态都是 2026-11-06 注入实测出的漏判：换一种写法
+#      就能让门禁一声不响地全绿，而「换写法」不是恶意的，是重构的自然产物。
 egress_paths:
   enabled: true
   severity: error

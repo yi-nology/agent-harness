@@ -30,6 +30,14 @@
 // （改一行注释就漂）。文件 + 函数是**改动的最小稳定单元**：函数搬走或改名，
 // 登记就该跟着改，改漏了第 4 条会红。
 //
+// # 判定面包含哪些启动形态
+//
+// 收集器在 spawnsites.go，覆盖三种形态（每一种都实测过漏判）：限定符调用（含别名）、
+// 点导入（无限定符）、**包级初始化**（var cmd = exec.Command(...)，不在任何函数里）。
+// 入口表按 import 路径归：除 os/exec 还含 os.StartProcess 与
+// syscall.Exec/ForkExec/StartProcess——它们同样绕开出口强制面，也各自接受 Env，
+// 故「登记 + 兑现证据」这套判据对它们逐字适用。
+//
 // # 判不了什么（写明，而不是假装覆盖）
 //
 //   - 判不了「env 真的被子进程遵守」：环境变量只是建议，这是 egress 包
@@ -53,23 +61,11 @@ import (
 // egressPathRuleID 子进程出口门禁的规则 ID。
 const egressPathRuleID = "harness-subprocess-egress"
 
-// spawnFuncs 被认定为「启动子进程」的 os/exec 函数名。
-var spawnFuncs = map[string]bool{"Command": true, "CommandContext": true}
-
 // defaultPlumbing 缺省的「兑现证据」函数名（egress.Spec 上的方法）。
 var defaultPlumbing = []string{"Env", "Verify"}
 
 // egressModeWords 出口档位词表（与 egress 包三档同义，不另立口径）。
 var egressModeWords = map[string]bool{"unrestricted": true, "proxy": true, "denied": true}
-
-// spawnSite 一个子进程启动点（一个 os/exec 的限定符调用）。
-type spawnSite struct {
-	path    string            // 相对仓根的文件路径
-	fn      string            // 含该调用的函数名（空 = 函数外，如包级变量初始化）
-	line    int               // 行号（报告用）
-	body    *ast.BlockStmt    // 函数体（判兑现证据用；nil = 函数外）
-	imports map[string]string // 该文件的「包名/别名 → import 路径」
-}
 
 // egressPathsDesc 取本门禁的说明，policy 未写时用兜底文案。
 func egressPathsDesc(cfg EgressPaths) string {
@@ -286,79 +282,4 @@ func containsString(xs []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// collectSpawnSites 扫生产代码里的子进程启动点。
-func collectSpawnSites(root string, ignore map[string]bool) ([]spawnSite, error) {
-	fset := token.NewFileSet()
-	var out []spawnSite
-	for _, dir := range packageDirs(root, ignore) {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return nil, err
-		}
-		for _, de := range entries {
-			name := de.Name()
-			if de.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-				continue
-			}
-			if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
-				continue
-			}
-			full := filepath.Join(dir, name)
-			f, perr := parser.ParseFile(fset, full, nil, parser.SkipObjectResolution)
-			if perr != nil {
-				return nil, fmt.Errorf("解析 %s 失败（门禁给不出结论，不得静默跳过）: %w", full, perr)
-			}
-			imports := importPathByName(f)
-			rel := relTo(root, full)
-			out = append(out, fileSpawnSites(fset, f, imports, rel)...)
-		}
-	}
-	return out, nil
-}
-
-// qualifiedCallsIn 取任意 AST 节点内的限定符调用（qualifiedCalls 只吃 *ast.File，
-// 这里要按**函数体**取——判断「这个函数里有没有 spawn / 有没有兑现」必须按函数）。
-func qualifiedCallsIn(fset *token.FileSet, node ast.Node) []qualifiedCall {
-	var out []qualifiedCall
-	ast.Inspect(node, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		ident, ok := sel.X.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		out = append(out, qualifiedCall{qualifier: ident.Name, sel: sel.Sel.Name, line: fset.Position(call.Pos()).Line})
-		return true
-	})
-	return out
-}
-
-// fileSpawnSites 取一个文件里的启动点（按函数体分别取）。
-func fileSpawnSites(fset *token.FileSet, f *ast.File, imports map[string]string, rel string) []spawnSite {
-	var out []spawnSite
-	for _, d := range f.Decls {
-		fd, ok := d.(*ast.FuncDecl)
-		if !ok || fd.Body == nil {
-			continue
-		}
-		for _, call := range qualifiedCallsIn(fset, fd.Body) {
-			imp, isImport := imports[call.qualifier]
-			if !isImport || imp != "os/exec" || !spawnFuncs[call.sel] {
-				continue
-			}
-			out = append(out, spawnSite{
-				path: rel, fn: fd.Name.Name, line: call.line,
-				body: fd.Body, imports: imports,
-			})
-		}
-	}
-	return out
 }

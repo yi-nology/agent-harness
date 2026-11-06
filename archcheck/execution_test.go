@@ -237,3 +237,47 @@ func TestExecutionPathRuleIsRegisteredForReport(t *testing.T) {
 		t.Fatalf("执行路径规则必须登记进 res.Rules（否则违规判了但不回显），实得 %+v", res.Rules)
 	}
 }
+
+// ptcWithHelperPkg 合成一个「有裸入口 Run，也有普通函数 Helper」的包。
+const ptcWithHelperPkg = "package ptc\n\nfunc Run(program string) string { return program }\n\n" +
+	"func Helper(program string) string { return program }\n"
+
+// TestExecutionPathCatchesDotImport 钉住：**点导入绕不过去**。
+//
+// import . "…/ptc" 之后 Run(...) 没有限定符。按限定符扫的判据整片失明，
+// 而它与「同包调用」形状相同、性质相反：同包调用是本包自己的实现，
+// 点导入是别人的包被搬进了本文件作用域。
+func TestExecutionPathCatchesDotImport(t *testing.T) {
+	root := t.TempDir()
+	execFixture(t, root, map[string]string{
+		"ptc/ptc.go": ptcWithHelperPkg,
+		"app/app.go": "package app\n\nimport . \"github.com/yi-nology/agent-harness/ptc\"\n\n" +
+			"func Use() string { return Run(\"prog\") }\n",
+	})
+	vs, err := executionPathViolations(root, ExecutionPaths{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsText(vs, "裸执行入口") {
+		t.Fatalf("点导入的裸执行入口必须被报出，实得 %v", textsOf(vs))
+	}
+}
+
+// TestExecutionPathDotImportOtherSymbolIsFine 配对：点导入的是**别的符号**不报。
+//
+// 没有这条，上面那条可能与「凡点导入一律红」的退化实现同时成立。
+func TestExecutionPathDotImportOtherSymbolIsFine(t *testing.T) {
+	root := t.TempDir()
+	execFixture(t, root, map[string]string{
+		"ptc/ptc.go": ptcWithHelperPkg,
+		"app/app.go": "package app\n\nimport . \"github.com/yi-nology/agent-harness/ptc\"\n\n" +
+			"func Use() string { return Helper(\"prog\") }\n",
+	})
+	vs, err := executionPathViolations(root, ExecutionPaths{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 0 {
+		t.Fatalf("点导入非裸入口符号不该报，实得 %v", textsOf(vs))
+	}
+}

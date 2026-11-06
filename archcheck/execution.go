@@ -138,6 +138,7 @@ func executionPathViolations(root string, cfg ExecutionPaths) ([]Violation, erro
 				return nil, fmt.Errorf("解析 %s 失败（门禁给不出结论，不得静默跳过）: %w", path, perr)
 			}
 			imports := importPathByName(f)
+			dots := dotImportPaths(f)
 			for _, call := range qualifiedCalls(fset, f) {
 				imp, ok := imports[call.qualifier]
 				if !ok {
@@ -147,19 +148,37 @@ func executionPathViolations(root string, cfg ExecutionPaths) ([]Violation, erro
 					if !executionEntryMatches(e, imp, call.qualifier, call.sel) {
 						continue
 					}
-					out = append(out, Violation{
-						Rule: executionPathRuleID, Path: relTo(root, path), Line: call.line,
-						Kind: "execution_bypasses_registry",
-						Text: fmt.Sprintf("直接调用裸执行入口 %s.%s：它不经 sandbox 登记簿，"+
-							"档位下限、预算可兑现性与审批门三层全部被跳过——"+
-							"请改走 sandbox.Execute(ctx, reg, 要求的档位, req)",
-							imp, call.sel),
-					})
+					out = append(out, executionBypassViolation(relTo(root, path), call.line, imp, call.sel))
+				}
+			}
+			// 点导入形态：import . "…/ptc" 之后 Run(...) 没有限定符，上面那圈按
+			// 限定符扫，对它整片失明——而它既不是本包实现，也不是普通方法调用。
+			for _, call := range unqualifiedCallsIn(fset, f) {
+				for dotPath := range dots {
+					for _, e := range raw {
+						if !executionEntryMatches(e, dotPath, pathLastSegment(dotPath), call.sel) {
+							continue
+						}
+						out = append(out, executionBypassViolation(relTo(root, path), call.line, dotPath, call.sel))
+					}
 				}
 			}
 		}
 	}
 	return out, nil
+}
+
+// executionBypassViolation 造一条「绕开登记簿」的违规。
+//
+// 两种调用形态（限定符 / 点导入）共用一份文案：说同一个事实，就不该有两份措辞。
+func executionBypassViolation(path string, line int, imp, symbol string) Violation {
+	return Violation{
+		Rule: executionPathRuleID, Path: path, Line: line,
+		Kind: "execution_bypasses_registry",
+		Text: fmt.Sprintf("直接调用裸执行入口 %s.%s：它不经 sandbox 登记簿，"+
+			"档位下限、预算可兑现性与审批门三层全部被跳过——"+
+			"请改走 sandbox.Execute(ctx, reg, 要求的档位, req)", imp, symbol),
+	}
 }
 
 // executionEntryMatches 判定一次限定符调用是否命中某条裸入口登记。
@@ -332,6 +351,25 @@ func importPathByName(f *ast.File) map[string]string {
 			continue // 空白导入 / 点导入不是限定符
 		}
 		out[name] = path
+	}
+	return out
+}
+
+// dotImportPaths 取本文件点导入的 import 路径集合。
+//
+// importPathByName 按设计丢掉点导入（它要的是「限定符 → 路径」，点导入没有限定符），
+// 但**按限定符扫的判据**在点导入面前会整片失明：`import . "…/ptc"` 之后 `Run(...)`
+// 既没有限定符、也不是本包实现，形状与「同包调用」相同而性质相反。
+// 故把它单列一份，由需要判「谁被搬进了本文件」的判据自己取用。
+func dotImportPaths(f *ast.File) map[string]bool {
+	out := map[string]bool{}
+	for _, imp := range f.Imports {
+		if imp.Name == nil || imp.Name.Name != "." {
+			continue
+		}
+		if path, err := strconv.Unquote(imp.Path.Value); err == nil {
+			out[path] = true
+		}
 	}
 	return out
 }

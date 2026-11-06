@@ -2130,7 +2130,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-module-dependency-direction` | 包间依赖超出 `modules[].requires` 声明；**以及未登记的包目录** | `policy.yaml` 的 `modules` 段 + `archcheck/deps.go` |
 | 沙箱档位登记 | 执行沙箱后端未在 `sandbox_providers` 段登记，或登记的档位与代码事实漂移 | `policy.yaml` 的 `sandbox_providers` 段 + `archcheck/sandbox.go` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离 | `policy.yaml` 的 `execution_paths` 段 + `archcheck/execution.go` |
-| `harness-subprocess-egress` | spawn 点未登记出口档位；登记 `proxy` 却在 spawn 前看不到 env 兑现证据；登记 `denied`（本层兑现不了）| `policy.yaml` 的 `egress_paths` 段 + `archcheck/egresspaths.go` |
+| `harness-subprocess-egress` | spawn 点未登记出口档位（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到 env 兑现证据；登记 `denied`（本层兑现不了）| `policy.yaml` 的 `egress_paths` 段 + `archcheck/egresspaths.go` |
 | `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 | `archcheck/selfcheck.go` |
 
 > 「未登记的包目录」这条更隐蔽：未登记的包对本门禁完全隐形，
@@ -2249,6 +2249,22 @@ egress_paths:
 3. **`denied` 直接红**：本层（进程内 spawn 前改 env）**兑现不了**禁网。写了就是造假，
    报告会显示「已兑现」而网络其实通着。真要禁网，靠执行后端（`sandbox.LevelMachine` 一类）。
 4. **陈旧登记即红**：登记的函数在仓里不存在了 ⇒ 报出来，否则「这条路径没人管」会看起来有人管过。
+
+**判定面覆盖哪些启动形态（每一种都是实测漏判后才补上的）**
+
+- 限定符调用 `exec.Command(...)`。**别名**（`import ex "os/exec"` ⇒ `ex.Command`）同样命中：
+  限定符按 **import 路径**解析，不按名字猜。
+- **点导入**（`import . "os/exec"` ⇒ `Command(...)`）：调用形态没有限定符，由「本文件点导入了哪个包」
+  补齐。共享的 `importPathByName` 按设计会丢掉点导入（它要的是「限定符 → 路径」），故另有
+  `dotImportPaths` 单独供给需要它的判据——**同一条盲区也存在于 `execution_paths`**（点导入 `ptc`
+  之后 `Run(...)` 既无限定符、也不是本包实现），两条判据一起补。
+- **包级初始化**（`var cmd = exec.Command(...)`）：不在任何函数里，报告里显示为「包级初始化」。
+- 入口表按 import 路径归：除 `os/exec` 还含 `os.StartProcess` 与 `syscall.Exec/ForkExec/StartProcess`
+  ——它们同样绕开出口强制面，也各自接受 Env，故「登记 + 兑现证据」对它们逐字适用。
+
+> **点导入与包级这两条是 2026-11-06 实地注入才发现的漏判**：把 spawn 挪到包级变量、或换个导入
+> 写法，旧实现就一声不响地全绿。收集器因此从判定文件里拆到 `archcheck/spawnsites.go`——
+> 判定写错会误报（有人会来修），收集写漏是**静默放行**（没人会来），后者必须单列并逐形态钉住。
 
 **本仓自己的实例**：`ptc/childpipes.go` 的 `newChildPipes` 登记为 `proxy`，
 兑现方式是把 `SubprocessOptions.Egress` 交给 `spec.Env(base)` 生成子进程环境（失败即不起子进程）。

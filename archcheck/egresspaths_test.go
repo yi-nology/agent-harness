@@ -196,3 +196,93 @@ func TestEgressGateOnThisRepo(t *testing.T) {
 		t.Fatalf("本仓的子进程启动点必须全部登记且挂上兑现：%v", textsOf(vs))
 	}
 }
+
+// ── 三种「换个写法就消失」的形态（每一种都是实测漏判后才补上的）──
+
+// pkgLevelSpawnSrc 包级初始化里的启动点：不在任何函数里。
+const pkgLevelSpawnSrc = "package app\n\nimport \"os/exec\"\n\nvar cmd = exec.Command(\"sh\")\n"
+
+// dotSpawnSrc 点导入形态：调用没有限定符。
+const dotSpawnSrc = "package app\n\nimport . \"os/exec\"\n\nfunc Spawn() error { return Command(\"sh\").Run() }\n"
+
+// aliasSpawnSrc 别名形态：限定符改了名字。
+const aliasSpawnSrc = "package app\n\nimport ex \"os/exec\"\n\nfunc Spawn() error { return ex.Command(\"sh\").Run() }\n"
+
+// otherEntranceSrc 别的启动入口：os.StartProcess 与 syscall.ForkExec。
+const otherEntranceSrc = "package app\n\nimport (\n\t\"os\"\n\t\"syscall\"\n)\n\n" +
+	"func Spawn() {\n\t_, _ = os.StartProcess(\"/bin/sh\", nil, nil)\n\t_, _ = syscall.ForkExec(\"/bin/sh\", nil, nil)\n}\n"
+
+// TestEgressGateCatchesPackageLevelSpawn 钉住：**把 spawn 挪到包级变量也要被看见**。
+//
+// 旧实现只走 *ast.FuncDecl，于是 `var cmd = exec.Command(...)` 让门禁整条失明——
+// 而 spawnSite.fn 的注释一直写着「空 = 函数外，如包级变量初始化」，即承诺了没实现。
+func TestEgressGateCatchesPackageLevelSpawn(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{"app/app.go": pkgLevelSpawnSrc})
+	vs, err := egressPathViolations(root, EgressPaths{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsText(vs, "包级初始化") {
+		t.Fatalf("包级初始化里的启动点必须被看见并标明位置，实得 %v", textsOf(vs))
+	}
+}
+
+// TestEgressGatePassesRegisteredPackageLevelSpawn 配对：包级 spawn 也能被**登记**。
+//
+// 没有这条，上面那条可能与「凡包级声明一律红」的退化实现同时成立：
+// 后者会让正确的代码无从登记，维护者只能拆掉判据。
+func TestEgressGatePassesRegisteredPackageLevelSpawn(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{"app/app.go": pkgLevelSpawnSrc})
+	cfg := EgressPaths{Entries: []EgressEntry{{Path: "app/app.go", Mode: "unrestricted"}}}
+	vs, err := egressPathViolations(root, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 0 {
+		t.Fatalf("显式登记为不限制的包级启动点不该报，实得 %v", textsOf(vs))
+	}
+}
+
+// TestEgressGateCatchesDotImportSpawn 钉住：点导入不改判定面。
+func TestEgressGateCatchesDotImportSpawn(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{"app/app.go": dotSpawnSrc})
+	vs, err := egressPathViolations(root, EgressPaths{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsText(vs, "未登记") {
+		t.Fatalf("点导入的启动点必须被判出来，实得 %v", textsOf(vs))
+	}
+}
+
+// TestEgressGateCatchesAliasedImportSpawn 钉住：别名不改判定面。
+func TestEgressGateCatchesAliasedImportSpawn(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{"app/app.go": aliasSpawnSrc})
+	vs, err := egressPathViolations(root, EgressPaths{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsText(vs, "未登记") {
+		t.Fatalf("别名的启动点必须被判出来，实得 %v", textsOf(vs))
+	}
+}
+
+// TestEgressGateCatchesOtherSpawnEntrances 钉住：启动子进程不止 os/exec。
+//
+// os.StartProcess / syscall.ForkExec 同样绕开出口强制面，也各自接受 Env——
+// 把它们留在判定面外，等于承认「换个 API 就能绕过登记」，而绕过是静默的。
+func TestEgressGateCatchesOtherSpawnEntrances(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{"app/app.go": otherEntranceSrc})
+	vs, err := egressPathViolations(root, EgressPaths{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 2 {
+		t.Fatalf("两个启动入口都应被看见，实得 %d 条：%v", len(vs), textsOf(vs))
+	}
+}
