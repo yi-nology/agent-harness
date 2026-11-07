@@ -2,6 +2,34 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.25.2] — 2026-11-07
+
+### 重构：把剩下的横向替换一并做掉（slices.Clone / slicex / encoding），净减 25 行
+
+v0.25.1 留了一批标为「边际收益」的替换没做，理由是读者要跳到上游确认语义。
+按「除非改变原有语义否则都换」重做一遍：10 个文件，28 增 53 删，行为逐字相同。
+1) slices.Clone 取代「make + copy」快照：netguard 的扩展后缀名单、guardset.New 的
+   守卫切片、preset.All 的预设快照、trajectory 的 Rows()/Issues()。四处都是「返回
+   拷贝，调用方改动不影响内部状态」，形状一致。
+2) slicex 取代手工收集与过滤：guardset.Without 的 kept 循环 → Filter、hasGuard →
+   slices.ContainsFunc、preset.Names 与 taskboard.joinIDs / delegate.joinCaps 的
+   逐项收集 → Map、egress.normList 的「去空白 + 丢空项」→ Map + Filter（排序仍归
+   调用点，无序出口会抖）。
+3) encoding.MarshalToString 取代 json.Marshal + string()：ptc.argString（错误原样
+   回传）与 protocol.StringList 的非字符串元素规整（错误仍按原实现吞掉——两处
+   「坏值落空串」的行为没有变）。
+不替换的四处，逐条写清理由，免得下次来人再翻一遍：
+- archcheck 的 valueNames：该包 requires 为 []，是零依赖的判据执行体；stdlib 没有
+  Map，为一行引入 oekit/pkg 会改掉「架构门禁自己能编起来」这条性质。
+- pending.Encode：同样是零依赖的序列化原语，为一个 string(raw) 加一条 ext 依赖边
+  是扩大依赖面，不是替换。
+- cmdpolicy.Split、protocol 的围栏剥离：语义不同（本仓把 ; | & 单独成 token；正则版
+  能处理**字段内**的代码块而 StripCodeFence 会在内层围栏处截断）。
+- 各处的 seen map：它们是「重复即报错」的校验，不是去重；换成 Unique 会把「重复要
+  报出来」静默变成「悄悄去掉」。
+README 工程底座的生产行数随之更新（25,510 → 25,485，docsync 判相等）。
+门禁：make check 全绿（88.0% / 逐包下限 70% / 四平台交叉构建 / 架构 / docsync）。
+
 ## [v0.25.1] — 2026-11-07
 
 ### 重构：该替换的替换掉（slicex/stringx + stdlib slices），代码净减 40 行
