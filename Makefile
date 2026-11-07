@@ -67,11 +67,10 @@ CI_YML := .github/workflows/ci.yml
 # 完整链接全仓（`CGO_ENABLED=1 go test -race -run '^$' ./...` 零输出）。
 RACE_ENV := CGO_ENABLED=1
 # 交叉构建矩阵：只声明**真的验过**的平台。
-# windows 不在列：上游 github.com/oagentkit/runtime/procx 用了 unix 专属
-# syscall（SysProcAttr.Setpgid / syscall.Kill），本仓改不了它。
-# ⇒ 处理方式是**显式声明不支持**（README 平台矩阵），不是假装支持、
-#   也不是为一个编不过的平台留一条永远不跑的门禁。
-CROSS_TARGETS := linux/amd64 linux/arm64 darwin/arm64
+# windows 回归在列（issue #34 收尾）：上游 runtime/procx 已落地 windows
+# 进程树路径（Job Object，runtime v0.11.0 起），windows/amd64 恢复交叉构建
+# 门禁；「跑得对」由 CI 的 windows job 真执行测试（见 ci.yml）。
+CROSS_TARGETS := linux/amd64 linux/arm64 darwin/arm64 windows/amd64
 # govulncheck 版本口径：CI 装这个版本，与本机验证过的一致（同 lint 的理由）。
 GOVULNCHECK_VERSION := v1.7.0
 
@@ -241,7 +240,7 @@ crossbuild: ## 交叉构建矩阵（声明支持的平台必须真的编得过�
 	  echo "交叉构建 $$os/$$arch"; \
 	  $(EXPORT) CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build ./... || exit 1; \
 	done
-	@echo "交叉构建矩阵 ✓（$(CROSS_TARGETS)；windows 显式不支持，见 README 平台矩阵）"
+	@echo "交叉构建矩阵 ✓（$(CROSS_TARGETS)）"
 
 architecture-check: ## 架构治理门禁（域词污染红线 + 依赖方向）
 	$(EXPORT) $(GOENV) go run ./cmd/archcheck $(if $(findstring --report,$(MAKECMDGOALS)),--report,)
