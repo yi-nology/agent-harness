@@ -43,6 +43,13 @@ SiblingDoesNotCover / AcceptsCoveredModule）：它们只构造 policy 结构、
 用例失去鉴别力。
 无公开 API 变更（iterFiles / ruleFiles / packageDirs 等均为包内函数）。
 
+- 杂务(deps)：抬 oekit/concurrency 地板到 v0.28.1
+
+1) 打 v0.23.0 tag 那一刻被发版门禁拦下：concurrency 地板 v0.28.0，而上游 07:56Z 刚发 v0.28.1。
+2) v0.28.1 是纯地板对齐版本（build: 全线依赖地板对齐 16 项），无 API 变化，故只改 go.mod / go.sum 两行。
+3) 不为省事 amend 上一笔提交（31be23b 的逐条分析仍是真历史）；tag 打完不能重打，地板必须在 tag 之前追平。
+
+
 ## [v0.22.0] — 2026-11-07
 
 ### 重构：收掉同体异名包装与手写等价物（三处，无行为变化）
