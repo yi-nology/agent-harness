@@ -271,6 +271,21 @@ func (b *Bus) Publish(sessionID, caseID string, stepID *uint64, typ, level strin
 }
 
 // Subscribe 订阅事件流；cancel 释放订阅（SSE 断开/bq_event writer 停止时调用）。
+//
+// # 契约：退订（cancel 或 ctx 取消）后 channel 会被**关闭**
+//
+// 消费方必须写 `v, ok := <-ch` 并处理 ok==false。这不是可选风格：关闭的 channel
+// 在 select 里**恒可就绪**并反复给出零值，于是 `case v := <-ch:` 不查 ok 的循环
+// 会空转——CPU 打满、事件是假的、而且不报错。
+//
+// 本包曾按上游旧契约（runtime<v0.10.0 的「channel 永不关闭」，oagentkit/runtime#20）
+// 承诺「不关」，并以此为由禁止消费方 range。上游 v0.10.0 推翻了那条理由
+// （runtime#32）：Publish 与 unsubscribe 同锁互斥，不存在 send-on-closed 窗口，
+// 故退订即 close。本仓随之上车——关闭换来的是 `for range ch` 能正常退出、
+// 且不会把已缓冲事件挂在无人消费的 channel 上（旧形态每退订一次就漏一条 channel）。
+//
+// 注意 Hub 的 Subscribe **不**关 channel（见 hub.go 的说明）：两个投递面在这里
+// 有意分叉，判据由 hub_test.go 与 eventbus_test.go 各钉一侧。
 func (b *Bus) Subscribe(ctx context.Context) (<-chan Event, func()) {
 	return b.inner.Subscribe(ctx)
 }

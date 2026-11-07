@@ -63,6 +63,29 @@ func TestHubSlowSubscriberDropsAndCounts(t *testing.T) {
 	}
 }
 
+// TestHubSubscribeDoesNotCloseChannel 钉住 Hub 的「退订不关闭」声明。
+//
+// 这条与 TestSubscribeChannelClosesOnCancel（Bus 关）成对存在：两个投递面在这里
+// **有意分叉**，各自被钉住才叫声明；只钉一侧的话，另一侧哪天跟着上游改了也没人
+// 知道——而那个改动会让宿主按旧契约写的 SSE 循环开始空转（零值事件 + CPU 打满，
+// 且不报错）。
+func TestHubSubscribeDoesNotCloseChannel(t *testing.T) {
+	h := NewHub()
+	ch, stop := h.Subscribe("sess-a")
+	stop()
+
+	h.Publish(Event{ID: 1, SessionID: "sess-a"})
+	select {
+	case _, ok := <-ch:
+		if !ok {
+			t.Fatal("Hub 退订后不应关闭 channel（关闭会让未查 ok 的宿主循环空转）")
+		}
+		t.Fatal("Hub 退订后不应再收到事件")
+	case <-time.After(50 * time.Millisecond):
+		// 既没读到事件、也没读到关闭 —— 正是本包声明的那一态。
+	}
+}
+
 func TestHubConcurrentPublishSubscribe(t *testing.T) {
 	h := NewHub()
 	var wg sync.WaitGroup
@@ -74,8 +97,10 @@ func TestHubConcurrentPublishSubscribe(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Hub 退订不关 channel（与 progress.Bus 同契约——关 channel 会让并发发布
-			// panic），消费者经 done 信号退出，禁用 range ch。
+			// Hub 退订**不**关 channel——与 eventbus.Bus（退订即 close）有意分叉，
+			// 理由见 hub.go 包注释：宿主侧 SSE 循环未必查 ok，内核在这里单方面
+			// 关闭会让它们空转。消费者经 done 信号退出，禁用 range ch。
+			// 该分叉由 TestHubSubscribeDoesNotCloseChannel 钉住。
 			for {
 				select {
 				case <-ch:

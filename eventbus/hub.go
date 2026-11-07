@@ -10,9 +10,25 @@ import (
 // 做逐条过滤（旧形态每连接收全实例事件再自行丢弃，成本 = 连接数 × 全局事件数），
 // 分发成本随活跃会话数而非连接总数增长。
 //
-// 投递语义与 progress.Bus 一致：订阅 channel 带缓冲，满即丢帧计数（不阻塞发布方——
-// 编排热路径不可被慢连接拖住）；丢帧由 SSE 的 DB 回放游标 + 全局 tail 兜底补达，
-// 不丢语义。零订阅者的发布成本 = 一次 map 读 + 空 slice 遍历。
+// 投递语义的**缓冲面**与 progress.Bus 一致：订阅 channel 带缓冲，满即丢帧计数
+// （不阻塞发布方——编排热路径不可被慢连接拖住）；丢帧由 SSE 的 DB 回放游标 + 全局
+// tail 兜底补达，不丢语义。零订阅者的发布成本 = 一次 map 读 + 空 slice 遍历。
+//
+// # 与 eventbus.Bus 的**有意分叉**：退订时不关闭 channel
+//
+// 上游 runtime v0.10.0 把 progress.Bus 改成了「退订即 close」（runtime#32），
+// eventbus.Bus 随之关闭；Hub **不**跟：
+//
+//   - Hub 的消费方是宿主的 SSE 循环，内核看不到那些循环有没有写 `v, ok := <-ch`；
+//   - 关闭一个「按旧契约写」的 channel，后果是循环**空转**——CPU 打满、拿到的
+//     全是零值事件、且一声不响。这是个失败形态**变绿**的改动，不该在看不见
+//     消费方的那一层单方面做。
+//
+// 所以关闭的时机留给能看见宿主代码的那一层决定；本包把「不关」写成声明而不是
+// 遗漏，由 TestHubSubscribeDoesNotCloseChannel 钉住。
+//
+// 消费方约定：用 `select` + 自己的 done 信号退出（**禁用 `for range ch`**，
+// 它在本包永不返回）。
 type Hub struct {
 	mu      sync.RWMutex
 	subs    map[string]map[chan Event]struct{}
