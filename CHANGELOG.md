@@ -2,6 +2,47 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.23.0] — 2026-11-07
+
+### 修复(archcheck)：遍历失败与陈旧 scope/scan_roots 不再被吞成绿灯
+
+四类「门禁变绿」的同一处根因：**给不出结论，却显示成通过**。提交体刻意不用
+二级标题——CHANGELOG 生成器会把提交体原样渲染进「###」段，段内再出现「##」
+就是标题跳级（生成器同时丢弃空行，靠标题分隔的段落会挤在一起）。
+1) 四处 `_ = filepath.Walk` 把遍历失败吞成「零发现」。
+   iterFiles / packageDirs / longFilesReport / godObjects 原本都是
+   `_ = filepath.Walk(...)`，回调里的 err 直接 return nil。于是「读不了这个目录」
+   与「这个目录里没有违规」在调用方看来完全一样：报告写着「无阻断级违反」。
+   改为回传错误并在调用方返回 error（门禁据此非零退出）。这条纪律本仓已经落在
+   import 侧（语法坏掉的文件不得静默跳过），这次补齐的是遍历侧。
+2) rules[].scope 指向不存在的目录时，一条都不判。
+   ruleFiles 对不存在的 scope 是静默 continue 的——它分不清「拼错」与「这个包
+   已改名/迁走」。后果是规则照常计入「N 条规则」、severity 照常是 error、报告
+   照常是绿的，唯独不再判任何东西，而**它本该拦下的违规就躺在仓里**。本仓早已
+   把「指向真实存在的目录」这条尺子用在 modules.roots / facades / ignore_dirs
+   上（陈旧包根当天即红），只有 rules[].scope 一直没有。现补进 policy 自校验。
+3) thresholds.scan_roots 存在同样的缺口。
+   scan_roots 项不存在时，那棵树对「超长文件」「god object」完全隐形，报告只
+   写着「阈值通过」。它与第 2 条互补而非重复：coveredByAnyRoot 只比**字符串
+   前缀**（「有没有人该扫这个包」），路径写错/包迁走后它照样能过。
+4) 分工：声明指向不存在的目录 → 自校验报成**可定位的违反**（带规则 id /
+   模块 id 与修法，退出码 1）；遍历中途才失败的（读不了那棵子树）→ error
+   （退出码 2）。两者都不再是绿灯。
+反向验证（每条都红在断言上，不是编译失败）。新增 archcheck/gatescope_test.go，
+五个变异逐个验证：
+    M1 iterFiles 回传 err → return nil     TestIterFilesFailsLoudlyOnWalkError  FAIL
+    M2 关掉 rule scope 存在性判据           TestStaleRuleScopeIsBlocking         FAIL
+    M3 longFilesReport ReadFile err → nil   TestThresholdsFailLoudlyOnReadError  FAIL（超长文件那句）
+    M4 关掉 scan_roots 存在性判据           TestStaleScanRootIsBlocking          FAIL
+    M5 godObjects ReadFile err → nil        TestThresholdsFailLoudlyOnReadError  FAIL（god object 那句）
+用例刻意不用权限位构造：ENOTDIR（中间路径是普通文件）与悬空符号链接在 root
+用户与 CI 上表现一致；chmod 000 在 root 下会被绕过，那种用例是假绿。
+顺带修三条既有用例的夹具（TestSelfCheckScanRootAncestorCoversChild /
+SiblingDoesNotCover / AcceptsCoveredModule）：它们只构造 policy 结构、不建目录，
+现在必须把目录真的建出来——否则「覆盖逻辑」与「存在性」两条判据互相掩盖，
+用例失去鉴别力。
+无公开 API 变更（iterFiles / ruleFiles / packageDirs 等均为包内函数）。
+
 ## [v0.22.0] — 2026-11-07
 
 ### 重构：收掉同体异名包装与手写等价物（三处，无行为变化）
