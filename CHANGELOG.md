@@ -2,6 +2,42 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.26.0] — 2026-11-08
+
+### 性能：检索与披露的两处热路径把不变量提出内层循环
+
+两处都是「同一份派生值在每次调用里重算」。先量测再动手（临时基准 + CPU profile），
+没有靠直觉挑点：profile 出来的热点与我原本猜的完全不同。
+1) tooldisclose.Search 从 58.5–63.9 µs 降到 6.1–7.3 µs（同进程 A/B，-benchtime
+   5000x -count 5），688 B / 5 allocs（原 11,496 B / 7 allocs）。profile 显示
+   strings.ToLower 链占 76.6% CPU（unicode.lookupCaseRange 一家 39.7%）：中文描述让
+   ToLower 走 rune 映射慢路径，而旧写法每次检索都对全部 100 条描述现算一遍。改为
+   构造期定稿的 entry{tool, lowerName, lowerDesc} 与 Catalog.names（构造期升序名单），
+   Names / Search / ExposeAll 三个出口不再各自跑一遍 namesOf（收集+排序），Search 也
+   不再持读锁做 O(n log n) 排序。
+2) Search 的选择算法从「全收 → sort.Slice → 截断」换成实时前 k 插入（ranker）。
+   排序键 (分值, 名字) 因目录内名字唯一而是**全序**，故两种做法逐项等价（连顺序都
+   相同）；好处是量纲——结果切片从 len(c.tools)（100 个 Match 内嵌完整 Tool 含
+   Schema ≈ 8.8 KB）降到 ≤limit。
+3) skilldisclose.Disclose 从 1.6–2.4 ms 降到 66–93 µs（约 25–30×）。根因同源：旧写法
+   在「for w := range words」里对同一份描述做 len(words) 次 ToLower。改为 entry 存
+   lower* 形态（构造期一次算好）、点名词与资源路径提到查询级；scoreOf 签名改为只接受
+   已小写形态（口径写在签名上，不靠注释约定），resourceHitLower 成为唯一判定实现，
+   删掉已无调用者的 resourceHit 包装。
+保留语义未改：有检索词但无命中仍返回空切片而非 nil；技能声明的资源项 TrimSpace，
+标签与查询路径不 trim——统一成「都 trim」会让带空格标签从「从不命中」变成「命中」，
+而这类改动没有任何门禁会响，故保留原行为并在 lowerEach / lowerDeclared 的文档与差分
+测试里钉住。
+验证：新增差分对照 TestSearchMatchesFullSortOracle（参考实现 fullSortSearch 手写排序
+键、走 scoreTool 现算路径，刻意不复用生产判据）与 TestScoreOfMatchesRawOracle（逐字
+复刻旧 scoreOf）。变异 7 处全部红在断言行：右移→左移、二分谓词反置、同分按名字降序、
+lowerDesc 退化成原样、lowerEach 也 trim、lowerDeclared 不 trim。另 2 处「变异」
+（copy 的等价写法、去掉 -1）经判定与原实现语义等价，不计入有效变异——等价改写不红是
+正确行为，不能当成「测试没钉住」。基准固化而非只留临时文件：BenchmarkSearch 与
+BenchmarkSearchFullSort 成对（单看绝对值无意义），BenchmarkDisclose 独立。
+make check EXIT=0（覆盖率 88.0%，逐包下限 70% 44 包通过，四平台交叉构建，
+架构门禁 8 规则 + 5 门面包 + 43 包，docsync 一致）。
+
 ## [v0.25.2] — 2026-11-07
 
 ### 重构：把剩下的横向替换一并做掉（slices.Clone / slicex / encoding），净减 25 行
