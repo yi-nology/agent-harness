@@ -2,6 +2,30 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.25.0] — 2026-11-07
+
+### 修复(archcheck)：include 模式不可命中让规则静默失效（+三处哈希走上游）
+
+1) include 模式结构上不可能命中时，规则一个文件都不扫却继续绿：文件发现只拿
+   filepath.Base(path) 与模式比，于是「**/*.go」「src/*.go」（含路径分隔符：'*' 不跨
+   分隔符，而基名永远不含分隔符）与「*.[go」「[a-」（语法非法：filepath.Match 报
+   ErrBadPattern，扫描路径把它静默当成「不匹配」）两类写法都恒不命中。规则在、
+   severity 是 error、报告里仍计入条数——与本仓最贵的失败形态（门禁变绿）同构。
+2) 判决落在 policy 自校验而不是扫描路径：这是**声明缺陷**，修法是改 policy 的那一行
+   （目录维度写进 scope）。扫描路径只能给「这棵子树没被判定」，何况让它先返回 error
+   会中止整个 Run、自校验那条永远走不到，判据就成了死的。与 ruleFiles 对不存在
+   scope 的既有处置同一条纪律。判据本体 archcheck/includecheck.go，只判三条**可证明**
+   的「永不命中」：空模式 / 含分隔符 / 语法非法；「*.md」今天 0 命中不判（将来加文档
+   它就该生效）。反斜杠只在 Windows 判（Unix 上它是合法转义符，判了就是假红）。
+3) selfcheck.go 已顶到 max_file_lines（400 行）而它还要继续长判据，故先按**用途**
+   抽出支撑函数到 selfcheck_support.go（覆盖关系 / 豁免段清点 / 例外到期），主流程只剩
+   「按 policy 段顺序逐条判」。阈值一旦逼人停止加判据，它保护的就是错误的那个量。
+4) 顺带把手写的 sha256 + hex 换成上游 oekit/pkg/encoding：sessionref.Digest、pii 的
+   hash 策略、offload 的对象摘要三处。上游实现就是 sha256.Sum256 + hex.EncodeToString，
+   逐字等价；三包的 requires 早已含 ext:github.com/oekit/pkg，policy 无需改动。
+反向验证：4 个可编译变异（判据恒放行 / 去掉分隔符那条 / 去掉语法那条 / 空模式放行）
+全部红在断言上，恢复即绿；真实 policy 里 8 条 include: ["*.go"] 规则零误报。
+
 ## [v0.24.0] — 2026-11-07
 
 ### 修复(archcheck)：forbid_import_regex 结构上永不命中时不再绿（issue #41）
