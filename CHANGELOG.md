@@ -2,6 +2,385 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.18.0] — 2026-11-07
+
+### 新增(archcheck)：全量环境判据纳入 procx.InheritAllExcept + 三处文档补齐第五条
+
+读 runtime v0.10.0 的 CHANGELOG 时发现一个现成的绕过口：上游新增
+`procx.InheritAllExcept(except)`——「全量继承 + 剔除若干」，给「SDK 包装用户自己的 CLI」
+那种**可信父进程**场景用。本仓的子进程恰好相反，跑的是模型写的程序（见
+ptc/childpipes.go 顶部的威胁模型），用在这里等于把上一轮刚关上的侧门重新开回来。
+而它名字里没有 Environ，只认 os.Environ 的判据对它**静默放行**。
+修法：判据入口表从「写死 os.Environ 一个符号」改成 (包名末段, 函数名) 归表，
+os.Environ 与 procx.InheritAllExcept 同为「一次调用拿到整份环境」的形态。
+按包名最后一段认包而不是写死 import 路径：认错只多报一处，不会漏报——
+与本判据「宁可吵闹，不可沉默」的方向一致。
+反向验证：
+  - 用例新增两条形态（限定符 procx.InheritAllExcept / 点导入 InheritAllExcept）→ 红；
+  - 变异验证：临时撤掉表里的 procx 项 → 新增用例立即 FAIL（证明它钉住的是判据本身，
+    不是「碰巧绿」）；撤回 → 回绿。
+文档补齐（上一轮只改了 policy 与代码，散文里仍是「四条」）：
+  - docs/AI-GUIDE.md / docs/USAGE.md 的规则表补第 5 条；
+  - docs/GAP-ANALYSIS-20261106.md 的结账单补第 5 条；
+  - architecture-policy.yaml 的判据说明扩到 InheritAllExcept 的来龙去脉。
+顺带修两处「承诺/数字过期」：
+  - AGENTS.md 写「oekit/pkg 当前 v0.30.0」而实际早已 v0.36.0 ⇒ 改成不抄版本、
+    以 go.mod 为准，并把「现 54 个文件」校正为 146（附可复算的口径命令）；
+  - AGENTS.md 写「泛型聚合键单独记 issue 跟进」，实查 issue #14 早已开过并关闭
+    （修法就是 recvFullTypeName）⇒ 回填事实，不再开重复 issue。承诺也要有回填。
+README：archcheck 包表行数与工程底座生产代码行数按 docsync 复算更新。
+校验：架构门禁 ✓、docsync ✓、make check 见下。
+
+### 新增(harness)：落地差距台账的十个机制包与两条新判定面
+
+按 docs/GAP-ANALYSIS-20261106.md 的 P0/P1/P2 逐项落地。
+新增十个包：
+- cmdpolicy：命令级判据——前缀 token 规则（不随引号/空白漂移）+ 三态裁决
+  + 规则自带样例（New 在加载期用真实判定路径跑一遍，不一致即报错）
+- egress：出口三档（Unrestricted < Proxy < Denied，单调可比）+ Validate 自检
+  + Env/Verify 兑现问询 + SatisfiedBy 后端能力问询；后端不声明按最弱处理，
+  ModeDenied 的 Env 直接报错（假装禁网比明确拒绝更危险）
+- preset：档位 × 审批 × 出口收成具名只读组合；三面全松须显式 Unsafe + 理由；
+  同义两名即报错；Resolve 未登记名字报错不降级。方向 preset → gatecheck 单向
+- sessionref：跨会话引用快照；来源/版本/时间随快照走，版本回退与 TTL 到期
+  都判 stale，渲染只标注不拒绝
+- taskboard + boardtest：协调面存储中立契约（不给实现）+ Check 十类不变量
+  （含依赖无环）+ ConcurrentClaim 并发判据（成功者必须恰好 1 个）
+- skilldisclose / hookengine / memorypipe / delegate / worktree
+两条新门禁判定面（走 go/ast，不在 rules 段）：
+- require_rule_examples：rules 段每条规则必须带能过的样例，缺样例即红
+- egress_paths：子进程 spawn 点必须登记出口档位；登记 proxy 则必须在启动
+  函数里看得见 env 兑现证据；登记 denied 直接红（本层兑现不了）
+  四条判据均已做反向验证（archcheck/egresspaths_test.go 九个用例）
+ptc 真接线：SubprocessOptions 新增 Egress egress.Spec；newChildPipes 用
+spec.Env(base) 生成子进程环境，生成失败即 closeAll 且不起子进程（fail closed）。
+零值行为与旧版逐字一致。
+policy 同步登记模块与两段声明；README 包表补行、工程底座按口径重算；
+台账新增第六节「落地状态」（逐条给出证据路径与复验命令）。
+
+### 新增(gates)：接入 race / vuln / crossbuild 与逐包覆盖率下限
+
+审计发现三条门禁与「覆盖率只判全局」是同一种形态：**目标或文档里有，但没有
+任何东西执行它**——和 lint 当年一模一样（既不在 check 也不在 CI）。按本仓纪律
+全部接进 make check，不挂到 ci.yml 上变回「推送后门禁」。
+| 门禁      | 此前                        | 实测漏掉了什么 |
+|-----------|-----------------------------|----------------|
+| race      | 目标存在，check/CI 都没有它 | 并发面（策略代次/提交闸/共享 map）从没被竞态检测过 |
+| vuln      | 目标都不存在                | 6 条漏洞全在标准库（见上一个提交）|
+| crossbuild| 无                          | windows 编不过这件事仓里一个字都没有 |
+四条各自带出的硬事实：
+1. **linux 上 `-race` 强制要求 cgo**。实测 `CGO_ENABLED=0 GOOS=linux go test
+   -race -c` 直接报 `-race requires cgo` ⇒ race 目标不能跟着全局 GOENV，否则
+   CI 必红而本机 darwin 绿（最难查的「本地对、CI 错」）。新增 RACE_ENV。
+2. **逐包覆盖率下限 70%**（scripts/pkgcov.awk）：全局 85.5% 曾同时掩盖
+   cmd/docsync 23.6% 与 sandbox 60.0%，大盘涨 1% 就能抵消一个包塌方。
+   sandbox 补测试到 **100%**（门面包的每条语句就是一句转发，转发目标或参数
+   顺序写错编译得过、语义却错）；cmd/docsync 登记为显式豁免并写拆除条件。
+   豁免**失效即红**——豁免包自己达标时门禁要求当天删掉那一条。
+3. **交叉构建矩阵**只判真验过的三平台；windows 显式声明不支持（上游
+   oagentkit/runtime/procx 用 SysProcAttr.Setpgid 与 syscall.Kill）。给一条
+   永远编不过的目标留门禁不是严谨，是把红线泡软。
+4. 判据的量纲要跟前提对齐：门面包的语句覆盖率恰好是恰当度量，而 cmd/docsync
+   的 23.6% 不是「CLI 天然测不了」，是判定逻辑没落在可导入包里的债。
+反向验证（每条都验过红）：
+  - pkgcov.awk 五组成对用例：全绿 / 单包 60% 红 / 豁免到期红 / 无豁免红 / 多
+    豁免带空格绿。其中「全绿」那组当场抓出一个真 bug：`coverage: [no statements]`
+    被 pct+0 当成 0% ⇒ 把「不适用」判成「0% 覆盖」，已修（校验数值形态）。
+  - crossbuild：把 windows/amd64 塞进 CROSS_TARGETS ⇒ 红（make Error 1）。
+  - vuln：未安装分支明确报错退出（不静默跳过）；可达漏洞的判定见上一个提交。
+验收：make check EXIT=0（4m38s）——fmt/vet/lint/test/cover-gate 85.0% + 32 包
+逐包达标(1 豁免)/vuln 0 条/race 首跑全绿/交叉构建三平台/架构门禁 8 规则+5 门包
++32 包依赖方向/docsync 31 包一致/repo 卫生。
+文档同步：README（平台支持矩阵 + 三条门禁 + 工程底座第八轮校准：测试 139→140、
+覆盖率 85.5%→85.0%）、AGENTS.md（新纪律段 + 四条硬事实）、AI-GUIDE 与 USAGE 的
+门禁表（并修正 architecture-check 的「28/29 包」→32 包、AI-GUIDE §4.1「9 条规则」
+→ 说明条数口径）。
+
+### 修复(eventbus)：跟上上游「退订即关闭」契约——修 drainAll 死循环 + 声明 Hub 的分叉
+
+上游 runtime v0.10.0 改了 progress.Bus 的通道契约（oagentkit/runtime#32）：
+退订 / ctx 结束时 **close(ch)**，而 v0.8.0 的契约是「channel 永不关闭」
+（runtime#20，理由是「close 与并发 send 的竞窗不可消除」——那条前提被证伪：
+Publish 遍历发送持 b.mu，unsubscribe 的 delete+close 也持 b.mu，两者同锁互斥）。
+本仓 Bus 包装了它，于是先出现的不是断言失败而是一个**死循环**：
+测试辅助 drainAll 写的是 `case e := <-ch:` + `default:`，关闭的 channel 在 select
+里恒可就绪并反复给零值 ⇒ 无界 append ⇒ 用例 136s 后被 SIGKILL（`signal: killed`，
+看着像机器被压垮，实际是我们自己的循环）。实测定位：-v 跑出卡在
+TestUnsubscribeStopsDelivery。
+改动：
+  - drainAll / waitReceive / 并发收集器全部改查 ok；
+  - TestUnsubscribeStopsDelivery 的「自动退订生效」判据从「发一条看收不收得到」
+    的轮询，改成**等 channel 关闭**——关闭不可能被误读（缓冲未空时 ok 仍为 true，
+    故先抽干再判关闭）；
+  - Bus.Subscribe 的文档写明新契约与「消费方必须查 ok」（不查 = 空转，CPU 打满
+    且事件是假的、还不报错）。
+Hub 是自实现、不关 channel。它与 Bus 在这里**有意分叉**，理由写进包注释：
+Hub 的消费方是宿主的 SSE 循环，内核看不见那些循环有没有查 ok——单方面关闭会让
+按旧契约写的循环开始空转，这是个失败形态**变绿**的改动，不该在看不见消费方的
+那一层做。分叉改成**声明**：新增 TestSubscribeChannelClosesOnCancel（Bus 关）与
+TestHubSubscribeDoesNotCloseChannel（Hub 不关）两条成对用例各钉一侧。
+校验：go test ./eventbus/（0.8s，此前 136s 被杀）、-race ✓、go test ./watchdog/ ✓
+（生产消费方本来就在查 ok，零改动）。README 生产代码行数按 docsync 复算更新。
+
+### 修复(gates)：补两条新判定面的四处静默放行 + README 底座数字
+
+两条新门禁（`harness-subprocess-egress` / `harness-sandbox-execution-path`）
+上线时的判定面有四处**静默放行**——规则照常出现在报告里、severity 照常是 error，
+唯独那些形态一件事都不判。逐条注入实测确认：
+- **包级初始化**：`var cmd = exec.Command(...)` 落在 `*ast.GenDecl` 里，旧收集器
+  只走 `*ast.FuncDecl`，而 `spawnSite.fn` 的注释早已写着「空 = 函数外」——
+  承诺了没实现。现报红并显示「包级初始化」。
+- **点导入**（`import . "os/exec"`）：`importPathByName` 按设计丢掉点导入
+  （`name == "."` → continue），按限定符扫的判据整片失明。新增
+  `dotImportPaths` 供需要的判据取用，不动既有语义。
+- **`os.StartProcess` / `syscall.Exec|ForkExec|StartProcess`**：入口表从
+  「函数名集合」改为按 **import 路径**归的 `spawnFuncsByPath`——别名可绕过、
+  按名字猜不可靠。
+- **点导入下的裸执行入口**（`import . "…/ptc"` 后直接 `Run(...)`）：与点导入
+  同一根因，受害的是 `execution_paths`，一并补上。
+结构：启动点收集从 `egresspaths.go` 拆到 `archcheck/spawnsites.go`——判定写错
+会误报有人修，收集写漏是静默放行没人来，后者必须单列并逐形态钉住。
+新增 7 条成对用例（坏形态红 + 好形态不报）：包级 spawn / 点导入 / 别名 /
+`os.StartProcess`+`syscall.ForkExec` 恰好 2 条 / 点导入 `Run(...)` /
+点导入 `Helper(...)` 不报。`TestEgressGateOnThisRepo` 在探针存在时当场报红，
+证明判据是活的。
+文档与声明面同步：policy `egress_paths` 段补第 5 条判据，USAGE §4.4 加
+「判定面覆盖哪些启动形态」，AI-GUIDE 规则表补齐。README 底座改实测
+24,197 行 / 136 文件（`docsync` 已判相等）。
+
+### 修复(gates)：审计 8 条 issue——版本单源、逐包判据收编 Go、cmd 豁免收窄、README 底座表接门禁、启动成本判据用负载标尺
+
+一轮针对「门禁自己是否可信」的审计（#30–#37）的落地。共同形态是：判据存在、
+报告里有它、severity 也写着 error，唯独**判不判**没人验证过。逐条：
+#30 逐包下限对「零测试文件的包」完全隐形
+  `go test` 对无测试文件的包输出 `? <pkg> [no test files]`，旧判据跳过这类行
+  （不是 0% 覆盖，是「不适用」）——后果是新增包整包不写测试时门禁一声不吭。
+  判据分不出「合理的零测试」与「漏写测试」，那就别假装分得出：要求显式声明。
+  于是 Makefile 新增 PKG_NO_TEST_EXEMPT（cmd/archcheck / cmd/ptcchild），逐项
+  写理由，同样「失效即红」。
+#36 判据本体（scripts/pkgcov.awk，80 行）没有任何用例
+  收编为 cmd/pkgcov，按判据的一侧切成 parse / judge / main（main 只做装配，
+  `run` 返回退出码而不是自己 os.Exit，用例才够得着），补表驱动用例，
+  覆盖率 90.6%。scripts/pkgcov.awk 删除。
+  ⚠️ 收编过程中抓到一个**真 bug**：`ok` / `?` 是「不带 -coverprofile」时的形态；
+  cover-gate 的管道带 -coverprofile，此时零测试包变成一行**无动词**的
+  `<pkg>\t\tcoverage: 0.0% of statements`。旧判据（以及收编后的第一版）只认 `?`，
+  于是零测试包**整体失明**：两条豁免被判「失效（该包已有测试或不存在）」，
+  门禁红在「豁免该拆了」，而真相是它压根没看见那两个包。
+  现在四种形态都认；形态漂移（`ok` 行没有 coverage 列 = 调用面少传 -cover、
+  无法归类的 coverage 行）一律报错——跳过即变绿。制表符开头的测试日志则必须
+  放过：假红也会训练人忽略门禁，故只在「能证明自己在看覆盖率事实」时才拒绝前进。
+#32 / #37 门禁工具版本双写 + 从不判实跑版本
+  版本钉在 ci.yml，Makefile 只判「装没装」⇒ 本地 brew upgrade 之后判据悄悄换了
+  一套仍全绿；反过来改一处忘一处就是「本地绿 CI 红」。
+  于是 Makefile 成为**单一来源**（LINT_VERSION / GOVULNCHECK_VERSION），新增
+  `versioncheck` 目标比对 ci.yml（按唯一值集合比，不允许多值）并接进 `check`；
+  `lint` / `vuln` 运行时再断言一次实跑版本。
+  只断言 govulncheck 的 `Scanner:` 行，不断言 `Go:` 行——那行报的是本地工具链，
+  合法可更新，断言相等会假红。
+#35 cmd 被三条判定面共同豁免，而豁免理由只覆盖 archcheck / docsync
+  dependency_direction / sandbox_providers 的 ignore_dirs 收窄为逐包列举
+  （cmd/archcheck、cmd/docsync、cmd/pkgcov、docs）；execution_paths 不再豁免
+  cmd——工具本身不执行第三方程序，而 ptcchild 正是最该被看一眼的对象。
+  cmd/ptcchild 登记进 modules（requires: [ptc]），从此有真实判定。
+  自校验补两条：各段 ignore_dirs 的目录必须存在（陈旧豁免当天即红）；scan_roots
+  的覆盖判定改为**祖先覆盖**（逐字相等会逼人把每层子目录列进清单直到与目录树
+  同构，属「假红把正确工作判成错的」）。
+#31 README「工程底座」表没有机器判定
+  历史上八轮全靠「作者记得回来手算」，实测已过期三个月；同一天同一批用例还量出
+  85.5 / 85.0 / 87.0 三个覆盖率值。
+  于是 docsync 新增 baseline 判定：行数 / 文件数 / 测试文件数三项**判相等，不留
+  容差**（容差正好能盖住它的历史漂移量），报错时把实测值与三条重算命令一并给出；
+  覆盖率那一格**删掉手抄百分数**，只留门槛——让散文复述一个由门禁实时给出的数字，
+  只会制造两处不一致。小节在而行解析不出时当场红（表被改名/截断），小节不在则不判
+  （不声明就不会失真）。cmd/docsync 因此越过 400 行，按判据的一侧拆出 pkgtable.go。
+#33 启动成本判据对负载敏感
+  12 倍余量挡不住并发重活下 200 倍量级的偏移（中位数把抖动整段算进去）。
+  于是同一进程内现测一个**负载标尺**（最小三样本的 test 二进制冷启动），上界改为
+  max(固定下限, K×标尺)。绝对值仍守，但「这台机器此刻有多忙」不再决定红绿；
+  判不了的（CPU 时间口径、内存）在用例里写明判不了，不假装覆盖。
+验证（本机实跑）：
+  make check 全绿（versioncheck / fmt / vet / lint / test / cover-gate / vuln /
+  race / crossbuild / architecture-check / docsync / modreplace / modwork）。
+  反向验证逐条做过，不是「从没见过它触发」：
+    - 注入 govulncheck@v1.6.0 → versioncheck 红（exit 2）；注入 golangci-lint
+      v2.13.0 → 红；还原后绿。
+    - ignore_dirs 写不存在的目录 → policy_self_check 红。
+    - cmd/docsync 注入 ptc.Run(nil) → execution_bypasses_registry 红（旧的
+      ignore_dirs: [cmd, docs] 下永远绿）。
+    - 新增 cmd/newtool → module_unregistered 红。
+    - 删掉 parse.go 的制表符分支 → TestParseRealShapes 红（正是上面那个真 bug）。
+#34 仍挂在上游：windows/amd64 的失败在 oagentkit/runtime 的 procx（SysProcAttr.
+Setpgid / syscall.Kill），本仓改不了。已向上游提 PR（oagentkit/runtime#24，
+Job Object 实现 + 反向验证），合并发版后再抬依赖并把 windows 加回 CROSS_TARGETS。
+钉 pseudo-version 不可接受——那等于用一个「不是发布产物」的依赖冒充终态。
+
+### 修复(go.mod)：go 指令抬到 1.27.3（标准库漏洞的安全地板）
+
+govulncheck 在本仓第一次跑通（此前 Makefile 里根本没有这个目标），报出 6 条
+可达漏洞，**全部落在标准库**：
+  crypto/x509  GO-2026-6809（需 1.27.3）
+  net/http     GO-2026-6617/6613/6611/6603（需 1.27.2）
+  crypto/tls   GO-2026-6607（需 1.27.2）
+为什么修法必须是「抬 go 指令」而不是别的：
+  - toolchain 指令在**依赖模块**里会被 Go 忽略 ⇒ 下游仍按自己的工具链编，照样
+    产出带这 6 个漏洞的二进制，而本仓的扫描是绿的；
+  - go 指令带 patch 版本会把下游工具链顶上去（本机 `go version` 已变 1.27.3）。
+反向验证：同一命令 1.27.1 下 EXIT=3 / 6 条，1.27.3 下 EXIT=0 / 0 条。
+载体是「下游用本仓编出来的那个二进制」，故这个地板属于本仓而不是宿主。
+
+### 重构：三轮上游收编（截断/子进程环境/环境继承门禁）
+
+第一轮：三处截断统一到 oekit/pkg/stringx.TruncBytes。
+  - sessionref.cut：删掉手写的「按字节切 + utf8.ValidString 反复回退」，
+    换成 stringx.TruncBytes；逻辑等价但不再依赖隐含前提。
+  - hookengine.clip / memorypipe.clip：原实现 s[:n] 直接切字节，
+    预算落在多字节字符中间时**产出非法 UTF-8**（真实缺陷）。
+    改用 TruncBytes 并保留原有省略尾巴。三处各配 truncation_test.go，
+    用 3 字节汉字步长让预算恰好切在半个 rune 上，成对断言
+    「未超预算原样返回」。
+第二轮：子进程环境改为白名单（oagentkit/runtime/procx.ChildEnv）。
+  - ptc/childBaseEnv：原 append(os.Environ(), 协议三件) 会把宿主进程的
+    全部环境交给子进程，包括 provider API key / 存储令牌 / 数据库口令。
+    子进程跑的是**模型写的程序**（隔离面是 JS 子集，不是 OS 沙盘），
+    全量继承等于给这层隔离开一个谁也没声明过的侧门：程序没有网络也没有
+    exec，但能读到秘密再写进返回值回灌模型上下文。
+  - 白名单口径放上游而不是本仓：跨宿主必须一致，各写一份必然漂移，
+    而两边报告都显示「已隔离」。协议三件走字面注入且优先于父进程同名值。
+  - tooldisclose.truncateDescription 改用 stringx.TruncRunes。
+  - 新增 ptc/childenv_test.go：注入假密钥验证不透传、协议三件必须在、
+    父进程同名值不得盖掉字面注入。
+第三轮：把「不得全量继承环境」变成门禁（harness-subprocess-egress 第 5 条）。
+  - 与登记档位正交：unrestricted 的启动点同样不该继承整份环境。
+  - 判定粒度取**文件**不是启动函数。反向验证实测：把 os.Environ() 放进
+    同包的辅助函数（childBaseEnv 这类），函数级判据一条都不报、退出码 0。
+    环境 base 几乎总由辅助函数生成，那个粒度会让判据静默塌掉。
+  - 代价是「文件里另有无关 os.Environ()」会假红，方向是刻意选的：
+    红可见可讨论（走 exceptions 登记原因与拆除条件），绿不可见。
+  - 形态覆盖：原样 / 别名导入 / 点导入（正则只认第一种，换写法零成本）。
+  - 反向验证：注入 os.Environ() → EXIT=1 报 egress_full_env_inherit；
+    撤回 → 回绿。用例成对（坏形态三种红 + 白名单形态不报）。
+policy 同步：ptc 的 requires 增 ext:github.com/oagentkit/runtime；
+egress_paths 段判据四条 → 五条。README：包表依赖与工程底座数字
+（24372 行 / 136 文件 / 166 个测试文件）按 docsync 复算更新。
+校验：make check 全绿（覆盖率 87.8%、逐包下限 ✓、govulncheck 无漏洞、
+-race ✓、三平台交叉构建 ✓、架构门禁 8 规则 + 5 门面包 + 43 包依赖方向 ✓、
+docsync ✓）。
+
+- 杂务(deps)：上游家族追平——runtime v0.10.0 / pkg v0.36.0 / concurrency v0.27.0 等 7 项
+
+oagentkit: agent v0.13.0→v0.14.0、runtime v0.8.0→v0.10.0、textx v0.9.0→v0.10.0
+oekit:     concurrency v0.25.1→v0.27.0、core v0.12.2→v0.13.0、logx v0.8.3→v0.8.4、pkg v0.35.0→v0.36.0
+本仓刚收编的两个包都在这批里（procx.ChildEnv 来自 runtime、stringx.TruncBytes/TruncRunes 来自 pkg），
+地板落后两个小版本意味着那两条判据的实现停在旧行为上。逐条读过上游 CHANGELOG：
+runtime 明确写 ChildEnv / Run / baseEnvAllow 逐字未变（新增的是独立的 InheritAllExcept），
+pkg 的 stringx 改动只在 FirstN / Union，与 Trunc 家族无关 ⇒ 两处收编的语义不受影响。
+没有 replace、go.sum 只增不删。
+校验：go build ./... / go vet ./... / go test（随下一提交一起跑全量 make check）。
+
+
+- 文档：依赖方向包数 42 → 43（合并远端 #38 后 modules 新增一项）
+- 文档(gap)：标注 §零 包数为写作时快照，落地后为 41 个包
+- 文档：AI-GUIDE 与 USAGE 同步新包与两条新判定面
+
+- AI-GUIDE：1.3 重组包分组（41 行包表口径：机制面 31 / 契约套件 1 /
+  组合机制 3 / 门面 5 / 门禁执行体 1，另有 taskboard/boardtest 子包）；
+  纠正上一版两处偏差——toolfail 与 sandbox 早已转入门面（门面共 5 个），
+  而 trajectory 与 ticket 漏登记
+- AI-GUIDE：modules id 29 → 42、测试文件数、依赖方向 28/32 → 42；
+  4.1 条数口径补「5 条 go/ast 结构规则 + 1 条 policy 自校验」；
+  规则表补 harness-sandbox-execution-path / harness-subprocess-egress /
+  harness-policy-self-check 三行
+- AI-GUIDE §3.3：区分三类规则源（正则表 / AST 段 / 有执行体的声明表），
+  并把「规则必须自带样例」列为加规则的必做步骤
+- USAGE：新增 §3.13（十个包的接线范式与每个包最容易接错的一点）；
+  §4.2 结构规则表补两条；§4.4 之后补 egress_paths 的四条判据与
+  「为什么它与 execution_paths 是两张表而不是一张」
+文档里的示例代码用临时包 go vet 编译验证过，纠正了三处凭印象写错的 API：
+ptc 子进程入口是 NewSubprocessProvider（不是 RunSubprocess）、
+cmdpolicy.Rule 的 Prefix 是 [][]string 而 Match/NotMatch 是 []string、
+preset 示例漏了 policy import。验证后临时包已移出仓。
+
+
+- 修复(archcheck)：规则样例改走真实判定核，policy 改严格解析
+
+本轮继续审计「规则存在但判不动」这一类失效，抓到四处，其中两处是**门禁自己在绿**。
+1) 样例自检另写了一套近似判定（两份真相）
+archcheck/examples.go 的 matchSample 自称「复用真实判定路径」，实际是把 checkRule /
+importViolations 的判定顺序**逐行复刻**了一遍。这正是本仓明令禁止的形态：两套实现各自
+漂移，而样例那套只看几个字符串、漂得更慢 ⇒ 绿灯更久。样例过了一直说明不了真判定能过。
+改法：把判定核抽出来做成**一份实现、两个入口**——regexViolationsIn（scan.go）、
+importViolationsIn（imports.go），文件遍历与样例共用它。import 样例先包成
+`package sample` + `import _ "<路径>"` 再走同一条 AST 判定（strconv.Quote 转义，
+避免 policy 里的引号把样例变成坏源码）。
+2) 样例「有一条就行」不等於「判得动」
+新增 exampleCoverageProblems：正例（want: hit）与反例（want: miss）**各至少一条**。
+只有反例的规则只能证明「判据不乱报」，证明不了「判据还判得动」——词表被改名、module
+路径被迁走之后它照样绿。只在 require_rule_examples: true 时生效（本仓开、宿主缺省 false）。
+3) policy 的未知键被 YAML 静默吞掉
+yaml.Unmarshal 对拼错的键**静默忽略**，而每个键都对应一条判定面：`scope` 拼错 ⇒ 规则
+一行都不扫（有执行体、severity: error、报告里计入条数，只是永不触发）；`import_exempt`
+拼错 ⇒ 该放的 import 全被拒（假红，作者只看到「我的例外没生效」）。
+改法：Load 改严格解析（Decoder + KnownFields），空 policy 文件单独报错。
+配套：selfcheck 新增「有执行体但 scope 为空」判据（合法 YAML、拼写也对，只能靠它）。
+4) boundWithControl 是 #33 的唯一逻辑核心，此前零用例
+补成对表驱动用例（下限该赢 / K×标尺该赢 / 恰好相等 / k=0 / control≤0）。
+同时把负载标尺的**实测数字**写进用例头注并说明它判不了什么：#33 的 K×标尺项在空载下
+根本不生效（8ms×20 < 250ms 固定下限），它抓的是 ≥38×（满载）/≥65×（空载）量级的劣化，
+是一条烟测级上界，不是精度判据。
+反向验证（全部实测，不是「应该会红」）：
+  - 变异 regexViolationsIn 去掉注释豁免 → 样例用例当场红（证明样例真的走判定核）；
+  - 变异 importViolationsIn 去掉 import_exempt → 样例用例当场红；
+  - policy 抽掉某条规则的 hit 样例 → archcheck 退出码 1，报「没有一条 want: hit」；
+  - 同上一份 policy + require_rule_examples: false → 绿（证明开关真是开关）；
+  - policy 某处把 scope 写成 scopes → 退出码 2，报 `field scopes not found`；
+  - policy 某处 scope: [] → 退出码 1，报「scope 为空」。
+顺带修的文档漂移（同属「陈述与事实脱钩」）：
+  - README 工程底座行数 24,054 → 24,167（docsync 当场报出来的）；
+  - docs/AI-GUIDE.md 三处、AGENTS.md 一处仍写「工程底座那张表不在 docsync 判定面内」，
+    而 #31 之后三项确定性量已经在判——改成「三项已判、覆盖率仍不判」；
+  - 「N 包依赖方向」这个派生计数抄在三处散文里，两处停在 32 而实际是 43 ⇒ 改为
+    引用门禁输出，并在 AGENTS.md 记一条纪律：派生计数不要抄进多处散文。
+更正（上一轮 PR #38 的提交正文有一句失实）：正文写「中位数把抖动整段算进去」，
+而 ptc/subprocess_bench_test.go 早已改用**最小值**，该表述不成立。提交正文已不可改，
+故把实测数字与「判不了什么」补进 ptc/loadcontrol_test.go 的头注——那是读者真正会看的地方。
+下游要做什么：无（archcheck 的公开面未变；宿主 policy 若有未知键，加载会从静默忽略变成
+明确报错——那本来就没生效，报出来是修，不是破坏）。
+
+
+- 测试(ptc)：启动成本判据采样数 3 → 5（最小值只会随采样变多而下降）
+
+2026-11-06 实测撞到过一次假红：机器上同时压着 5 路重活（govulncheck / 覆盖率 /
+race / 两个交叉构建）时，3 个样本全部落在 40s 量级，本用例判红（127.87s）；而
+同一套代码单跑 make check 时是 13ms 量级、余量 18 倍。
+最小值是对负载**单调**的统计量：采样越少，越可能在「恰好全程被别的东西占着
+CPU」的窗口里取到偏大的值。提采样数把「三连运气差」压成「五连运气差」，代价
+是两次额外的子进程启动（约 30ms）。
+**不改上界**：上界是判据，采样数是估计量。调后者不会让判据变松——真劣化（多一轮
+握手、启动路径多做一件事）会让五个样本一起越线。这也正是本仓那条纪律的分界：
+「耗时上界要用对负载不敏感的统计量」不等于「把界收到贴着实测值」。
+实测 5 次采样最小值 22.16ms（上界 250ms，余量约 11 倍）。
+
+- 测试(docsync)：run() 端到端用例（23.6% → 88.8%），逐包覆盖率豁免当日拆除
+
+上一个提交给逐包覆盖率下限登记了一条豁免：cmd/docsync 23.6%，拆除条件写的是
+「把判定逻辑搬进可导入包」。本轮发现**不必搬家**——停机判据是「有接缝吗」，
+不是「要不要先重构」。
+Go 1.24+ 的 t.Chdir 让用例可以切进临时目录，在那里摆一份 README 与若干包目录，
+就是 run() 眼里的整个世界（它读的是相对路径 `README.md` 与 `.`）。于是实测
+23.6% → **88.8%**，PKG_COV_EXEMPT 清空。
+这条清偿同时验证了「豁免失效即红」这条机制真的会咬人：补完用例后第一次跑
+cover-gate，报的正是「豁免失效，请从 PKG_COV_EXEMPT 移除」，而不是默默放行。
+用例覆盖 run() 的十条判定路径，每条都断言**错误内容**而不只是「返回了 non-nil」
+——这道门禁的失败形态恰恰是「红错了地方」：漂移确实报了，但报的是另一条问题。
+顺带抓到一个此前无人知道的事实：strconv.Atoi 的失败分支**靠「写了 abc」永远
+进不去**——rowRe 的行数捕获组本身就是 ([0-9]+)，那种行压根匹配不上表格行，会
+走到「没解析到任何包表行」。唯一入口是**溢出**（几十位数字）。用例据此改用溢出
+形态，并在注释里写明原因；否则这条分支既没覆盖，也没人知道它几乎不可达。
+验收：make check EXIT=0（3m34s）；覆盖率 85.0% → 87.0%，逐包下限 32 包全达标、
+0 个豁免。
+
+
 ## [v0.17.0] — 2026-11-06
 
 ### 修复(ptc)：边际往返成本判据改用最小值统计量——它会偶发假红
