@@ -1,6 +1,7 @@
 package skilldisclose
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -121,5 +122,151 @@ func TestExcludeAndResourceMatch(t *testing.T) {
 	res4, _ := c.Disclose(Query{Mention: "vue", Exclude: []string{"vue"}}, Budget{})
 	if len(res4.Skills) != 0 {
 		t.Fatalf("已披露的必须排除，实得 %+v", res4.Skills)
+	}
+}
+
+// rawResourceHit / scoreOfRaw 是**改造前**的实现，逐字保留下来做对照。
+//
+// 为什么需要它们：改造把小写化从内层循环提到构造期与查询级（entry.lower*），
+// 顺带把「声明资源要 trim、标签与查询路径不 trim」这条既有口径拆成两个助手。
+// 这条差异**不报错**：trim 加错了只会让带空格的标签从不命中变成命中，披露结果
+// 悄悄变了而没有任何门禁会响。故两边各算一遍分数逐项比对——参考实现刻意
+// 不复用生产的 resourceHitLower / lowerDeclared，否则同一个判据写错时两边一起错。
+func rawResourceHit(declared []string, path string) bool {
+	p := strings.ToLower(path)
+	for _, d := range declared {
+		d = strings.ToLower(strings.TrimSpace(d))
+		switch {
+		case d == "":
+			continue
+		case strings.HasSuffix(d, "/"):
+			if strings.HasPrefix(p, d) {
+				return true
+			}
+		case strings.HasPrefix(d, "."):
+			if strings.HasSuffix(p, d) {
+				return true
+			}
+		default:
+			if p == d || strings.Contains(p, d) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func scoreOfRaw(s Skill, mention string, words map[string]bool, resources []string) int {
+	if mention != "" && mention == s.Name {
+		return scoreMention
+	}
+	score := 0
+	if mention != "" && strings.Contains(strings.ToLower(s.Name), strings.ToLower(mention)) {
+		score += scoreNameInText
+	}
+	if words[strings.ToLower(s.Name)] {
+		score += scoreNameInText
+	}
+	for _, r := range resources {
+		if rawResourceHit(s.Resources, r) {
+			score += scoreResource
+			break
+		}
+	}
+	for _, tag := range s.Tags {
+		if words[strings.ToLower(tag)] {
+			score += scoreTag
+			break
+		}
+	}
+	descHits := 0
+	for w := range words {
+		if w == "" || len(w) < 2 {
+			continue
+		}
+		if strings.Contains(strings.ToLower(s.Description), w) {
+			descHits++
+			if descHits >= scoreDescWordMax {
+				break
+			}
+		}
+	}
+	return score + descHits
+}
+
+// TestScoreOfMatchesRawOracle 预计算形态与现算形态必须逐项同分。
+//
+// 夹具刻意带大小写与首尾空格：名字/描述含大写（考验 lowerName/lowerDesc），
+// 标签含空格（**不该** trim）、声明资源含空格（**该** trim）、查询路径含空格
+// （**不该** trim）。这几条正是最容易被「顺手更稳」改掉的。
+func TestScoreOfMatchesRawOracle(t *testing.T) {
+	c := mustCatalog(t,
+		Skill{Name: "Alpha_Tool", Description: "处理 ALPHA 与 Beta 的差异",
+			Tags: []string{"alpha", " beta "}, Resources: []string{" Deploy/ ", ".VUE", "src"}},
+		Skill{Name: "beta_runner", Description: "跑 BETA 用例并汇总",
+			Tags: []string{"Beta"}, Resources: []string{".Go"}},
+		Skill{Name: "gamma", Description: "无关描述", Tags: nil, Resources: nil},
+	)
+	cases := []struct {
+		mention   string
+		text      string
+		resources []string
+	}{
+		{"", "alpha beta", []string{"src/main.go"}},
+		{"alpha_tool", "alpha", []string{"deploy/x.yaml"}},
+		{"ALPHA_TOOL", "beta", []string{"a.vue"}},
+		{"", "", []string{"x.go"}},
+		{"gamma", "alpha", nil},
+		{"", "gamma", []string{" SRc/x.go "}},
+	}
+	hit, miss := false, false
+	for _, tc := range cases {
+		words := tokenize(tc.text)
+		mention := strings.TrimSpace(tc.mention)
+		mentionLower := strings.ToLower(mention)
+		pathsLower := lowerEach(tc.resources)
+		for _, e := range c.skills {
+			got := scoreOf(e, mention, mentionLower, words, pathsLower)
+			want := scoreOfRaw(e.skill, mention, words, tc.resources)
+			if got != want {
+				t.Fatalf("mention=%q text=%q res=%v 技能 %s: 预计算 %d != 现算 %d",
+					mention, tc.text, tc.resources, e.skill.Name, got, want)
+			}
+			if got == 0 {
+				miss = true
+			} else {
+				hit = true
+			}
+		}
+	}
+	// 非空洞前提：这组用例必须同时出现「命中」与「不命中」，否则比对恒等于 0==0。
+	if !hit || !miss {
+		t.Fatalf("用例未覆盖命中与不命中两种结局（hit=%v miss=%v）——本条对照证明不了什么", hit, miss)
+	}
+}
+
+// BenchmarkDisclose 披露热路径基准。目录成员的小写形态在 New 里算一次，
+// 这里量的是「每次披露」的成本（打分 + 排序 + 预算裁剪）。
+func BenchmarkDisclose(b *testing.B) {
+	skills := make([]Skill, 0, 100)
+	for i := 0; i < 100; i++ {
+		skills = append(skills, Skill{
+			Name:        "skill_" + strconv.Itoa(i),
+			Description: "处理代码变更并汇总差异，产出结构化报告，供后续环节复核与归档使用。",
+			Resources:   []string{"deploy/", ".vue", "src/"},
+			Tags:        []string{"alpha", "beta"},
+		})
+	}
+	c, err := New(skills)
+	if err != nil {
+		b.Fatal(err)
+	}
+	q := Query{Text: "alpha beta gamma delta epsilon zeta eta theta", Resources: []string{"src/main.go"}}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := c.Disclose(q, Budget{Max: 5}); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

@@ -43,33 +43,75 @@ func (c *Catalog) Search(query string) []Match {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	out := make([]Match, 0, len(c.tools))
-	for _, name := range namesOf(c.tools) {
-		t := c.tools[name]
-		score := scoreTool(normalized, terms, t.Name, t.Description)
-		if score <= 0 {
-			continue
+	r := ranker{limit: c.limit}
+	for _, name := range c.names {
+		e := c.tools[name]
+		if score := scoreLowered(normalized, terms, e.lowerName, e.lowerDesc); score > 0 {
+			r.add(Match{Tool: e.tool, Score: score})
 		}
-		out = append(out, Match{Tool: t, Score: score})
 	}
-
-	// 目录内名字唯一 ⇒ 排序键 (分值, 名字) 是**全序** ⇒ 同分项的先后不依赖 map 遍历序。
-	// 这条不变量是排序可复现的全部依据（见 NewCatalogWithLimit 的重名规则）。
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
-		}
-		return out[i].Name < out[j].Name
-	})
-	if len(out) > c.limit {
-		out = out[:c.limit]
+	// 有检索词但无命中：返回**空切片而非 nil**（旧行为）。调用方拿 nil 与空切片做
+	// 分支的写法在本包之外不该出现，但这条是既有契约，改它就是改语义。
+	if r.top == nil {
+		return []Match{}
 	}
-	return out
+	return r.top
 }
 
-// scoreTool 单条打分，恒 >= 0；0 表示无命中（不入结果）。
+// ranker 实时维护分值前 limit 名命中。
+//
+// # 为什么不「先全收、再排序、再截断」
+//
+// 排序键 (分值, 名字) 在目录内是**全序**——名字唯一由 NewCatalogWithLimit 的
+// 重名规则（first wins）保证，故「排序后取前 k」与「边扫边维护前 k」逐项等价，
+// 结果连顺序都逐字相同。等价的好处是量纲：旧写法按 len(c.tools) 预分配结果切片，
+// 而 Match 内嵌**完整 Tool**（含 Schema），100 个工具时每次检索先摊 ~8.8 KB 临时
+// 内存、最终只留最多 5 条；且那次排序是 O(n log n)，前 k 插入是 O(n·k)。
+//
+// 目录成员不变这条不变式还让「扫描面」本身无需每次重建：名单在构造期定稿
+// （见 Catalog.names）。
+type ranker struct {
+	top   []Match
+	limit int
+}
+
+// higher 报告 a 是否排在 b 之前：分值降序，同分按名字升序。
+func higher(a, b Match) bool {
+	if a.Score != b.Score {
+		return a.Score > b.Score
+	}
+	return a.Name < b.Name
+}
+
+// add 把一条命中并入前 limit 名；排不进去就丢弃。
+//
+// 插入位置用二分：top 恒按 higher 升序（即"最好的在前"），故「m 排在 top[j] 之前」
+// 这个谓词是**单调**的（真值从某个 j 起恒真），sort.Search 的前提成立。
+func (r *ranker) add(m Match) {
+	i := sort.Search(len(r.top), func(j int) bool { return higher(m, r.top[j]) })
+	if i >= r.limit {
+		return // 连末位都挤不进：更差的候选不影响结果
+	}
+	if len(r.top) < r.limit {
+		r.top = append(r.top, Match{})
+	}
+	// 从 i 起整体右移一格，末位自然被挤掉（len==limit 时即"丢最后一名"）。
+	copy(r.top[i+1:], r.top[i:len(r.top)-1])
+	r.top[i] = m
+}
+
+// scoreTool 单条打分（按原样入参，内部小写化），恒 >= 0；0 表示无命中（不入结果）。
+//
+// 检索主路径不调它：目录在构造期已把小写形态算好（见 entry），主路径走
+// scoreLowered 直接给形态。这里保留「入参小写化」这层包装，是为了让**打分规则**
+// 与它的调用面分成两件事——规则只在 scoreLowered 里写一份，包装不做任何额外判断。
+// 否则两套实现各判一套，漂移只是时间问题（同一条纪律见 scan.go 的 regexViolationsIn）。
 func scoreTool(normalized string, terms []string, name, description string) int {
-	ln, ld := strings.ToLower(name), strings.ToLower(description)
+	return scoreLowered(normalized, terms, strings.ToLower(name), strings.ToLower(description))
+}
+
+// scoreLowered 单条打分的**唯一**实现；入参须已是小写形态。
+func scoreLowered(normalized string, terms []string, ln, ld string) int {
 	score := 0
 	for _, term := range terms {
 		if strings.Contains(ln, term) {

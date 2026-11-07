@@ -31,6 +31,8 @@
 //
 // 目录是本包唯一随工具数量线性增长的内存，故「单个工具最多占多少」必须是可核对的事实：
 // 描述在构造时截到 MaxDescriptionLen，故目录占用有上界，宿主不必逐条自查描述长度。
+// 检索用的小写形态另存一份，但它只在描述**真含大写**时才单独占内存（strings.ToLower
+// 在无字符改变时原样返回入参），故上界是「每条至多两份截断描述」——仍是有界的。
 //
 // 反过来，**跨轮复用的缓存不归本包管**：本包没有隐式的请求作用域（参考实现靠 Python 的
 // contextvar 天然拿到 thread 级缓存，Go 没有等价物），凭空造一个就是替宿主决定生命周期。
@@ -43,7 +45,9 @@
 package tooldisclose
 
 import (
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/oekit/pkg/stringx"
@@ -138,10 +142,38 @@ func truncateDescription(s string) string {
 // 门禁正是靠这条不变式把「在目录内」判成一个稳定事实：并发加载不会让同一个名字
 // 在两次调用里一会儿在、一会儿不在。
 type Catalog struct {
-	mu     sync.RWMutex
-	tools  map[string]Tool
+	mu sync.RWMutex
+	// tools 目录成员本体（构造后不变）；names 与它同键同量，构造期排好序。
+	//
+	// 为什么把名单单独存一份：它是**从 tools 派生**的值，而 tools 构造后不再变化，
+	// 故派生一次即可——旧写法让 Names / Search / ExposeAll 三个出口各自调一遍
+	// namesOf（收集 + 排序），同一份名单在每次检索时重算一遍；且 Search 在持读锁
+	// 期间做 O(n log n) 排序，顺带把 Load 的写锁挡在后面。
+	tools  map[string]entry
+	names  []string
 	loaded map[string]bool
 	limit  int
+}
+
+// entry 目录成员 + 检索用小写形态。
+//
+// # 为什么把小写形态存下来（而不是每次检索现算）
+//
+// 检索是大小写无关的，故打分要先小写化。而 strings.ToLower 对**含非 ASCII** 的串
+// 走 rune 映射慢路径：实测一次 100 工具的检索里，100 条中文描述的 ToLower 占了
+// 76.6% 的 CPU（unicode.lookupCaseRange 一家 39.7%），检索本身只占零头。
+// 目录成员构造后不变（见 Catalog 的不变式），这份派生值算一次就够。
+//
+// # 内存代价
+//
+// 只有**真含大写**的描述才会多存一份：strings.ToLower 在无字符改变时原样返回入参
+// （strings.Map 的既有行为），故小写中文描述与原文共用同一份字节。含大写的描述
+// 多占至多一份 MaxDescriptionLen——目录内存上界因此从「每条 1 份描述」变成
+// 「每条至多 2 份描述」，仍是有界的可核对事实。
+type entry struct {
+	tool      Tool
+	lowerName string
+	lowerDesc string
 }
 
 // NewCatalog 按默认检索上限构造目录。
@@ -166,7 +198,7 @@ func NewCatalog(tools []Tool) *Catalog { return NewCatalogWithLimit(tools, Defau
 // 在调用本包前自己按名去重即可——那属于装配期的校验，不属于运行期门禁。
 func NewCatalogWithLimit(tools []Tool, limit int) *Catalog {
 	c := &Catalog{
-		tools:  make(map[string]Tool, len(tools)),
+		tools:  make(map[string]entry, len(tools)),
 		loaded: make(map[string]bool, len(tools)),
 		limit:  clampLimit(limit),
 	}
@@ -181,16 +213,28 @@ func NewCatalogWithLimit(tools []Tool, limit int) *Catalog {
 		// 在**存进目录前**截断，而不是渲染时再截：检索打分读的就是这份存储值，
 		// 惰性截断会让打分面对全文、模型面对摘要，两边看到的不是同一件事。
 		t.Description = truncateDescription(t.Description)
-		c.tools[t.Name] = t
+		// 小写形态按**截断后**的描述算：检索打分读的是存储值，两者必须是同一串，
+		// 否则模型看到摘要、打分看到全文（这条纪律原本就写在截断处）。
+		c.tools[t.Name] = entry{
+			tool:      t,
+			lowerName: strings.ToLower(t.Name),
+			lowerDesc: strings.ToLower(t.Description),
+		}
 	}
+	// 名单在成员定稿后一次算好：目录成员构造后不变，这是本类型写在类型注释里的
+	// 不变式，派生一次即与真相同寿。
+	c.names = namesOf(c.tools)
 	return c
 }
 
 // Names 目录内全部工具名，升序。
+//
+// 返回的是副本：调用方拿到的切片可以随便改，改不动目录（与旧实现一致——旧实现
+// 每次调用都新建切片，这里保留那条契约，只是不再重新排序）。
 func (c *Catalog) Names() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return namesOf(c.tools)
+	return slices.Clone(c.names)
 }
 
 // Len 目录内工具数（去重后）。
@@ -212,8 +256,8 @@ func (c *Catalog) Has(name string) bool {
 func (c *Catalog) Lookup(name string) (Tool, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	t, ok := c.tools[name]
-	return t, ok
+	e, ok := c.tools[name]
+	return e.tool, ok
 }
 
 // Load 取回完整 schema 并标记为已加载，幂等（重复取回不改变任何状态）。
@@ -222,12 +266,12 @@ func (c *Catalog) Lookup(name string) (Tool, bool) {
 func (c *Catalog) Load(name string) (Tool, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	t, ok := c.tools[name]
+	e, ok := c.tools[name]
 	if !ok {
 		return Tool{}, false
 	}
 	c.loaded[name] = true
-	return t, true
+	return e.tool, true
 }
 
 // IsLoaded 该工具的 schema 是否已取回。
@@ -249,11 +293,11 @@ func (c *Catalog) Loaded() []string {
 func (c *Catalog) Expose(name string) (Exposure, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	t, ok := c.tools[name]
+	e, ok := c.tools[name]
 	if !ok {
 		return Exposure{}, false
 	}
-	return exposureOf(t, c.loaded[name]), true
+	return exposureOf(e.tool, c.loaded[name]), true
 }
 
 // ExposeAll 全目录披露面，按名升序。
@@ -262,10 +306,10 @@ func (c *Catalog) Expose(name string) (Exposure, bool) {
 func (c *Catalog) ExposeAll() []Exposure {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	out := make([]Exposure, 0, len(c.tools))
-	for _, name := range namesOf(c.tools) {
-		t := c.tools[name]
-		out = append(out, exposureOf(t, c.loaded[name]))
+	out := make([]Exposure, 0, len(c.names))
+	for _, name := range c.names {
+		e := c.tools[name]
+		out = append(out, exposureOf(e.tool, c.loaded[name]))
 	}
 	return out
 }
