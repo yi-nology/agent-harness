@@ -2,6 +2,91 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.22.0] — 2026-11-07
+
+### 重构：收掉同体异名包装与手写等价物（三处，无行为变化）
+
+1) archcheck/egressprobe.go：hasPlumbing 与 hasCapabilityProbe 两个函数体
+   逐字相同（都 return hasEgressMethodCall(...)），差别只在调用点传的实参
+   （names / probes）。**同体异名比没有名字更坏**：读者会以为两处判据不同，
+   于是改一处漏一处时没人怀疑，而这条门禁守的正是「两个调用都得看得见」。
+   删掉两个包装，调用点直调唯一实现、各带一行「这是哪一半」；「为什么两半
+   不能合成一个名字列表」的推理原本写在被删的注释里，现挂到唯一实现上——
+   报错要说清缺的是哪一半，两种缺法的修法不同（前者加 Env，后者加后端）。
+2) protocol/report_charts.go：pointerText 换成 oekit/pkg/ptrx.Deref(p, "")。
+   本包已依赖 oekit/pkg（jsonrepair），不新增依赖边，删掉 6 行手写 nil 判空。
+3) taskboard/taskboard.go：joinIDs 用 strings.Join 取代循环内 s +=（原写法
+   O(n²)、每轮重新分配），纯等价。
+刻意**不改**的三处（评估后判为「为采用而采用」，连同理由留档）：
+- archcheck 的 containsString / containsPath 不换 slicex.Contains：policy 里
+  archcheck 的 requires 声明为空并写明理由「门禁必须是最底层的东西，否则用它
+  判别人就变成它自己也在被判定」。为省 6 行把 oekit/pkg 拖进门禁二进制不划算。
+- ptc/env.go 的 ctx 缝不换 ctxscope：私有 key 类型已足够隔离，纯横向替换。
+  附带核实：deadcode 把 WithEnv/EnvOf 报成 unreachable 是**库仓的假象**——
+  宿主 bianque 的 internal/engine/runner/runner.go:348 与
+  internal/engine/tools/runprogram.go:54 正在用它们，删不得。
+- spill.ReadPage 的 ReadAt 不换 bufiox.TailLines（字节偏移分页 vs 行粒度尾窗，
+  语义不符）；drain 的 ticker 不换 concurrency/loop（本循环含「进循环前先试
+  一次」与「到点强制取消」，替换后更绕）。
+README 生产代码行数 25,019 → 25,003（docsync 判相等，无容差）。
+
+- 杂务(deps)：依赖地板追平上游本轮新版本——guardx v0.22.0 / toolgate v0.14.0 / mcpkit v0.12.0 / logx v0.8.6
+
+四个模块本轮改的都是「判定单源」与「静默失效」，没有一个改本仓调用面：
+- guardx v0.22.0：新增 Policy.CheckRedirect（逐跳 URL 判定 + 跳数上限，即
+  我上一轮提的 guardx#87 残余面）。本仓不接线——重定向面归宿主装配，本仓
+  只吃版本。
+- toolgate v0.14.0：裁决→放行映射收敛成唯一单源（verdictDisposition），并把
+  plan_only 纳入规则合法 verdict 域。本仓没有第二份裁决映射，无需改代码。
+- mcpkit v0.12.0：新增模型面披露契约 DisclosureGate（三态 + Guidance 文案），
+  并把 request-ID 与探活指纹收成单源。**本仓刻意不采用它的 DisclosureGate**：
+  它是从本仓手搓门禁抽上去的上游契约，但绑在 mcpkit 自己的 Catalog 上（具体
+  类型），而 mcpkit/mcp 依赖 eino + mcp-go——引入等于拿一个三态判定换一整条
+  mcp SDK 依赖；且本仓的哨兵二分、Retryable 自报、Activated 副作用三件仍然
+  要留（toolfail 靠 Retryable 分流，不是靠解析文案）。净收益为负。
+- logx v0.8.6：stdWriter 改动态委托 log.Writer()，恢复 log.SetOutput 拦截
+  契约（上一版固化了私有 log.New）。这是宿主侧测试捕获法的修复，本仓不依赖
+  该行为，只吃版本。
+做法：go get 四个模块 @目标版本 → go mod tidy → go build / go vet → 全量
+make check（覆盖率 87.9%、逐包 ≥70%、govulncheck 0 漏洞、-race 全绿、四平台
+交叉构建、架构门禁、docsync）全绿。判据与解析逻辑未动一行，故无行为差异。
+
+
+- 文档(readme)：版本兼容表补 v0.22.0 / v0.21.0 两行，并纠正过期的「待发版」
+
+表此前停在 v0.20.1 且标着「（待发版）」——实际 v0.20.1 与 v0.21.0 都已发过，
+v0.21.0 段整行缺失。三处处理：
+① v0.22.0 行：地板抬升（guardx / toolgate / mcpkit / logx）⇒ 下游必须
+   `go mod tidy`；并写明**刻意不采用** mcpkit DisclosureGate 的理由，免得
+   下一个人把同一笔评估重做一遍（它是从本仓手搓门禁抽上去的契约，但绑在
+   mcpkit 自己的 Catalog 上，而那个包依赖 eino + mcp-go）。
+② v0.21.0 行：**标明是补录**，迁移动作只写到「无需 tidy、无需改调用面」
+   这一层能确证的程度；label 面是否收窄留着读者自查——补录的依据是
+   `git log v0.20.1..v0.21.0`，不是逐行核过那版代码。
+③ v0.20.1 的「（待发版）」改成「（已发版，tag v0.20.1）」。
+这张表不在 docsync 的判定面内（散文），所以它漂了没人报警——写清补录边界
+比补一个看起来完整的行更有用。
+
+
+- 测试(checkpoint)：补跨包履约链——崩溃重启后续跑不重放副作用
+
+三个包各自的判据都成立，但它们各答一半的问题：BuildPlan 答「哪几步不用再跑」、
+sideeffect.Runner 答「同一个逻辑动作只施加一次」、commitgate 答「同一环节的终态
+只被提交一次」。合起来才是本仓对宿主的承诺，而这条承诺的成败取决于重启时有没有
+用持久化事实回灌进程内状态——三处回灌漏一处，每一个单包判据仍然全绿。
+用例把一次真崩溃（不交还闸、不写最终快照）与一次重启跑成一条链，逐条断言：
+①续跑跳过已完成且可信的步骤 ②宿主重试也不重放副作用 ③终态不被重复提交
+④快照序号不回退。另加一条反面对照：跳过回灌 ⇒ 副作用与终态都会重复发生，
+且不报任何错——这才是「回灌必须存在」的理由。
+④ 最初写成单条「整体被拒」，变异验证时没红：拒绝其实来自存储侧 CAS，进程内闸
+的功劳被记到了别人头上。改成分层断言（alwaysAccept 存储 + 无闸提交器）后才各自
+可红。判据要能指出「是谁拦住的」，否则它只是在证明链路里有人拦。
+四处变异反向验证（改生产代码，逐处报出 --- FAIL 与断言行，还原即绿）：
+sideeffect 把 replayed 当 applied / commitgate.Seed 空操作 /
+BuildPlan 不看已完成集 / SeqGate.Seed 空操作。
+README 测试文件数 170 → 171（docsync 判相等；生产行数未动）。
+
+
 ## [v0.21.0] — 2026-11-07
 
 ### 新增(trajectory)：OTel 映射从 seam 长成契约表——每个属性有主，父子关系落 Span.ParentID
