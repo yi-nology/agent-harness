@@ -1,3 +1,5 @@
+//go:build unix
+
 package ptc_test
 
 // 本文件提供一条**与负载无关的标尺**，供「墙钟上界」类判据换算成比值。
