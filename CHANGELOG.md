@@ -30,6 +30,23 @@
   一次」与「到点强制取消」，替换后更绕）。
 README 生产代码行数 25,019 → 25,003（docsync 判相等，无容差）。
 
+- 杂务(deps)：地板再追一格——发版门禁拦下后追到 guardx v0.23.0 / toolgate v0.15.0 / agent v0.14.1
+
+`release.py tag` 的「发版时刻地板时效」门禁在打 tag 那一刻拦下：上一笔提交
+（8bbdcef）之后三小时内上游又发了三个版本，于是那笔的版本号在打 tag 时已经
+过期。这条门禁的存在理由正是这个场景——**地板是跑步机**，落后一格就不能发。
+- `guardx` v0.22.0 → **v0.23.0**：permgate 的 subjectKeys 与工具名等价规则
+  外置可配（`Service.SubjectKeys` / `ToolEquivalence` / `OnConfigWarn`），
+  零值 = 内置 6 键，向后兼容。这正是 guardx#86 的落地版——本仓不实现
+  permgate 服务（那是宿主装配面），故只吃版本，不新增调用。
+- `toolgate` v0.14.0 → **v0.15.0**：补 `invoke` 的搬迁兼容壳（旧 import
+  路径 `toolgate/invoke` 恢复编译）。本仓早已改用 `guardx/invoke`，不受影响。
+- `agent` v0.14.0 → **v0.14.1**：clarify 的选项匹配改为精确优先 + 否定前缀
+  防护（「不是」不再命中「是」）。纯判定修复，调用面不变。
+做法：go get 逐个升级（`goproxy.cn` 对 toolgate v0.15.0 前两次返回
+404 temporarily unavailable，第三次取到——缓存未命中是瞬时状态，不是版本不存在）
+→ go mod tidy → go build / go vet → 全量 make check。详见下一个 CHANGELOG 段。
+
 - 杂务(deps)：依赖地板追平上游本轮新版本——guardx v0.22.0 / toolgate v0.14.0 / mcpkit v0.12.0 / logx v0.8.6
 
 四个模块本轮改的都是「判定单源」与「静默失效」，没有一个改本仓调用面：
