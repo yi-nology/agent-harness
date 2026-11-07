@@ -143,6 +143,11 @@ func godObjects(root string, scanRoots []string, limit, shellLimit int) ([]strin
 	}
 
 	if len(parseErrs) > 0 {
+		// ToSlash：错误文案里的路径跨平台稳定（windows 工作区跑门禁时
+		// 不因 \ / 分歧产生不同指纹；与 deps.go/archcheck.go 同惯例）。
+		for i := range parseErrs {
+			parseErrs[i] = filepath.ToSlash(parseErrs[i])
+		}
 		return nil, fmt.Errorf("god object 判据无法解析以下文件，其方法数未被计入（门禁对该文件隐形）：\n    %s",
 			strings.Join(parseErrs, "\n    "))
 	}

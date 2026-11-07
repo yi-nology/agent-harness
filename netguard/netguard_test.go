@@ -1,6 +1,7 @@
 package netguard
 
 import (
+	"runtime"
 	"time"
 
 	"net"
@@ -136,7 +137,14 @@ func TestCheckURLLoopbackFamilyFollowsAllowFlag(t *testing.T) {
 	if err := CheckURLWith("http://localhost:9/x", Allow{Private: true, Loopback: true}); err != nil {
 		t.Fatalf("allowLoopback=true 时回环族名字应放行: %v", err)
 	}
-	if err := CheckURLWith("http://api.localhost:9/x", Allow{Private: true, Loopback: true}); err != nil {
+	if runtime.GOOS == "windows" {
+		// windows 系统解析器不带 .localhost 特判（unix 的 systemd-resolved/
+		// macOS resolver 会把 *.localhost 导回环），api.localhost 在那里
+		// 直接 NXDOMAIN——放行语义的验证依赖解析器 magic，属平台差异，
+		// 显式跳过而不是让 windows CI 永远红。名字层拦截用例（下方
+		// allowLoopback=false）不走解析，windows 照跑。
+		t.Log("windows 无 .localhost 解析器 magic，跳过解析依赖断言")
+	} else if err := CheckURLWith("http://api.localhost:9/x", Allow{Private: true, Loopback: true}); err != nil {
 		t.Fatalf("allowLoopback=true 时 .localhost 后缀应放行: %v", err)
 	}
 	for _, u := range []string{"http://localhost/x", "http://api.localhost/x"} {

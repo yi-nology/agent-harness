@@ -136,7 +136,7 @@ func importViolationsIn(r Rule, re *regexp.Regexp, rel string, src []byte) ([]Vi
 		}
 		out = append(out, Violation{
 			Rule: r.ID,
-			Path: rel,
+			Path: filepath.ToSlash(rel),
 			Line: fset.Position(im.Path.Pos()).Line,
 			Text: fmt.Sprintf("import %q（禁止的依赖路径）", p),
 			Kind: "forbid_import",

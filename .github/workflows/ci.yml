@@ -18,6 +18,23 @@ permissions:
   contents: read
 
 jobs:
+  # windows job 真跑测试（issue #34 建议 1）：交叉构建只能证明编得过，
+  # procx 这类进程原语要证明跑得对必须真执行。范围全仓——unix 专属用例
+  # 以 //go:build unix 守卫（与上游 procx 的做法一致），windows 侧用例
+  # 用 cmd 形态的夹具。runner 用 windows-latest（无钉死 major.minor 的
+  # 镜像迁移公告，若有按 check job 的口径另行钉死）。
+  windows-test:
+    name: windows (真跑测试)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go build ./...
+      - run: go test ./... -count=1
+
   check:
     name: fmt + vet + lint + test + cover-gate(全局+逐包) + vuln + race + crossbuild + archcheck + repo 卫生
     runs-on: ubuntu-24.04

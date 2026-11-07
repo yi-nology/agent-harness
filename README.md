@@ -194,7 +194,7 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 24,585 行 / 136 文件（不含 `_test.go`）|
+| 生产代码 | 24,590 行 / 136 文件（不含 `_test.go`）|
 | 测试 | 167 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
@@ -363,7 +363,7 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 | linux/amd64 | ✅ 支持 | `make crossbuild` 每次 `make check` 都验 |
 | linux/arm64 | ✅ 支持 | 同上 |
 | darwin/arm64 | ✅ 支持 | 同上（本机开发面） |
-| **windows/amd64** | ❌ **不支持** | 上游 `github.com/oagentkit/runtime/procx` 用了 unix 专属符号（`syscall.SysProcAttr.Setpgid`、`syscall.Kill`），**编译期**即失败，本仓改不了它 |
+| **windows/amd64** | ✅ **支持（语义降级，见下）** | 2026-11-07 回归：上游 `oagentkit/runtime` procx 落地 Windows 进程树路径（Job Object 建组 + TerminateJobObject 整树硬杀，runtime v0.11.0 起，oagentkit/runtime#24）——`make crossbuild` 恢复 windows/amd64，CI 增加 windows job 真跑测试。**语义降级**：Windows 无进程组信号语义，TERM 优雅退出降级为整树硬终止；这是接口层写明的差异，不是对等实现 |
 
 处置方式：**显式声明不支持**，而不是留着「看起来支持、其实编不过」。`make crossbuild`
 只判 `CROSS_TARGETS` 里列出的平台——为一条永远编不过的目标留门禁不是严谨，是把红线

@@ -1,3 +1,5 @@
+//go:build unix
+
 package ptc_test
 
 import (

@@ -26,11 +26,11 @@ require (
 	github.com/dop251/goja v0.0.0-20261105002551-2413f2132ac8
 	github.com/oagentkit/agent v0.14.0
 	github.com/oagentkit/guardx v0.19.0
-	github.com/oagentkit/runtime v0.10.0
+	github.com/oagentkit/runtime v0.12.0
 	github.com/oagentkit/toolgate v0.13.0
-	github.com/oekit/concurrency v0.27.0
+	github.com/oekit/concurrency v0.28.0
 	github.com/oekit/logx v0.8.4
-	github.com/oekit/pkg v0.36.0
+	github.com/oekit/pkg v0.37.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	gopkg.in/yaml.v3 v3.0.1
 )
