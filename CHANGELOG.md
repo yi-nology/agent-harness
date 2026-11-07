@@ -2,6 +2,36 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.25.1] — 2026-11-07
+
+### 重构：该替换的替换掉（slicex/stringx + stdlib slices），代码净减 40 行
+
+1) 「切片里有没有这个元素」在本仓有三份手写实现，其中 archcheck 里那两份还是
+   **同包重复**（containsString 与 containsPath 函数体逐字相同）⇒ 一并交给
+   slices.Contains 并删掉两个 helper。判据面没变，只是不再维护两份一样的循环。
+2) egress.equalStrings 就是 slices.Equal（等长 + 逐元素比较），删掉。
+3) guardset.Guards() 与 ptc.mountDiscover 的手工 index 拷贝换成
+   oekit/pkg/slicex.Map；两包的 requires 早已含 ext:github.com/oekit/pkg，policy 不动。
+4) memorypipe.hasTag → slicex.Contains（同一依赖声明，policy 不动）。
+5) cmd/pkgcov.splitList 的「拆逗号 + 去空白 + 丢空项」与
+   oekit/pkg/stringx.SplitCSVNonEmpty 逐字等价，换成它；排序仍留在本地——
+   清单出口必须有序列，那是这个函数自己的要求。cmd/pkgcov 在 policy 的
+   ignore_dirs 里，依赖声明不受影响。
+**没替换的，连同理由**（避免下次重复判断）：
+- archcheck 的 requires 是 []（零外部依赖的判据执行体，README 包表依赖列=无）。
+  给一个「用来检查整条依赖链」的包引入被检查生态的依赖是反向的，故那两处宁可
+  换成 stdlib slices 也不引 oekit/pkg。
+- cmdpolicy.Split 保留自研：shellx 只有 Quote / QuoteArgv，没有分词器；而本仓
+  分词把 ; | & 单独成 token（判据要能切开多段命令），与通用分词不是同一件事。
+- protocol 的围栏剥离不换 jsonrepair.StripCodeFence：report_types.go 里已有逐条
+  对比——正则版能处理「字段内含 sh 代码块」，StripCodeFence 会截断在内层围栏。
+- 测试里 contains / containsStr 这类一行包装保留：它们是可读性设施，换成
+  strings.Contains 只会把调用点写长。
+- budget 的压实计划、eventbus、delta 的有状态标签分流、worktree 的「不支持 glob」、
+  trajectory 的行投影：与上游同名能力判的不是同一件事，不是替换目标。
+行为等价：全部改动只是把同一判据从手写循环搬到既有实现，无公开 API 变更；
+新增 import 只到 stdlib slices 与已声明的 oekit/pkg 子包。
+
 ## [v0.25.0] — 2026-11-07
 
 ### 修复(archcheck)：include 模式不可命中让规则静默失效（+三处哈希走上游）
