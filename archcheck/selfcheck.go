@@ -104,6 +104,25 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 					"规则在、severity 是 error、报告里也计入条数，只是永不触发", r.ID)
 		}
 
+		// forbid_import_regex 的**结构**必须可能命中真正的 import 路径（issue #41）。
+		//
+		// 判据面是 import 路径，而 Go 的 import 路径永远是 clean 形式：不含 '//'、
+		// 不以 '/' 结尾。于是「前缀尾部多写一个斜杠」的写法（(前缀/)(/|$)）
+		// 一条都匹配不到——规则在、severity 是 error、报告里也计入条数，只是永不触发。
+		//
+		// 这与「没有执行体」是同一类静默失效，只是更隐蔽：正则非空、编译通过、
+		// 报告里看不出任何异常。判据本体在 importpattern.go（走 regexp/syntax
+		// 判结构，不走文本比 '//'——后者既会误报字符类 [//]，又抓不到本条
+		// 真正要防的 (前缀/)(/|$)：那里面并没有相邻的两个斜杠）。
+		if r.ForbidImport != "" {
+			if why := importPatternDefect(r.ForbidImport); why != "" {
+				add(policyPath, 0,
+					"规则 %q 的 forbid_import_regex 结构上命中不了任何 import 路径：%s"+
+						"（Go 的 import 路径永远是 clean 形式；边界要写成 (前缀)(/|$)，前缀尾部不带斜杠）",
+					r.ID, why)
+			}
+		}
+
 		// scope 项指向不存在的目录 ⇒ 同样一行都不判。
 		//
 		// ruleFiles 对不存在的 scope 是静默跳过的（它分不清「拼错」与「这个包
