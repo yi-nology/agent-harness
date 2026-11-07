@@ -11,11 +11,22 @@ import (
 	"strings"
 )
 
-func iterFiles(root string, includes []string, ignoreTest bool) []string {
+// iterFiles 列出 root 下的候选文件。
+//
+// 返回 error 而不是「尽力而为的清单」：遍历途中任何一次 Lstat / Readdir 失败，
+// 都意味着**那棵子树没有被判定**。旧实现写的是 `_ = filepath.Walk(...)`，把
+// 失败吞成「零个文件」——于是「读不了这个目录」与「这个目录里没有违规」在
+// 调用方看来完全一样，而门禁照常报「无阻断级违反」。
+//
+// 这是本仓纪律里最贵的失败形态（门禁变绿）：真正的风险从来不是误报，是
+// **给不出结论却显示成通过**。同一条纪律在 importViolations 上已经落地过
+// （语法坏掉的文件不得静默跳过），这里补齐的是遍历侧。
+func iterFiles(root string, includes []string, ignoreTest bool) ([]string, error) {
 	var out []string
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	walkErr := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil
+			// 回传而不是吞掉：交给 Walk 终止并把错误带出。
+			return err
 		}
 		if info.IsDir() {
 			base := info.Name()
@@ -46,7 +57,12 @@ func iterFiles(root string, includes []string, ignoreTest bool) []string {
 		}
 		return nil
 	})
-	return out
+	if walkErr != nil {
+		// 与 importViolations 对解析失败的处置同一条：门禁给不出结论时不能
+		// 装作通过。调用方（ruleFiles / dependencyViolations）必须据此返回 error。
+		return nil, fmt.Errorf("扫描 %s 失败（该子树未被判定，门禁给不出结论）: %w", root, walkErr)
+	}
+	return out, nil
 }
 
 // neutralized 判断命中位置是否落在 negative_follow 豁免内。
@@ -117,10 +133,21 @@ func ruleFiles(root string, r Rule) ([]string, error) {
 	for _, scope := range r.Scope {
 		p := filepath.Join(root, scope)
 		if _, err := os.Stat(p); err != nil {
+			// 这里刻意不报错，但**不是**静默：scope 指向不存在的目录是
+			// 声明与事实的偏离，由 policy 自校验统一判（selfcheck.go 的
+			// 「规则 scope 项必须存在」），那里能给出规则 id 与修法。
+			//
+			// 也就是说：这条 continue 的唯一依据是那条自校验恒开。
+			// 若哪天它被摘掉，这里必须改成返回 error——否则这条规则
+			// 一行都不判，而报告里仍计入「N 条规则」。
 			continue
 		}
+		files, err := iterFiles(p, r.Include, r.IgnoreTest && !r.OnlyTest)
+		if err != nil {
+			return nil, fmt.Errorf("规则 %s: %w", r.ID, err)
+		}
 		// only_test=true 时不能按 ignore_test 提前滤掉测试文件——那正是要扫的。
-		for _, f := range iterFiles(p, r.Include, r.IgnoreTest && !r.OnlyTest) {
+		for _, f := range files {
 			rel, _ := filepath.Rel(root, f)
 			skip := false
 			for _, ex := range r.ScopeExclude {
@@ -207,15 +234,20 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func longFilesReport(root string, scanRoots []string, limit int) []string {
+func longFilesReport(root string, scanRoots []string, limit int) ([]string, error) {
 	var out []string
 	for _, sr := range scanRoots {
 		p := filepath.Join(root, sr)
 		if _, err := os.Stat(p); err != nil {
+			// 声明问题，由 policy 自校验判（thresholds.scan_roots 项必须存在）；
+			// 遍历失败（读不了那棵子树）才是 error，见下。
 			continue
 		}
-		_ = filepath.Walk(p, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") {
+		walkErr := filepath.Walk(p, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() || !strings.HasSuffix(path, ".go") {
 				return nil
 			}
 			// 与 Go 工具链同口径：忽略 `.` / `_` 前缀文件。
@@ -224,7 +256,7 @@ func longFilesReport(root string, scanRoots []string, limit int) []string {
 			}
 			data, err := os.ReadFile(path)
 			if err != nil {
-				return nil
+				return err
 			}
 			if n := strings.Count(string(data), "\n"); n > limit {
 				rel, _ := filepath.Rel(root, path)
@@ -232,7 +264,10 @@ func longFilesReport(root string, scanRoots []string, limit int) []string {
 			}
 			return nil
 		})
+		if walkErr != nil {
+			return nil, fmt.Errorf("阈值扫描 %s 失败（该子树未被判定，门禁给不出结论）: %w", sr, walkErr)
+		}
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }

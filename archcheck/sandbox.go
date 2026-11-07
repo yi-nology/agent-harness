@@ -84,7 +84,10 @@ func sandboxProviderViolations(root string, cfg SandboxProviders) ([]Violation, 
 		return nil, nil
 	}
 	fset := token.NewFileSet()
-	dirs := packageDirs(root, ignoredPaths(cfg.IgnoreDirs))
+	dirs, err := packageDirs(root, ignoredPaths(cfg.IgnoreDirs))
+	if err != nil {
+		return nil, err
+	}
 
 	// 全仓扫出所有后端实现。**先扫实现、再核登记**——顺序反了的话，
 	// 「policy 里少登记了一个后端」这种漂移就永远发现不了（登记面是空的，

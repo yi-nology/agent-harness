@@ -96,8 +96,11 @@ func godObjects(root string, scanRoots []string, limit, shellLimit int) ([]strin
 		if _, err := os.Stat(p); err != nil {
 			continue
 		}
-		_ = filepath.Walk(p, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") {
+		walkErr := filepath.Walk(p, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() || !strings.HasSuffix(path, ".go") {
 				return nil
 			}
 			// 与 Go 工具链同口径：忽略 `.` / `_` 前缀文件（工具链不编译它们，
@@ -107,7 +110,7 @@ func godObjects(root string, scanRoots []string, limit, shellLimit int) ([]strin
 			}
 			src, err := os.ReadFile(path)
 			if err != nil {
-				return nil
+				return err
 			}
 			rel, _ := filepath.Rel(root, path)
 			pkg := filepath.Dir(rel)
@@ -140,6 +143,9 @@ func godObjects(root string, scanRoots []string, limit, shellLimit int) ([]strin
 			}
 			return nil
 		})
+		if walkErr != nil {
+			return nil, fmt.Errorf("god object 判据扫描 %s 失败（该子树未被计入，门禁给不出结论）: %w", sr, walkErr)
+		}
 	}
 
 	if len(parseErrs) > 0 {

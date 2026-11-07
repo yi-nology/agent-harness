@@ -100,7 +100,13 @@ func TestSelfCheckAcceptsCoveredModule(t *testing.T) {
 			ScanRoots:         []string{"ok", "cmd"},
 		},
 	}
-	vs := selfCheckViolations(t.TempDir(), &pol)
+	root := t.TempDir()
+	for _, d := range []string{"ok", "cmd"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vs := selfCheckViolations(root, &pol)
 	if containsText(vs, "scan_roots") {
 		t.Fatalf("判定面已覆盖的包不得被误报，实得 %v", textsOf(vs))
 	}
@@ -194,7 +200,13 @@ func TestSelfCheckScanRootAncestorCoversChild(t *testing.T) {
 			ScanRoots:         []string{"cmd"},
 		},
 	}
-	vs := selfCheckViolations(t.TempDir(), &pol)
+	// 目录必须**真实存在**：本例判的是「祖先覆盖」，不是「存在性」——
+	// 让两条判据互不干扰，否则一条坏掉会被另一条的报错掩盖（用例失去鉴别力）。
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "tool"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	vs := selfCheckViolations(root, &pol)
 	if containsText(vs, "scan_roots") {
 		t.Fatalf("祖先目录覆盖时不得报「漏在 scan_roots 之外」，实得 %v", textsOf(vs))
 	}
@@ -214,7 +226,15 @@ func TestSelfCheckScanRootSiblingDoesNotCover(t *testing.T) {
 			ScanRoots:         []string{"cmd/other"},
 		},
 	}
-	vs := selfCheckViolations(t.TempDir(), &pol)
+	// 两个目录都建出来：判据必须是「兄弟不算覆盖」，不能顺手被
+	// 「scan_roots 项不存在」那条兜住（那样这条用例就证明不了覆盖逻辑）。
+	root := t.TempDir()
+	for _, d := range []string{"cmd/tool", "cmd/other"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vs := selfCheckViolations(root, &pol)
 	if !containsText(vs, "scan_roots") {
 		t.Fatalf("同级兄弟目录不是覆盖，必须仍报「漏在 scan_roots 之外」，实得 %v", textsOf(vs))
 	}

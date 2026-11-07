@@ -23,10 +23,14 @@ import (
 // 判定粒度是**包目录**而不是顶层目录：宿主仓的包根常常是嵌套的
 // （internal/xxx），按顶层目录判定会把整棵 internal/ 树误报成「一个未登记的包」，
 // 而按包目录判定才能指出到底是哪个包漏登记了。
-func unregisteredPackageViolations(root string, mi moduleIndex, cfg DependencyDirection) []Violation {
+func unregisteredPackageViolations(root string, mi moduleIndex, cfg DependencyDirection) ([]Violation, error) {
 	ignore := ignoredPaths(cfg.IgnoreDirs)
 	var out []Violation
-	for _, dir := range packageDirs(root, ignore) {
+	dirs, err := packageDirs(root, ignore)
+	if err != nil {
+		return nil, err
+	}
+	for _, dir := range dirs {
 		rel, _ := filepath.Rel(root, dir)
 		rel = filepath.ToSlash(rel)
 		if _, ok := mi.ownerOf(rel); ok {
@@ -42,14 +46,19 @@ func unregisteredPackageViolations(root string, mi moduleIndex, cfg DependencyDi
 			Kind: "module_unregistered",
 		})
 	}
-	return out
+	return out, nil
 }
 
 // packageDirs 列出仓内所有「含生产 Go 文件」的包目录（跳过仓库根自身）。
-func packageDirs(root string, ignore map[string]bool) []string {
+func packageDirs(root string, ignore map[string]bool) ([]string, error) {
 	var out []string
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || !info.IsDir() {
+	// 遍历失败必须响亮：漏掉一个包目录 = 那个包「未登记」这条判据看不见它，
+	// 而报告里只写着「无阻断级违反」。
+	walkErr := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
 			return nil
 		}
 		if path == root {
@@ -68,8 +77,11 @@ func packageDirs(root string, ignore map[string]bool) []string {
 		}
 		return nil
 	})
+	if walkErr != nil {
+		return nil, fmt.Errorf("扫描包目录失败（未登记包判据给不出结论）: %w", walkErr)
+	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 // hasProductionGo 判断目录里是否直接含生产 Go 文件。

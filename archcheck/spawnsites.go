@@ -79,7 +79,11 @@ func dotSpawnFuncs(dotPaths map[string]bool) map[string]bool {
 func collectSpawnSites(root string, ignore map[string]bool) ([]spawnSite, error) {
 	fset := token.NewFileSet()
 	var out []spawnSite
-	for _, dir := range packageDirs(root, ignore) {
+	dirs, err := packageDirs(root, ignore)
+	if err != nil {
+		return nil, err
+	}
+	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			return nil, err

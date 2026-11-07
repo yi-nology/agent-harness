@@ -103,6 +103,33 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 				"规则 %q 有执行体但 scope 为空：判定面只遍历 scope 里的目录，空清单等于它**一行都不判**——"+
 					"规则在、severity 是 error、报告里也计入条数，只是永不触发", r.ID)
 		}
+
+		// scope 项指向不存在的目录 ⇒ 同样一行都不判。
+		//
+		// ruleFiles 对不存在的 scope 是静默跳过的（它分不清「拼错」与「这个包
+		// 已经改名/迁走」），于是失败形态与上一条同源：规则照常计入「N 条规则」、
+		// severity 照常是 error、报告里照常是绿的，唯独不再判任何东西。
+		//
+		// 这是本仓已经把同一把尺子用在 modules.roots / facades / ignore_dirs 上之后
+		// 剩下的最后一处**没有**被要求「指向真实存在的目录」的声明面。包改名是
+		// 最普通的一次重构，而它会让整条规则静默失效——这正是「陈旧包根当天
+		// 即红」要防的事，只是当时只补了 modules 段。
+		for _, scope := range r.Scope {
+			scope = strings.TrimSpace(scope)
+			if scope == "" {
+				add(policyPath, 0,
+					"规则 %q 的 scope 里有空条目（空字符串不扫任何目录，只让清单看起来更长）", r.ID)
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(scope))); err != nil {
+				// 带上底层错误：权限 / I/O 失败与「目录真的不存在」都会走到这里，
+				// 而两者的修法完全不同（改 policy vs 改权限）——文案不许把后者说成前者。
+				add(policyPath, 0,
+					"规则 %q 的 scope 项 %q 不存在或无法读取（%v）：ruleFiles 对该 scope 静默跳过，"+
+						"于是这条规则**一行都不判**（报告里仍计入「N 条规则」，只是永不触发）；"+
+						"包改名 / 迁走后最容易踩，声明与事实已经偏离", r.ID, scope, err)
+			}
+		}
 		switch r.Severity {
 		case "", "error", "warn":
 		default:
@@ -166,6 +193,32 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 							"它对「超长文件」「god object」两条阈值门禁隐形（可长到任意行数而不报）", r)
 				}
 			}
+		}
+	}
+
+	// ── 阈值扫描根必须指向真实存在的目录 ──
+	//
+	// 与上一条同源：scan_roots 项不存在时，那棵树对「超长文件」「god object」
+	// 两条阈值**完全隐形**——扫描静默跳过，报告只写着「阈值通过」。
+	//
+	// 与 modules.roots 的检查互补而不是重复：那一层判「有没有人该扫这个包」，
+	// 这一层判「清单里的每一项是不是真的扫到了东西」。路径写错或包迁走后，
+	// 前者能过（它只比字符串前缀），后者才红。
+	for _, sr := range pol.Thresholds.ScanRoots {
+		sr = strings.TrimSpace(sr)
+		if sr == "" || sr == "." {
+			continue // "." 是仓库根自身，恒存在；空条目由下面的判据单独说
+		}
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(sr))); err != nil {
+			add(policyPath, 0,
+				"thresholds.scan_roots 项 %q 不存在或无法读取（%v）：那棵树对「超长文件」「god object」"+
+					"两条阈值完全隐形（扫描静默跳过，报告只写着阈值通过）", sr, err)
+		}
+	}
+	for _, sr := range pol.Thresholds.ScanRoots {
+		if strings.TrimSpace(sr) == "" {
+			add(policyPath, 0,
+				"thresholds.scan_roots 里有空条目（空字符串不扫任何目录，只让清单看起来更长）")
 		}
 	}
 

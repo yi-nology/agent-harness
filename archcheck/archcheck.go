@@ -312,7 +312,12 @@ func Run(root string, pol *Policy) (*Result, error) {
 	th := pol.Thresholds
 	res.ThresholdEnforced = th.Enforce
 	if th.MaxFileLines > 0 {
-		if long := longFilesReport(root, th.ScanRoots, th.MaxFileLines); len(long) > 0 {
+		long, err := longFilesReport(root, th.ScanRoots, th.MaxFileLines)
+		if err != nil {
+			// 与 god object 同一条：遍历失败意味着那棵树没被判定。
+			return nil, err
+		}
+		if len(long) > 0 {
 			res.ThresholdFindings = append(res.ThresholdFindings,
 				fmt.Sprintf("超长文件（阈值 %d 行）%d 个:\n    %s", th.MaxFileLines, len(long), strings.Join(long, "\n    ")))
 		}

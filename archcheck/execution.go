@@ -101,7 +101,10 @@ func executionPathViolations(root string, cfg ExecutionPaths) ([]Violation, erro
 	// 而陈旧的登记会让「这条执行路径没人管」这件事**看起来有人管过**。
 	// 与「陈旧包根当天即红」同一条纪律。
 	for _, e := range raw {
-		dir, ok := packageDirByName(root, e.PackageName)
+		dir, ok, err := packageDirByName(root, e.PackageName)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			continue // 仓里没有同名包（典型：宿主仓里没有本仓的 ptc 包目录）
 		}
@@ -118,7 +121,10 @@ func executionPathViolations(root string, cfg ExecutionPaths) ([]Violation, erro
 	}
 
 	fset := token.NewFileSet()
-	dirs := packageDirs(root, ignoredPaths(cfg.IgnoreDirs))
+	dirs, err := packageDirs(root, ignoredPaths(cfg.IgnoreDirs))
+	if err != nil {
+		return nil, err
+	}
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -225,13 +231,17 @@ func mergeExecutionEntries(builtin, declared []ExecutionEntry) []ExecutionEntry 
 // packageDirByName 找出仓内**包名**等于给定名字的包目录。
 //
 // 按包名（package clause）而不是目录名找：目录名与包名可以不同。
-func packageDirByName(root, pkgName string) (string, bool) {
-	for _, dir := range packageDirs(root, nil) {
+func packageDirByName(root, pkgName string) (string, bool, error) {
+	dirs, err := packageDirs(root, nil)
+	if err != nil {
+		return "", false, err
+	}
+	for _, dir := range dirs {
 		if packageNameOf(dir) == pkgName {
-			return dir, true
+			return dir, true, nil
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
 // packageNameOf 取一个包目录的包名（package clause）。

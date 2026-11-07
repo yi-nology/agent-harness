@@ -286,12 +286,27 @@ func dependencyViolations(root string, mods []Module, cfg DependencyDirection) (
 	}
 
 	var out []Violation
-	out = append(out, unregisteredPackageViolations(root, mi, cfg)...)
+	sys, err := unregisteredPackageViolations(root, mi, cfg)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, sys...)
 
 	fset := token.NewFileSet()
 	for _, m := range mods {
 		for _, rootDir := range m.Roots {
-			for _, f := range iterFiles(filepath.Join(root, rootDir), []string{"*.go"}, true) {
+			pkgDir := filepath.Join(root, rootDir)
+			if _, serr := os.Stat(pkgDir); serr != nil {
+				// 声明指向不存在的目录：由 policy 自校验报成**可定位的违反**
+				// （带模块 id 与修法），不在这里变成「整轮门禁给不出结论」。
+				// 遍历中途才失败的（读不了那棵子树）才是 error，见下。
+				continue
+			}
+			files, ferr := iterFiles(pkgDir, []string{"*.go"}, true)
+			if ferr != nil {
+				return nil, fmt.Errorf("依赖方向门禁: %w", ferr)
+			}
+			for _, f := range files {
 				rel, _ := filepath.Rel(root, f)
 				// 归属以路径为准而不是「正在扫谁的 root」：扫描是递归的，
 				// roots 又允许嵌套，不过滤就会把内层包的文件记到外层名下。

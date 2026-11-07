@@ -142,7 +142,10 @@ func TestUnregisteredDirDetected(t *testing.T) {
 	mi := moduleIndex{byRoot: map[string]string{"known": "known"}, requires: map[string]map[string]bool{}}
 	cfg := DependencyDirection{IgnoreDirs: []string{"cmd"}}
 
-	vs := unregisteredPackageViolations(root, mi, cfg)
+	vs, err := unregisteredPackageViolations(root, mi, cfg)
+	if err != nil {
+		t.Fatalf("未登记包判据不得报错: %v", err)
+	}
 	if len(vs) != 1 {
 		t.Fatalf("应恰好拦下一个未登记目录，实得 %d 个: %+v", len(vs), vs)
 	}
