@@ -49,11 +49,10 @@
 package offload
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 	"sync"
 
+	"github.com/oekit/pkg/encoding"
 	"github.com/oekit/pkg/errors"
 )
 
@@ -266,8 +265,7 @@ func Apply(req Request) Report {
 // 本轮早些时候已落过盘，但模型这一轮仍未在历史里见过任何一份被替换，故仍按
 // 「首次」处理并原样保留（与参考实现逐块独立的语义一致）。
 func applyOne(it *Item, b Blob, req Request, fresh map[string]struct{}) (storedNow bool) {
-	sum := sha256.Sum256(b.Data)
-	it.Hash = hex.EncodeToString(sum[:])
+	it.Hash = encoding.Sha256Hex(b.Data)
 
 	// 键推导内含扩展名净化：一次调用即完成「校验 + 推导」，避免两处判据漂移。
 	rel, err := StorePath(it.Hash, b.Ext)

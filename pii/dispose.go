@@ -10,9 +10,9 @@ package pii
 // （「为什么原包不够」与三条不变量在 policy.go 的文件头，此处不重复。）
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
+
+	"github.com/oekit/pkg/encoding"
 )
 
 // redactedPlaceholder redact 策略的固定占位。
@@ -27,8 +27,7 @@ func applySpan(v string, kind Kind, s StrategyKind) string {
 	case StrategyRedact:
 		return redactedPlaceholder
 	case StrategyHash:
-		sum := sha256.Sum256([]byte(v + "|" + string(kind)))
-		return hex.EncodeToString(sum[:])[:16]
+		return encoding.Sha256(v + "|" + string(kind))[:16]
 	default:
 		return maskSpan(v, kind) // mask 与 block 都走保长打码；block 的处置在 Apply 层
 	}

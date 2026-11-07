@@ -49,6 +49,11 @@ func iterFiles(root string, includes []string, ignoreTest bool) ([]string, error
 			return nil
 		}
 		for _, pat := range includes {
+			// 坏模式（"*.[go"）与含分隔符的模式（"**/*.go"）在这里恒不匹配——前者
+			// 返回 ErrBadPattern、后者是因为这里只拿 Base 去比。两种都让规则**一个文件
+			// 都不扫**却继续绿，故它们是**声明缺陷**：判决在 policy 自校验（includecheck.go，
+			// 恒开、error 级、能指出该改哪一行），这里静默跳过。与 ruleFiles 对不存在
+			// scope 的处置同一条纪律。
 			ok, _ := filepath.Match(pat, filepath.Base(path))
 			if ok {
 				out = append(out, path)

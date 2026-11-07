@@ -52,12 +52,11 @@
 package sessionref
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/oekit/pkg/encoding"
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/stringx"
 
@@ -184,8 +183,9 @@ func (r Ref) State(now time.Time, currentVersion uint64) State {
 // 用途是**同一份快照的身份**：宿主把它写进日志后，事后能证明「当时渲染的是
 // 这一版正文」，而不是只留一句「引用了一个快照」。
 func (r Ref) Digest() string {
-	sum := sha256.Sum256([]byte(r.Body))
-	return hex.EncodeToString(sum[:])[:12]
+	// 上游 encoding.Sha256 就是 sha256.Sum256 + hex.EncodeToString（小写十六进制、全长），
+	// 与本包对外承诺的指纹格式逐字一致，故这里不需要自己拼。
+	return encoding.Sha256(r.Body)[:12]
 }
 
 // Render 把快照渲染成可直接注入 prompt 的包裹体。

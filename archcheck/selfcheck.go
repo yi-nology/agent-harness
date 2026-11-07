@@ -18,6 +18,8 @@
 //     （本仓真实发生过：guardset 登记在 modules 段却不在 scan_roots 段，
 //     于是「超长文件」「god object」两条阈值对它从来不生效）
 //   - exceptions 里的规则 id 不存在 → 例外指向一条不存在的规则
+//   - rules[].include 写的模式结构上不可能命中一个文件名（"**/*.go" 带路径分隔符、
+//     "*.[go" 语法非法）→ 该规则一个文件都不扫，报告里照常计入「N 条规则」
 //
 // 全部由本文件一次性判掉，且**只判机制、不判内容**——它不评价某条规则该不该存在，
 // 只保证「存在着的规则确实有执行体、确实在跑、确实被阈值覆盖」。
@@ -40,7 +42,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // selfCheckRuleID policy 自校验这条规则自己的 ID。
@@ -149,6 +150,20 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 						"包改名 / 迁走后最容易踩，声明与事实已经偏离", r.ID, scope, err)
 			}
 		}
+
+		// ── include 模式必须可能命中一个文件名 ──
+		//
+		// 文件发现只拿 filepath.Base(path) 与模式比（见 scan.go），于是「语法非法」
+		// 与「含路径分隔符」两类写法让规则一个文件都不扫却继续绿——与 scope 指向
+		// 不存在目录同源。判据本体与理由在 includecheck.go 头注。
+		//
+		// 跳过没有执行体的规则：那种规则一条都判不了、已由上一条报出，同一件事不说两遍。
+		if r.ForbidRegex != "" || r.ForbidImport != "" {
+			for _, problem := range includePatternProblems(r.ID, r.Include) {
+				add(policyPath, 0, "%s", problem)
+			}
+		}
+
 		switch r.Severity {
 		case "", "error", "warn":
 		default:
@@ -329,72 +344,4 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 	}
 
 	return out
-}
-
-// coveredByAnyRoot 报告某个包根是否被 thresholds.scan_roots 里的某一项**覆盖**。
-//
-// 覆盖是**祖先关系**，不是逐字相等：scan_roots 里的 "cmd" 覆盖 "cmd/docsync"。
-//
-// 为什么必须按祖先判（issue #35 顺带修）：旧实现逐字比相等，于是「登记了
-// cmd/ptcchild 这个模块、而 scan_roots 写的是 cmd」会**假红**——阈值其实
-// 覆盖着它（scan 是按目录递归走的），报错却逼人把每个 cmd 子目录逐个列一遍。
-// 那是「假红」最坏的形态：判据把正确的工作判成错的，而唯一的解是给清单灌水
-// 直到它和目录树同构。量纲要与前提对齐：这里问的是「有没有人扫它」，
-// 不是「有没有逐字写它」。
-func coveredByAnyRoot(scanRoots []string, root string) bool {
-	root = strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(root)), "/")
-	for _, sr := range scanRoots {
-		sr = strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(sr)), "/")
-		if sr == "" {
-			continue
-		}
-		if sr == "." || root == sr || strings.HasPrefix(root, sr+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-// ignoreSection 是一段带目录级豁免的 policy 段（报错要点名是哪一段）。
-type ignoreSection struct {
-	name string
-	dirs []string
-}
-
-// ignoreDirSections 取全部「有目录级豁免」的段。
-//
-// 集中在这里而不是在判定处逐个写：新增一段豁免时，忘掉下面那条自校验的
-// 代价是「那一段的豁免永远不受管辖」——而豁免不受管辖正是这条自校验要防的事。
-func ignoreDirSections(pol *Policy) []ignoreSection {
-	out := []ignoreSection{{"dependency_direction", pol.DepDir.IgnoreDirs}}
-	if pol.SandboxProviders != nil {
-		out = append(out, ignoreSection{"sandbox_providers", pol.SandboxProviders.IgnoreDirs})
-	}
-	if pol.ExecutionPaths != nil {
-		out = append(out, ignoreSection{"execution_paths", pol.ExecutionPaths.IgnoreDirs})
-	}
-	return out
-}
-
-// exceptionExpiry 判一条例外是否已到期。
-//
-// until 支持两种形态：
-//   - 可比较的日期：2026-01-31 / 2026-01 → 与 now 比，过期即不再豁免
-//   - 不可比较的字符串（版本号如 v1.2.0）→ 机器判不了，只保证它非空
-//
-// 返回 expired 与人类可读的说明。
-func exceptionExpiry(ex Exception, now time.Time) (bool, string) {
-	until := strings.TrimSpace(ex.Until)
-	if until == "" {
-		return false, ""
-	}
-	for _, layout := range []string{"2006-01-02", "2006-01", "2006/01/02"} {
-		if t, err := time.Parse(layout, until); err == nil {
-			if now.After(t) {
-				return true, fmt.Sprintf("已于 %s 到期，不再豁免", until)
-			}
-			return false, ""
-		}
-	}
-	return false, ""
 }
