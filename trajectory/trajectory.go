@@ -98,6 +98,8 @@ type Row struct {
 	// ID 行标识：轮次行 "turn#1"；带环节号的步骤行 "step#7"；
 	// 工具行 "tool#<call_id>"；无自然键的行用 "step#-<seq>" 形式兜底
 	// （"-" 前缀表示「这个标识是投影生成的，不是业务自然键」）。
+	// 格式的唯一生成点是 turnRowID / stepRowID / toolRowID / seqID——otel 的
+	// 父子关系复用同一组函数，另写一份格式父子就会连不上。
 	ID string
 	// Turn 所属轮次序号（1 起）；轮次之外的事件为 0。
 	Turn int
@@ -350,3 +352,15 @@ func stepIDOf(ev eventbus.Event) (uint64, bool) {
 func seqID(kind Kind, seq int) string {
 	return fmt.Sprintf("%s#-%d", kind, seq)
 }
+
+// 行标识的**唯一生成点**（与 seqID 同族）。
+//
+// 三个格式各有一个第二处消费者：otel 的 ParentID 必须与投影写出的 Row.ID 逐字相同，
+// 否则父子连不上——而连不上**不会报错**，导出器只会把那一行当根，trace 少一段。
+// 故格式只在这里写一次，投影与映射都调这几个函数。
+//
+// 唯一性的范围是**轮内**：环节号由调用方给定，同一环节号在两轮里各出现一次是合法的
+// （故 step#7 会出现在两个轮次里）。trace 边界因此定在轮，见 otel.go 头注。
+func turnRowID(turn int) string      { return fmt.Sprintf("turn#%d", turn) }
+func stepRowID(id uint64) string     { return fmt.Sprintf("step#%d", id) }
+func toolRowID(callID string) string { return "tool#" + callID }

@@ -30,6 +30,27 @@
 //  3. **状态三值，缺省是 unset 不是 error**：把「仍在途」记成 error，会让真正的
 //     事故淹在噪声里。
 //
+// # trace 边界：一轮一个 trace
+//
+// @Span.ParentID@ 表达父子；@ParentID@ 为空的那一行是**根**——宿主应为它开一个
+// 新 trace（@trace_id@ 的真相源在 @oekit/tracing@，本仓不生成 ID，只声明关系）。
+//
+// 边界定在**轮**（@TraceBoundary@），不是环节。依据不是习惯，是**行标识的唯一边界**：
+// @Row.ID@ 只在轮内唯一（@step#7@ 在第一轮与第二轮各出现一次是合法的，投影器不把
+// 轮次拼进环节号）。以环节为 trace 边界时，同号环节会在两个 trace 里获得同一个 span
+// 标识，而工具行同时引用环节与轮次——按 OTel 语义，父 span 不在本 trace 内即断链。
+// 以轮为边界时，「行 ID 唯一」与「trace 内标识唯一」是同一个范围，两条约束不打架。
+//
+// # 父子是**声明的**，悬空父要清成根
+//
+// 单行映射只能按行上的字段推父（工具行有环节号就挂环节，否则挂轮次），推出来的父
+// 可能**在本批行里根本不存在**（环节行是孤儿，或调用方只导出了部分行）。故 @SpansOf@
+// 做一次解析：父不在本批内就清空 @ParentID@，让这一行成为根，而不是导出一个指向
+// 不存在 span 的断链。
+//
+// 「这一行声明属于哪个环节」这层事实不会因此丢失——@AttrStepID@ 照样写着。两个东西
+// 说的是两件事：一个说「它属于谁」，一个说「导出时连得到谁」。
+//
 // # 映射面不含 payload
 //
 // 本文件只吃 @Row@ 的**结构字段**（标识 / 时刻 / 状态 / 配对），不碰任何事件载荷。
@@ -85,6 +106,9 @@ const (
 type Span struct {
 	// Name span 名（低基数，取值域见 Kind）。
 	Name string
+	// ParentID 父 span 的行标识（与 Row.ID 同源，见头注「trace 边界」）；
+	// 空 = 根，宿主应为它开一个新 trace。
+	ParentID string
 	// Status span 状态。
 	Status SpanStatus
 	// StartAt 起点（未收口时为零值，宿主导出时可自行取当前时刻）。
@@ -101,10 +125,11 @@ type Span struct {
 // 内核读时钟会让同一份轨迹在两次导出里得出不同的时间——那是第二个真相。
 func SpanOf(r Row) Span {
 	s := Span{
-		Name:    string(r.Kind),
-		Status:  spanStatusOf(r),
-		StartAt: r.StartAt,
-		EndAt:   r.EndAt,
+		Name:     string(r.Kind),
+		ParentID: parentIDOf(r),
+		Status:   spanStatusOf(r),
+		StartAt:  r.StartAt,
+		EndAt:    r.EndAt,
 		Attributes: map[string]any{
 			AttrKind:      string(r.Kind),
 			AttrRowStatus: string(r.Status),
@@ -144,12 +169,48 @@ func SpanOf(r Row) Span {
 }
 
 // SpansOf 批量映射（保持输入顺序 = 行序）。
+//
+// 与逐条调用 @SpanOf@ 的唯一差别是**解析悬空父**：父行不在本批内时把 @ParentID@
+// 清成空，这一行随之成为根（见头注）。宿主导出一批行时应当用这个入口——
+// 逐条导出的断链 span 在多数后端里表现为「trace 缺了一段」，而不会报错。
 func SpansOf(rows []Row) []Span {
 	out := make([]Span, 0, len(rows))
+	known := make(map[string]struct{}, len(rows))
 	for _, r := range rows {
-		out = append(out, SpanOf(r))
+		if r.ID != "" {
+			known[r.ID] = struct{}{}
+		}
+	}
+	for _, r := range rows {
+		s := SpanOf(r)
+		if s.ParentID != "" {
+			if _, ok := known[s.ParentID]; !ok {
+				s.ParentID = ""
+			}
+		}
+		out = append(out, s)
 	}
 	return out
+}
+
+// parentIDOf 推一行的父 span 标识（**声明**的父，不保证在该批行里存在）。
+//
+// 层级只有一条：轮 → 环节 → 工具。工具行优先挂环节（更近的因果），没有环节号时
+// 挂轮次；不在任何轮次里的行（轮次外的事件、孤儿行）没有父，即它是根。
+func parentIDOf(r Row) string {
+	switch r.Kind {
+	case KindTurn:
+		// 轮次行恒为根：一轮就是一个 trace（见头注「trace 边界」）。
+		return ""
+	case KindToolCall, KindToolResult:
+		if r.HasStep {
+			return stepRowID(r.StepID)
+		}
+	}
+	if r.Turn > 0 {
+		return turnRowID(r.Turn)
+	}
+	return ""
 }
 
 // spanStatusOf 判一行的 span 状态。

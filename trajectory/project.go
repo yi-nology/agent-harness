@@ -1,8 +1,6 @@
 package trajectory
 
 import (
-	"fmt"
-
 	"github.com/yi-nology/agent-harness/eventbus"
 )
 
@@ -39,7 +37,7 @@ func (p *Projector) openTurn(ev eventbus.Event) {
 	p.turnNo++
 	idx := p.append(Row{
 		Kind:    KindTurn,
-		ID:      fmt.Sprintf("turn#%d", p.turnNo),
+		ID:      turnRowID(p.turnNo),
 		Turn:    p.turnNo,
 		StartAt: ev.OccurredAt,
 		Status:  StatusOpen,
@@ -77,7 +75,7 @@ func (p *Projector) openStep(ev eventbus.Event) {
 	if id, ok := stepIDOf(ev); ok {
 		r.HasStep = true
 		r.StepID = id
-		r.ID = fmt.Sprintf("step#%d", id)
+		r.ID = stepRowID(id)
 	} else {
 		r.ID = seqID(KindStep, p.seq+1)
 	}
@@ -182,7 +180,7 @@ func (p *Projector) openTool(ev eventbus.Event) {
 	if callID == "" {
 		r.ID = seqID(KindToolCall, p.seq+1)
 	} else {
-		r.ID = "tool#" + callID
+		r.ID = toolRowID(callID)
 	}
 	idx := p.append(r)
 	if callID != "" {
@@ -221,7 +219,7 @@ func (p *Projector) closeTool(ev eventbus.Event) {
 		if callID == "" {
 			r.ID = seqID(KindToolResult, p.seq+1)
 		} else {
-			r.ID = "tool#" + callID
+			r.ID = toolRowID(callID)
 		}
 		pi := p.append(r)
 		if callID != "" {
