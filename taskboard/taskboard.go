@@ -39,6 +39,7 @@ package taskboard
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/oekit/pkg/errors"
@@ -309,12 +310,9 @@ func detectCycle(byID map[TaskID]Task) []TaskID {
 
 // joinIDs 把 id 列表拼成一段可读文本。
 func joinIDs(ids []TaskID) string {
-	s := ""
+	parts := make([]string, len(ids))
 	for i, id := range ids {
-		if i > 0 {
-			s += ", "
-		}
-		s += string(id)
+		parts[i] = string(id)
 	}
-	return s
+	return strings.Join(parts, ", ")
 }

@@ -277,7 +277,8 @@ func judgeEgressEntry(root string, e EgressEntry, sites []spawnSite, matched []b
 		probes = defaultCapability
 	}
 	for _, i := range hits {
-		if !hasPlumbing(sites[i].body, sites[i].imports, names) {
+		// 第一半：env 的生成/校验。
+		if !hasEgressMethodCall(sites[i].body, sites[i].imports, names) {
 			return []Violation{{
 				Rule: egressPathRuleID, Path: sites[i].path, Line: sites[i].line,
 				Kind: "egress_unplumbed",
@@ -286,7 +287,8 @@ func judgeEgressEntry(root string, e EgressEntry, sites []spawnSite, matched []b
 					"生成不出就不起子进程（fail closed）", fnLabel(sites[i].fn), strings.Join(names, " / ")),
 			}}, true
 		}
-		if !hasCapabilityProbe(sites[i].body, sites[i].imports, probes) {
+		// 第二半：后端能力的问询。
+		if !hasEgressMethodCall(sites[i].body, sites[i].imports, probes) {
 			return []Violation{{
 				Rule: egressPathRuleID, Path: sites[i].path, Line: sites[i].line,
 				Kind: "egress_unprobed",

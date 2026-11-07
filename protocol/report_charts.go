@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/oekit/pkg/jsonrepair"
+	"github.com/oekit/pkg/ptrx"
 )
 
 // ChartItem 饼图扇区；ChartPoint/ChartSeries 折线图数据点与系列。
@@ -246,7 +247,7 @@ func (c *ChartSpec) UnmarshalJSON(data []byte) error {
 // 有 events→timeline、有 items→pie、有 series→line、仅 nodes→topo），全无为空。
 // 判定次序即正确性："timeline" 含子串 "line"，timeline 分支必须先于 line。
 func normalizeChartType(t *string, hasItems, hasSeries, hasNodes, hasEdges, hasEvents bool) string {
-	s := strings.ToLower(strings.TrimSpace(pointerText(t)))
+	s := strings.ToLower(strings.TrimSpace(ptrx.Deref(t, "")))
 	switch {
 	case strings.Contains(s, "pie") || strings.Contains(s, "donut"):
 		return "pie"
@@ -293,13 +294,6 @@ func chartTypeTopo(s string) bool {
 		return true
 	}
 	return strings.Contains(s, "topo") || strings.Contains(s, "拓扑")
-}
-
-func pointerText(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }
 
 // chartField 键名回退取值（模型常把 value 写在 percent/v 等键下）。

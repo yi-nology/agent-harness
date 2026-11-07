@@ -13,7 +13,7 @@ package archcheck
 
 import "go/ast"
 
-// hasPlumbing 判函数体里是否出现了「出口 env 的生成/校验」调用。
+// hasEgressMethodCall 判函数体里是否调用了 names 里的方法，且接收者是 egress。
 //
 // 认两种形态（都是真实调用形态，不是文本匹配）：
 //
@@ -23,21 +23,11 @@ import "go/ast"
 //
 // 第二种必须带 import 前提：只按方法名认人会把 re.Env 这类无关调用也算成兑现证据，
 // 那样这条判据就变成「函数里随便有个 .Env( 就过」。
-func hasPlumbing(body *ast.BlockStmt, imports map[string]string, names []string) bool {
-	return hasEgressMethodCall(body, imports, names)
-}
-
-// hasCapabilityProbe 判函数体里是否出现了「后端能力问询」调用。
 //
-// 判据形态与 hasPlumbing 相同（同一份 import 前提、同一个 AST 走法），差别只在
-// 问的是哪一半：plumbing 问「这一档落成变量了吗」，probe 问「这一档有人强制吗」。
-// 分开放而不是合并成一个名字列表，是因为报错要说清**缺的是哪一半**——
-// 「看不见 env 生成」与「看不见能力问询」的修法完全不同（前者加 Env，后者加后端）。
-func hasCapabilityProbe(body *ast.BlockStmt, imports map[string]string, names []string) bool {
-	return hasEgressMethodCall(body, imports, names)
-}
-
-// hasEgressMethodCall 判函数体里是否调用了 names 里的方法，且接收者是 egress。
+// 出口兑现的**两半**共用这一份走法，靠调用点传入不同的名字列表区分：plumbing 问
+// 「这一档落成变量了吗」，capability 问「这一档有人强制吗」。两者刻意不合成一个
+// 名字列表——报错要说清**缺的是哪一半**，「看不见 env 生成」与「看不见能力问询」
+// 的修法完全不同（前者加 Env，后者加后端）。
 func hasEgressMethodCall(body *ast.BlockStmt, imports map[string]string, names []string) bool {
 	if body == nil {
 		return false
