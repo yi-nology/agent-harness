@@ -19,6 +19,20 @@ const aliasedEnvironSrc = "package app\n\nimport (\n\to \"os\"\n\t\"os/exec\"\n)
 const dottedEnvironSrc = "package app\n\nimport (\n\t. \"os\"\n\t\"os/exec\"\n)\n\n" +
 	"func Spawn() error {\n\tcmd := exec.Command(\"sh\")\n\tcmd.Env = Environ()\n\treturn cmd.Run()\n}\n"
 
+// inheritAllExceptSrc 上游 runtime v0.10.0 的「全量继承 + 剔除若干」入口。
+//
+// 名字里没有 Environ ⇒ 只认 os.Environ 的判据对它**静默放行**。它服务的是
+// 「SDK 包装用户自己的 CLI」那种可信父进程场景；本仓子进程跑的是模型写的程序，
+// 这一调用等于把侧门重新开回来，故必须红。上游多一个函数 ≠ 本仓多一条合法路径。
+const inheritAllExceptSrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"github.com/oagentkit/runtime/procx\"\n" +
+	")\n\nfunc Spawn() error {\n\tcmd := exec.Command(\"sh\")\n\tcmd.Env = procx.InheritAllExcept(nil)\n" +
+	"\treturn cmd.Run()\n}\n"
+
+// dottedInheritAllExceptSrc 同一入口的点导入形态（没有限定符可查）。
+const dottedInheritAllExceptSrc = "package app\n\nimport (\n\t. \"github.com/oagentkit/runtime/procx\"\n" +
+	"\t\"os/exec\"\n)\n\nfunc Spawn() error {\n\tcmd := exec.Command(\"sh\")\n\tcmd.Env = InheritAllExcept(nil)\n" +
+	"\treturn cmd.Run()\n}\n"
+
 // allowlistedEnvSrc 好形态：白名单生成 + 出口声明叠加。
 const allowlistedEnvSrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"github.com/oagentkit/runtime/procx\"\n" +
 	"\t\"github.com/yi-nology/agent-harness/egress\"\n)\n\n" +
@@ -45,8 +59,10 @@ func TestEgressGateCatchesFullEnvInherit(t *testing.T) {
 // TestEgressGateCatchesFullEnvInheritVariants 钉住别名与点导入两种写法。
 func TestEgressGateCatchesFullEnvInheritVariants(t *testing.T) {
 	for name, src := range map[string]string{
-		"别名导入": aliasedEnvironSrc,
-		"点导入":  dottedEnvironSrc,
+		"别名导入":      aliasedEnvironSrc,
+		"点导入":       dottedEnvironSrc,
+		"上游全量继承入口":  inheritAllExceptSrc,
+		"全量继承入口点导入": dottedInheritAllExceptSrc,
 	} {
 		root := t.TempDir()
 		writeFixture(t, root, map[string]string{"app/app.go": src})

@@ -129,7 +129,10 @@ func fileSpawnSites(fset *token.FileSet, f *ast.File, imports map[string]string,
 	return out
 }
 
-// fileCallsEnviron 报告本文件里是否出现 os.Environ()（**整个文件**，不止启动函数）。
+// fileCallsEnviron 报告本文件里是否把**整份父环境**读了出来（**整个文件**，不止启动函数）。
+//
+// 认哪些入口见 fullEnvFuncs——判据绑的是「一次调用就能拿到全量环境」这件事，
+// 不是 os.Environ 这个名字。
 //
 // # 为什么粒度是文件而不是函数
 //
@@ -140,7 +143,7 @@ func fileSpawnSites(fset *token.FileSet, f *ast.File, imports map[string]string,
 //
 // # 判据看调用形态，不看文本
 //
-// os.Environ() 有三种写法：原样、别名导入（import o "os" ⇒ o.Environ()）、点导入
+// 同一个入口有三种写法：原样、别名导入（import o "os" ⇒ o.Environ()）、点导入
 // （import . "os" ⇒ Environ()）。文本正则只认第一种，而绕过去从不需要动机——只需
 // 换个导入写法。故这里按**本文件的 import 路径**解析限定符，点导入另算（点导入由
 // importPathByName 按设计丢掉，只服务限定符判定的那张表拿不到它）。
@@ -150,15 +153,28 @@ func fileSpawnSites(fset *token.FileSet, f *ast.File, imports map[string]string,
 // 文件里另有一处与子进程无关的 os.Environ()（例如启动时读一次环境做诊断）会被
 // 一并报出。这条边界是刻意选的方向：红是可见的、可讨论的（走 policy exceptions
 // 登记原因即可），而绿是不可见的——判据宁可吵闹，不可沉默。
+//
+// 同一条理由也是 fullEnvFuncs 按**包名最后一段**认包（而不是写死完整 import 路径）
+// 的依据：认错了只多报一处，不会漏报。
 func fileCallsEnviron(f *ast.File, imports map[string]string, dots map[string]bool) bool {
-	names := map[string]bool{}
+	// 本文件里「能拿到整份环境」的限定符（含别名）。空白导入不参与。
+	qualifiers := map[string]bool{}
+	// 本文件点导入的、属于全量环境来源的包（没有限定符可查）。
+	dotted := map[string]bool{}
 	for name, path := range imports {
-		if path == "os" && name != "_" && name != "." {
-			names[name] = true
+		if name == "_" || name == "." {
+			continue
+		}
+		if len(fullEnvFuncs[pathLastSegment(path)]) > 0 {
+			qualifiers[name] = true
 		}
 	}
-	dotted := dots["os"]
-	if len(names) == 0 && !dotted {
+	for path := range dots {
+		if len(fullEnvFuncs[pathLastSegment(path)]) > 0 {
+			dotted[path] = true
+		}
+	}
+	if len(qualifiers) == 0 && len(dotted) == 0 {
 		return false
 	}
 	found := false
@@ -173,17 +189,43 @@ func fileCallsEnviron(f *ast.File, imports map[string]string, dots map[string]bo
 		switch fun := call.Fun.(type) {
 		case *ast.SelectorExpr:
 			ident, ok := fun.X.(*ast.Ident)
-			if ok && names[ident.Name] && fun.Sel.Name == "Environ" {
+			if !ok || !qualifiers[ident.Name] {
+				return true
+			}
+			if fullEnvFuncs[pathLastSegment(imports[ident.Name])][fun.Sel.Name] {
 				found = true
 			}
 		case *ast.Ident:
-			if dotted && fun.Name == "Environ" {
-				found = true
+			for path := range dotted {
+				if fullEnvFuncs[pathLastSegment(path)][fun.Name] {
+					found = true
+					break
+				}
 			}
 		}
 		return true
 	})
 	return found
+}
+
+// fullEnvFuncs 「一次调用就拿到父进程整份环境」的入口，按 **(包名, 函数名)** 归表。
+//
+// 判的是「这个调用交出去的是全量环境」这件事，不是某个符号的名字。故它必须与上游
+// 的 API 面一起长：
+//
+//   - os.Environ —— 最小形态，最容易被认出来；
+//   - procx.InheritAllExcept —— runtime v0.10.0（2026-11-07）新增的「全量继承 +
+//     剔除若干」。它给的是「SDK 包装用户自己的 CLI」那种**可信父进程**场景：父进程
+//     环境就是用户的信任上下文。本仓的子进程恰好相反——它跑的是**模型写的程序**
+//     （见 ptc/childpipes.go 顶部的威胁模型），用在这里等于把本轮刚关上的侧门重新
+//     开回来，而函数名里没有 "Environ"，只认 os.Environ 的判据对它**静默放行**。
+//     上游新增一个函数 ≠ 本仓多了一条合法路径：这是「新 API 上线即绕过」的现成样本。
+//
+// 按**包名最后一段**认包（而不是写死完整 import 路径）：路径里带模块版本化或换
+// 代理域名时仍然命中，而它错在**吵闹**那一侧——认错了只会多报一处，不会漏报。
+var fullEnvFuncs = map[string]map[string]bool{
+	"os":    {"Environ": true},
+	"procx": {"InheritAllExcept": true},
 }
 
 // spawnSitesIn 取一个 AST 节点里的启动点（限定符形态与点导入形态各扫一遍）。

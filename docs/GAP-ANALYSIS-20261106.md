@@ -250,7 +250,7 @@ grep -n 'exec.Command' ptc/childpipes.go                            # 子进程�
 |---|---|---|---|
 | P0-1 命令级判据 | `cmdpolicy`（409 行）：前缀 token 规则 + 三态裁决 + 规则自带样例（`New` 加载期跑真实判定路径） | `cmdpolicy/` | `go test ./cmdpolicy/ -cover` |
 | P0-2 出口**声明面** | `egress`（207 行）：三档单调 + `Validate` 自检 + `Env`/`Verify` 兑现 + `SatisfiedBy` 后端问询；`ModeDenied` 拒绝伪造 | `egress/` | `go test ./egress/` |
-| P0-2 出口**执行面** | 新门禁 `egress_paths`（走 `go/ast`）：每个子进程启动点必须登记档位，`proxy` 必须在启动函数里看得见 env 兑现证据，`denied` 直接红 | `archcheck/egresspaths.go`、policy 的 `egress_paths:` 段 | `make architecture-check` |
+| P0-2 出口**执行面** | 新门禁 `egress_paths`（走 `go/ast`）：每个子进程启动点必须登记档位，`proxy` 必须在启动函数里看得见 env 兑现证据，`denied` 直接红，**启动点所在文件不得把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`，按文件判；2026-11-07 补） | `archcheck/egresspaths.go`、policy 的 `egress_paths:` 段 | `make architecture-check` |
 | P0-2 ptc 真接线 | `SubprocessOptions.Egress`；`newChildPipes` 用 `spec.Env(base)` 生成子进程 env，生成失败即 `closeAll` + 不起子进程（fail closed），零值行为不变 | `ptc/subprocess.go`、`ptc/childpipes.go` | `go test ./ptc/` |
 | P1-1 命名权限预设 | `preset`（232 行）：`(Level, Mode, Egress)` 三面收成具名只读件；三面全松须显式 `Unsafe`+理由；同义两名字即报错 | `preset/` | `go test ./preset/` |
 | P1-2 遥测 seam | `trajectory/otel.go`：跨 OTel 的接缝，**不引入 otel 依赖**（坐实了「seam 不等于接线」） | `trajectory/otel.go` | `go test ./trajectory/` |

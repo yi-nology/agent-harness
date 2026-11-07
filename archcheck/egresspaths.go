@@ -23,7 +23,8 @@
 //     policy——比明确不声明更危险。
 //  4. **陈旧登记当天即红**（文件/函数不存在，或那个函数里没有启动调用）。
 //     与「陈旧包根当天即红」同一把尺子：声明与事实偏离而无人红，是无声漂移。
-//  5. **启动函数不得把全量环境交给子进程**（os.Environ() 即红，不看登记）。
+//  5. **启动文件不得把全量环境交给子进程**（os.Environ() / procx.InheritAllExcept
+//     即红，不看登记）。
 //     登记段回答「出站策略是什么」，本条回答「子进程能看见宿主的哪些秘密」——
 //     两者正交：unrestricted 的启动点同样不该继承整份环境。详见 inheritsFullEnv。
 //
@@ -125,9 +126,10 @@ func egressPathViolations(root string, cfg EgressPaths) ([]Violation, error) {
 		out = append(out, Violation{
 			Rule: egressPathRuleID, Path: s.path, Line: s.line,
 			Kind: "egress_full_env_inherit",
-			Text: fmt.Sprintf("启动点（%s）所在文件出现 os.Environ()：子进程是本进程的 re-exec，"+
-				"整份环境里有宿主的凭据类变量——环境必须由白名单生成（oagentkit/runtime/procx.ChildEnv），"+
-				"再交给 egress.Spec.Env 叠加出口声明；确有无关用途请在 policy 的 exceptions 登记原因与拆除条件", fnLabel(s.fn)),
+			Text: fmt.Sprintf("启动点（%s）所在文件把整份父环境读了出来（os.Environ / procx.InheritAllExcept）："+
+				"子进程是本进程的 re-exec，整份环境里有宿主的凭据类变量——环境必须由白名单生成"+
+				"（oagentkit/runtime/procx.ChildEnv），再交给 egress.Spec.Env 叠加出口声明；"+
+				"确有无关用途请在 policy 的 exceptions 登记原因与拆除条件", fnLabel(s.fn)),
 		})
 	}
 	return out, nil

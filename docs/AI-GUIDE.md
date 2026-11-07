@@ -399,7 +399,7 @@ make check
 | `harness-facade-stays-facade` | 三个门面包长出实现 | 逻辑放上游 `oagentkit/*`，本仓只留转发 |
 | `harness-module-dependency-direction` | 越界内部依赖 / 越界跨仓依赖 / **未登记包目录** | 改 `modules` 段登记 `requires` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离（构造器改名 / 档位没人造）| 同步 `execution_paths` 段与代码 |
-| `harness-subprocess-egress` | 子进程启动点没在 `egress_paths` 登记（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到 env 兑现证据；登记 `denied`（本层无法兑现）；登记已陈旧 | 补登记 / 在启动函数里真的用 `egress.Spec.Env` 生成 env / 改档位。**`denied` 在本层是造假，不是配置** |
+| `harness-subprocess-egress` | 子进程启动点没在 `egress_paths` 登记（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到 env 兑现证据；登记 `denied`（本层无法兑现）；登记已陈旧；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`——按**文件**判，不按启动函数判）| 补登记 / 在启动函数里真的用 `egress.Spec.Env` 生成 env / 改档位。**`denied` 在本层是造假，不是配置**；子进程环境必须由 `procx.ChildEnv` 白名单生成 |
 | `harness-policy-self-check` | policy 自相矛盾：规则无执行体、id 重复、`scan_roots` 与 `modules` 不一致、例外无 `until`、**包根指向空目录** | 补执行体 / 改声明 / 删陈旧包根 |
 
 > 最后一条的第三种形态最隐蔽：**未登记的包对本门禁完全隐形**——
