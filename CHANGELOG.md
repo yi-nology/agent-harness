@@ -2,6 +2,38 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.19.0] — 2026-11-07
+
+### 新增(platform)：windows/amd64 回归支持矩阵——上游 procx Windows 进程树路径落地（issue #34 收尾）
+
+上游 oagentkit/runtime v0.12.0（#24）为 procx 落地 windows 进程树路径
+（Job Object 建组 + TerminateJobObject 整树硬杀），编译阻断解除：
+- Makefile CROSS_TARGETS 恢复 windows/amd64（交叉构建门禁重新验编译）
+- README 平台矩阵 windows 行改 ✅（语义降级写明：TERM 优雅退出 → 整树硬终止）
+- CI 增加 windows job 真跑测试（crossbuild 只证明编得过，进程原语要真执行）
+- ptc/aborted_test.go 加 //go:build unix（/bin/sh 夹具）
+- deps: runtime v0.10.0 → v0.12.0
+
+### 修复(test)：windows 第二轮——ptc 子进程夹具族守卫 unix + docsync 行数对账
+
+- ptc 的 loadcontrol/noreport/subprocess_bench/subprocess_exec 四个测试文件
+  守卫 unix：夹具全走真实子进程（buildChildProgram 编译 child 二进制 +
+  /bin/sh 形态），windows 侧产物名与 PATH 语义不同——ptc 的 windows 用例
+  属后续立项，本仓 windows 覆盖面从 procx 原语（上游已验）+ 全仓非子进程
+  用例起步
+- docsync：+5 行生产代码（archcheck ToSlash/netguard runtime 分支）→
+  README 工程底座表 24,585 → 24,590（确定性量判相等）
+
+### 修复(test)：windows CI 首轮三连修——archcheck 路径指纹跨平台化 + netguard DNS 环境差异显式跳过 + ptc memlimit 守卫 unix
+
+- archcheck：godobject 错误文案与 import 违规 Path 补 filepath.ToSlash（与
+  deps.go/archcheck.go 同惯例）——门禁输出的路径指纹跨平台稳定，windows
+  工作区跑门禁不再因 \\/ 分歧产生不同判定
+- netguard：api.localhost 放行断言依赖系统解析器的 .localhost magic
+  （unix 有、windows 无），windows 下显式跳过解析依赖断言；名字层拦截
+  用例不走解析照跑
+- ptc：memlimit_test 整文件守卫 unix——cgroup 语义在 windows 无对应物
+
 ## [v0.18.0] — 2026-11-07
 
 ### 新增(archcheck)：全量环境判据纳入 procx.InheritAllExcept + 三处文档补齐第五条
@@ -347,6 +379,20 @@ yaml.Unmarshal 对拼错的键**静默忽略**，而每个键都对应一条判�
 下游要做什么：无（archcheck 的公开面未变；宿主 policy 若有未知键，加载会从静默忽略变成
 明确报错——那本来就没生效，报出来是修，不是破坏）。
 
+
+- 测试(eventbus)：拆分关闭契约用例——修结构阈值超限
+
+上一笔给 eventbus 补了「退订即关闭」的契约用例（T5 改写 + 新增 T5b + assertClosed），
+eventbus_test.go 因此涨到 434 行，撞上 thresholds.enforce 的 max_file_lines 400
+⇒ make check 的 architecture-check 真红（退出码 1，非告警）。
+按纪律拆分而不是上调阈值：把 T5（退订后不再投递）、T5b（手动 cancel / ctx 取消
+两条路径各钉一次关闭）、assertClosed 移到 closecontract_test.go。它们与同文件其它
+用例判的不是同一件事——其它用例判「事件内容对不对」，这一簇判**消费方的写法要求**
+（不查 ok 就会空转），本来就该自成一簇；拆完 353 + 95 行，两半都能一眼读完。
+顺带同步 README 工程底座表：测试文件数 166 → 167（拆分产生，生产行数/文件数不变）。
+docsync 对这三个数是判相等、不留容差，所以必须同步——它第一时间就报出来了。
+校验：gofmt 干净；go vet ./eventbus/；go test ./eventbus/ 0.46s；
+go run ./cmd/archcheck 通过；go run ./cmd/docsync 通过。
 
 - 测试(ptc)：启动成本判据采样数 3 → 5（最小值只会随采样变多而下降）
 
