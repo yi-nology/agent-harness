@@ -89,8 +89,18 @@ type Spec struct {
 	Mode Mode
 	// Proxy 代理地址（ModeProxy 时必填），形如 "http://127.0.0.1:3128"。
 	Proxy string
-	// Allow 允许访问的目标（可选；语义由代理实现解释，本包只原样携带）。
+	// Allow 允许访问的目标（由**代理**判定，本包只原样携带给兑现者）。
+	//
+	// 刻意**不**写进 NO_PROXY：NO_PROXY 的语义是「绕过代理直连」，与「允许经
+	// 代理访问」正好相反。写进去会让允许名单变成豁免名单——代理的拒绝名单、端口
+	// 白名单、只读档对它全部失效，而报告里那条声明仍然显示「已兑现」。需要「不经
+	// 代理」的目标请写 Bypass，别借 Allow 表达相反的语义。
 	Allow []string
+	// Bypass 明确**不经代理直连**的目标（写进 NO_PROXY / no_proxy）。
+	//
+	// 默认空：整条变量都不出现。空值 "NO_PROXY=" 在部分客户端里会被读成「所有
+	// 主机都不经代理」，那是比不写更危险的一种形式。
+	Bypass []string
 }
 
 // Validate 自检声明本身是否可兑现（配置写错即报错，不静默降级）。
@@ -138,11 +148,11 @@ func (s Spec) Env(base []string) ([]string, error) {
 	for _, k := range proxyVars {
 		out = append(out, k+"="+s.Proxy)
 	}
-	if len(s.Allow) > 0 {
-		allow := append([]string(nil), s.Allow...)
-		sort.Strings(allow) // 确定性：同一份声明必须产出同一份 env
-		out = append(out, "NO_PROXY="+strings.Join(allow, ","))
-		out = append(out, "no_proxy="+strings.Join(allow, ","))
+	if len(s.Bypass) > 0 {
+		bypass := append([]string(nil), s.Bypass...)
+		sort.Strings(bypass) // 确定性：同一份声明必须产出同一份 env
+		out = append(out, "NO_PROXY="+strings.Join(bypass, ","))
+		out = append(out, "no_proxy="+strings.Join(bypass, ","))
 	}
 	return out, nil
 }
@@ -161,6 +171,16 @@ func (s Spec) Verify(env map[string]string) error {
 	case ModeDenied:
 		return errors.New("egress: 禁网无法从环境变量验证（必须由带能力声明的后端强制）")
 	}
+	if len(s.Bypass) > 0 {
+		// 判**语义等价**而不是字面相同：NO_PROXY 的顺序与空白无语义，
+		// 判字面会把自己拼 env 的调用方误判红（那是假红——判据的前提是
+		// 「兑现了没有」，不是「是不是用本包的 Env 生成的」）。
+		want := normList(s.Bypass)
+		got := normList(strings.Split(env["NO_PROXY"], ","))
+		if !equalStrings(want, got) {
+			return errors.Errorf("egress: 绕过名单未兑现（要求 %v，实际 %q）", want, env["NO_PROXY"])
+		}
+	}
 	var seen []string
 	for _, k := range proxyVars {
 		if v, ok := env[k]; ok && v == s.Proxy {
@@ -171,6 +191,31 @@ func (s Spec) Verify(env map[string]string) error {
 		}
 	}
 	return errors.Errorf("egress: 子进程环境未兑现代理声明（要求 %s，实际 %v）", s.Proxy, seen)
+}
+
+// normList 折成「去空白、去空条目、排序」的形态（比较目标清单前先归一）。
+func normList(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, x := range items {
+		if x = strings.TrimSpace(x); x != "" {
+			out = append(out, x)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// equalStrings 比较两个**已归一**的清单。
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func isProxyVar(kv string) bool {

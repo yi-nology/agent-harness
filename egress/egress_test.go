@@ -45,7 +45,9 @@ func TestValidate(t *testing.T) {
 
 func TestEnvProxy(t *testing.T) {
 	base := []string{"PATH=/bin", "HTTPS_PROXY=http://old:1", "HOME=/root"}
-	env, err := (egress.Spec{Mode: egress.ModeProxy, Proxy: "http://127.0.0.1:3128", Allow: []string{"b.internal", "a.internal"}}).Env(base)
+	// 绕过名单才产生 NO_PROXY；Allow（允许经代理访问的目标）不产生它——
+	// 反向判据见 e2e_test.go 的 TestAllowDoesNotBypassProxy。
+	env, err := (egress.Spec{Mode: egress.ModeProxy, Proxy: "http://127.0.0.1:3128", Bypass: []string{"b.internal", "a.internal"}}).Env(base)
 	if err != nil {
 		t.Fatalf("Env: %v", err)
 	}
@@ -130,5 +132,42 @@ func TestSatisfiedBy(t *testing.T) {
 	}
 	if err := (egress.Spec{Mode: egress.ModeProxy}).SatisfiedBy(silentProvider{}); err == nil {
 		t.Fatal("配置错也要先报出来")
+	}
+}
+
+// TestVerifyBypass 成对：绕过名单必须被判到。
+//
+// 只判「代理地址对不对」是不够的：NO_PROXY 一条写错，子进程就被排到代理之外，
+// 而 Verify 会说「兑现了」。三种坏形态各钉一次。
+//
+// 反向也要钉：顺序与空白漂移是**等价形态**，必须判通过。NO_PROXY 无语义顺序，
+// 判字面相同就是假红——那会把「自己拼 env 的调用方」判死，而它们其实兑现了。
+func TestVerifyBypass(t *testing.T) {
+	spec := egress.Spec{
+		Mode:   egress.ModeProxy,
+		Proxy:  "http://127.0.0.1:3128",
+		Bypass: []string{"b.internal", "a.internal"},
+	}
+	if err := spec.Verify(map[string]string{
+		"HTTPS_PROXY": "http://127.0.0.1:3128",
+		"NO_PROXY":    "a.internal,b.internal",
+	}); err != nil {
+		t.Fatalf("兑现了却判失败: %v", err)
+	}
+	if err := spec.Verify(map[string]string{
+		"HTTPS_PROXY": "http://127.0.0.1:3128",
+		"NO_PROXY":    " b.internal , a.internal ",
+	}); err != nil {
+		t.Fatalf("顺序/空白漂移是等价形态，判失败就是假红: %v", err)
+	}
+
+	for name, env := range map[string]map[string]string{
+		"整条缺失": {"HTTPS_PROXY": "http://127.0.0.1:3128"},
+		"少一条":  {"HTTPS_PROXY": "http://127.0.0.1:3128", "NO_PROXY": "a.internal"},
+		"多一条":  {"HTTPS_PROXY": "http://127.0.0.1:3128", "NO_PROXY": "a.internal,b.internal,c.internal"},
+	} {
+		if err := spec.Verify(env); err == nil {
+			t.Fatalf("绕过名单%s却判通过: %v", name, env)
+		}
 	}
 }
