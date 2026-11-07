@@ -1933,6 +1933,7 @@ msg := reminder.Wrap("alert", reminder.SanitizeBody(webhookText))
 
 ```go
 import (
+	"github.com/oagentkit/guardx/egressproxy"
 	"github.com/yi-nology/agent-harness/egress"
 	"github.com/yi-nology/agent-harness/ptc"
 )
@@ -1942,11 +1943,25 @@ if err := spec.Validate(); err != nil {
 	return err            // 加载期自检：早于任何一次执行，别等到 spawn 时才发现
 }
 
+// 兑现者：真正能把「只经代理」落成强制面的那个东西。
+// 用上游现成的强制代理（默认拒绝 + 目标白名单 + CONNECT 隧道 + 只读档）；
+// 要换成自己的实现，只需实现 sandbox.EgressEnforcer 一个方法。
+px, err := egressproxy.New(egressproxy.Policy{AllowHosts: []string{"api.internal"}})
+if err != nil {
+	return err
+}
+if err := px.Start(); err != nil {
+	return err
+}
+defer px.Close()
+spec.Proxy = "http://" + px.Addr()   // 声明里的地址必须是它真在听的那个
+
 prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
-	Program:  program,    // 原有字段一律不变
-	Bindings: bindings,
-	Stages:   stages,
-	Egress:   spec,       // 新增字段。零值 = 不限制，与旧版**逐字一致**
+	Program:       program,   // 原有字段一律不变
+	Bindings:      bindings,
+	Stages:        stages,
+	Egress:        spec,      // 零值 = 不限制，与旧版**逐字一致**
+	EgressBackend: px,        // 兑现者。**不填而 Egress 又要了限制 ⇒ 拒绝执行**
 })
 // 之后按 sandbox 登记簿的常规用法注册（reg.Register(prov)）；
 // **不要**直接调 prov.Exec——那会绕开档位下限与预算可兑现性（见 §4.4）。
@@ -1957,11 +1972,19 @@ prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
 
 - `Spec.Env(base)` 生成子进程环境；**生成失败即不起子进程**（fail closed）。
   所以 `ModeDenied` 在本层**必然报错**——那一档只能由执行后端兑现，靠 env 兑现它是造假。
+- **兑现者必须显式给**（v0.20.0 起的行为收紧）：`Egress` 只写「要求哪一档」，它自己不会跑到
+  任何地方去；父侧唯一能施加影响的时点就是 **spawn 之前**，所以那里先问一句
+  `Spec.SatisfiedBy(EgressBackend)`——**不填兑现者或能力不足 ⇒ 不起子进程**。
+  v0.18.0 时只判「env 生成成功」，那让「生成了 env」看起来等于「已兑现」：一个能改 env
+  却没有任何强制面的后端照样让流量自由出网。
 - `Spec.SatisfiedBy(provider)` 问后端「你能不能兑现这一档」。**后端不实现 `Enforcer` 就按最弱处理**，
   不是「没说不支持 = 支持」；否则一个从没实现过出口控制的后端会被选中，而声明与实际之间的落差没有信号。
+  出口档位的词表与这个接口的**真相在上游** `guardx/sandbox`（`EgressMode` / `EgressEnforcer`），
+  本仓的 `egress.Mode` / `egress.Enforcer` 是 type alias（编译期同一类型）。词表若留在本仓，
+  上游后端要声明能力就得 import 本仓 ⇒ 成环 ⇒ 那条接口只可能由宿主实现，且编译期一声不响。
 - 本仓有一条门禁 `harness-subprocess-egress`：判「每个 spawn 点都登记了档位，且 `proxy` 档
-  在 spawn 之前**看得见** env 兑现证据」。宿主仓复用同一份执行体，在自己的 policy 里写
-  `egress_paths` 段即可（见 §4.4 后半）。
+  在 spawn 之前**看得见兑现的两半**——env 生成 + 后端能力问询」。宿主仓复用同一份执行体，
+  在自己的 policy 里写 `egress_paths` 段即可（见 §4.4 后半）。
 
 #### `preset`：把「档位 × 审批 × 出口」收成一份具名组合
 
@@ -2130,7 +2153,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-module-dependency-direction` | 包间依赖超出 `modules[].requires` 声明；**以及未登记的包目录** | `policy.yaml` 的 `modules` 段 + `archcheck/deps.go` |
 | 沙箱档位登记 | 执行沙箱后端未在 `sandbox_providers` 段登记，或登记的档位与代码事实漂移 | `policy.yaml` 的 `sandbox_providers` 段 + `archcheck/sandbox.go` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离 | `policy.yaml` 的 `execution_paths` 段 + `archcheck/execution.go` |
-| `harness-subprocess-egress` | spawn 点未登记出口档位（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到 env 兑现证据；登记 `denied`（本层兑现不了）；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`，按**文件**判）| `policy.yaml` 的 `egress_paths` 段 + `archcheck/egresspaths.go` |
+| `harness-subprocess-egress` | spawn 点未登记出口档位（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到兑现的**两半**（env 生成 + 后端能力问询）；登记 `denied`（本层兑现不了）；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`，按**文件**判）| `policy.yaml` 的 `egress_paths` 段 + `archcheck/egresspaths.go` |
 | `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 | `archcheck/selfcheck.go` |
 
 > 「未登记的包目录」这条更隐蔽：未登记的包对本门禁完全隐形，
@@ -2238,14 +2261,18 @@ egress_paths:
         为什么是这个档。这段会进报告，是给下一个读代码的人看的。
 ```
 
-**四条判据（每条都对应一种「看起来登记了、其实没管」）**
+**五条判据（每条都对应一种「看起来登记了、其实没管」）**
 
 1. **未登记即红**：扫生产代码里的 `exec.Command` / `os.StartProcess` 一类调用点，
    没进表就是违规。**`unrestricted` 也必须显式写**——「没登记」与「明确不限制」是两件事，
    前者的成因通常是漏了。
-2. **`proxy` 必须在启动函数里看得见兑现证据**：光在表里写 `proxy` 不算，要在 spawn 之前
-   真的看到 `egress.Spec.Env(...)`（或带 `egress` import 的接收者形态）。否则表里写「已代理」、
-   子进程实际裸连——这是本判据存在的全部理由。
+2. **`proxy` 必须在启动函数里看得见兑现的**两半****：① 在 spawn 之前真的看到
+   `egress.Spec.Env(...)`（或带 `egress` import 的接收者形态）——声明落成了子进程变量；
+   ② 也看到 `Spec.SatisfiedBy(...)`——**问过后端「你能强制这一档吗」**。只有 ① 是不够的：
+   环境变量只是**建议**，一个能改 env 却没有任何强制面的后端照样让流量自由出网，而
+   「env 生成了、挂上了」在报告里看起来就是「已兑现」。两半分开报错
+   （`egress_unplumbed` / `egress_unprobed`），因为修法完全不同（加 Env vs 加后端）。
+   条目可用 `plumbing` / `capability` 两字段指明你们用的方法名。
 3. **`denied` 直接红**：本层（进程内 spawn 前改 env）**兑现不了**禁网。写了就是造假，
    报告会显示「已兑现」而网络其实通着。真要禁网，靠执行后端（`sandbox.LevelMachine` 一类）。
 4. **陈旧登记即红**：登记的函数在仓里不存在了 ⇒ 报出来，否则「这条路径没人管」会看起来有人管过。
