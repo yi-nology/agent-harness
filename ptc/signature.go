@@ -27,6 +27,7 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/slicex"
 	"github.com/yi-nology/agent-harness/toolname"
 )
 
@@ -186,8 +187,7 @@ func mountDiscover(vm *goja.Runtime, d Discoverer) error {
 		// 转成 map 再交出去：goja 未配置 FieldNameMapper 时按**字段原名**暴露
 		// （Name 而非 name），JS 侧读到的是 undefined——模型会以为没查到，
 		// 于是退回逐个试，而那正是本包要替掉的行为。
-		out := make([]map[string]any, 0, len(found))
-		for _, t := range found {
+		out := slicex.Map(found, func(t Discovered) map[string]any {
 			m := map[string]any{"name": t.Name}
 			if t.Signature != "" {
 				m["signature"] = t.Signature
@@ -195,8 +195,8 @@ func mountDiscover(vm *goja.Runtime, d Discoverer) error {
 			if t.Description != "" {
 				m["description"] = t.Description
 			}
-			out = append(out, m)
-		}
+			return m
+		})
 		return vm.ToValue(out)
 	})
 }

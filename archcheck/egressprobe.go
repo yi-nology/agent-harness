@@ -11,7 +11,10 @@
 // 而绕过去不需要动机——只需换个导入写法。
 package archcheck
 
-import "go/ast"
+import (
+	"go/ast"
+	"slices"
+)
 
 // hasEgressMethodCall 判函数体里是否调用了 names 里的方法，且接收者是 egress。
 //
@@ -52,7 +55,7 @@ func hasEgressMethodCall(body *ast.BlockStmt, imports map[string]string, names [
 		if !ok {
 			return true
 		}
-		if !containsString(names, sel.Sel.Name) {
+		if !slices.Contains(names, sel.Sel.Name) {
 			return true
 		}
 		ident, ok := sel.X.(*ast.Ident)
@@ -68,14 +71,4 @@ func hasEgressMethodCall(body *ast.BlockStmt, imports map[string]string, names [
 		return true
 	})
 	return found
-}
-
-// containsString 报告切片里是否有该元素。
-func containsString(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
-	}
-	return false
 }

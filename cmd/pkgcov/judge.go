@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/oekit/pkg/stringx"
 )
 
 // options 判据参数。
@@ -159,12 +161,9 @@ func (r report) String(o options) string {
 
 // splitList 拆逗号分隔的豁免表（去空白、丢空项）。
 func splitList(s string) []string {
-	var out []string
-	for _, part := range strings.Split(s, ",") {
-		if p := strings.TrimSpace(part); p != "" {
-			out = append(out, p)
-		}
-	}
+	// 拆逗号 + 去空白 + 丢空项是上游 stringx.SplitCSVNonEmpty 的逐字语义；
+	// 排序是本函数自己的要求（清单出口一律有序，免得两次输出两种顺序）。
+	out := stringx.SplitCSVNonEmpty(s)
 	sort.Strings(out)
 	return out
 }

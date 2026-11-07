@@ -37,6 +37,7 @@ package egress
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -177,7 +178,7 @@ func (s Spec) Verify(env map[string]string) error {
 		// 「兑现了没有」，不是「是不是用本包的 Env 生成的」）。
 		want := normList(s.Bypass)
 		got := normList(strings.Split(env["NO_PROXY"], ","))
-		if !equalStrings(want, got) {
+		if !slices.Equal(want, got) {
 			return errors.Errorf("egress: 绕过名单未兑现（要求 %v，实际 %q）", want, env["NO_PROXY"])
 		}
 	}
@@ -203,19 +204,6 @@ func normList(items []string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// equalStrings 比较两个**已归一**的清单。
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func isProxyVar(kv string) bool {

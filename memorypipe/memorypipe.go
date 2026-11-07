@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/slicex"
 	"github.com/oekit/pkg/stringx"
 )
 
@@ -170,21 +171,11 @@ func ineligible(e Entry, q Query) string {
 		return "作用域不匹配（" + e.Scope + "）；不做父级兜底，否则作用域失去意义"
 	}
 	for _, want := range q.Tags {
-		if !hasTag(e.Tags, want) {
+		if !slicex.Contains(e.Tags, want) {
 			return "缺少标签 " + want
 		}
 	}
 	return ""
-}
-
-// hasTag 报告标签是否在集合里（大小写敏感：标签是宿主的词表，不做猜测性归一）。
-func hasTag(tags []string, want string) bool {
-	for _, t := range tags {
-		if t == want {
-			return true
-		}
-	}
-	return false
 }
 
 // Prompt 渲染成可注入的文本：**逐条打标**。

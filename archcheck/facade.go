@@ -33,6 +33,7 @@ import (
 	"go/token"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -77,7 +78,7 @@ func facadeViolations(root string, fr FacadeRule) ([]Violation, error) {
 		aliases := importAliases(f)
 		up := map[string]bool{}
 		for name, path := range aliases {
-			if allowed[path] && containsPath(fr.Upstream, path) {
+			if allowed[path] && slices.Contains(fr.Upstream, path) {
 				up[name] = true
 			}
 		}
@@ -250,15 +251,6 @@ func defaultPkgName(p string) string {
 		last = parts[len(parts)-2]
 	}
 	return last
-}
-
-func containsPath(list []string, p string) bool {
-	for _, v := range list {
-		if v == p {
-			return true
-		}
-	}
-	return false
 }
 
 func valueNames(s *ast.ValueSpec) []string {

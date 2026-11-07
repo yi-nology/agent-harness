@@ -73,6 +73,7 @@ import (
 
 	"github.com/oagentkit/guardx/invoke"
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/slicex"
 )
 
 // 装配期与运行期的哨兵。用 oekit/pkg/errors（与全家族一致），调用方用 errors.Is 判定。
@@ -250,11 +251,7 @@ func New(guards ...Guard) (*Set, error) {
 
 // Guards 返回已装配的守卫名（按优先级序，只读快照，供自检与调试）。
 func (s *Set) Guards() []string {
-	out := make([]string, len(s.guards))
-	for i, g := range s.guards {
-		out[i] = g.Name
-	}
-	return out
+	return slicex.Map(s.guards, func(g Guard) string { return g.Name })
 }
 
 // Evaluate 一并求值全部守卫，合成一份结论。
