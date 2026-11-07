@@ -2,6 +2,75 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.20.0] — 2026-11-07
+
+### 新增(sandbox,egress,ptc,archcheck)：出口声明必须有人兑现——问不到后端就不起子进程
+
+GAP 台账 P0-1：出口强制件的两端此前都空。本仓这一半先收口——声明可以
+写，但兑现不了就不执行，且门禁把「有没有兑现者」判出来。
+## 词表真相上移到 tier 0
+egress.Mode / egress.Enforcer 改为 guardx/sandbox 的 EgressMode /
+EgressEnforcer 的 type alias（编译期同一类型，调用面逐字兼容）。词表留在
+本仓时，上游任何执行后端要声明「我能强制 proxy 档」都得 import 本仓
+——依赖方向成环，那条接口在结构上只可能由宿主实现，且编译期一声不响。
+sandbox 门面同步转发两个类型与三个档位常量，宿主实现 Provider 时不必
+直接 import 上游。
+## spawn 之前先问兑现
+ptc.SubprocessOptions 新增 EgressBackend egress.Enforcer（nil = 没人声明
+≠ 不限制）。newChildPipes 在建管道之前先 spec.SatisfiedBy(backend)：
+问不到能强制这一档的后端就直接拒绝，连管道都不建。
+能力问询与 env 生成刻意留在同一个函数里——它们是同一件事（这份声明兑现
+得了吗）。分成两处会让「只做了一半」看起来像已经兑现，且门禁按「文件 +
+函数」定位启动点，两半同处一地才判得出来。
+## 门禁补第二半证据
+egress_paths 的 proxy 档此前只判「有没有生成 env」，对「只生成 env」静默
+放行——而 env 只是建议，「生成了 env」当成「已兑现」正是这条链空转的原因。
+现改为两半都判：env 生成（egress_unplumbed）+ 能力问询（egress_unprobed，
+policy 新增可选字段 capability，缺省判 SatisfiedBy）。
+不新增第六条判据而是强化既有第二条，避免与文档里的「判据五条」多处口径
+失配；两半分别报不同 kind，因为修法完全不同。
+## 反向验证（不是只钉好形态）
+- 摘掉 ptc/childpipes.go 的 spec.SatisfiedBy ⇒ archcheck 报
+  egress_unprobed 且 exit 1；TestSpawnRefusedWhenNoEgressBackend 与
+  TestSpawnRefusedWhenBackendTooWeak 双双 FAIL
+- 夹具拆三态：两半齐（放行）/ 只有 env（unprobed）/ 非 egress 的假
+  SatisfiedBy（仍红，防「有个同名方法就算兑现」）
+
+- 杂务(deps)：guardx v0.19.0→v0.21.0
+
+出口档位的词表与兑现件已在 guardx v0.21.0 落地：
+- guardx/sandbox 新增 EgressMode / EgressEnforcer（tier 0 词表，低于所有
+  实现方——词表留在本仓时，上游任何执行后端要声明「我能兑现」都得 import
+  本仓，成环，且编译期一声不响）
+- guardx/egressproxy 新增兑现件（默认拒绝、拒绝名单优先、缺省端口 80/443、
+  CONNECT 隧道 + 明文转发、Egress() 只声称 proxy 档）
+本提交只动 go.mod / go.sum（各一两行），独立可编译：在 origin/main 的代码
+树上只换 guardx v0.21.0，实测 go build ./... 与 go vet ./...（含测试文件
+编译）均退出码 0。
+oekit/pkg v0.37.1 已由 origin/main 的 windows 支持矩阵先抬到位，本提交不
+再重复声明，故标题只写 guardx——把别人的抬升算进自己的账，CHANGELOG 会
+记错账。
+语义变更在下一笔（feat）兑现，单独成提交是为了让 bisect 能把「依赖抬升」
+与「语义变更」分开定位。
+
+
+- 文档：兑现面落地记录——USAGE / AI-GUIDE / GAP 台账与下游升级须知
+
+与代码同批的文档改动（代码在上一笔，此处只动文档）：
+- docs/USAGE.md：§3.13 的接线示例改为真的接 guardx/egressproxy 并填
+  EgressBackend；「必须知道」三条→四条；§4.4 判据 2 改为两半证据，
+  门禁表补行
+- docs/AI-GUIDE.md：门禁表补 egress_paths 的两半判据与修法列
+- docs/GAP-ANALYSIS-20261107.md（新增）：第三次刷新五家对标；P0-1 标
+  已结账并记「落地记录」三处与原始设想不同（词表位置从 egress 改到
+  sandbox、可选接口而非 Provider 新方法、既有判据强化而非新增第六条）
+- README.md：工程底座三项按实测重算（24,704 行 / 137 文件 / 168 测试
+  文件）；「下游升级须知」新增 v0.20.0 整行，含 guardx v0.20.0 的
+  egress scheme 白名单收紧（对下游是行为变化，从通过变 BlockedError）
+本版原计划占 v0.19.0，但并行会话的 windows/amd64 支持矩阵（PR #40）
+先占了该版本号，故本版为 v0.20.0。
+
+
 ## [v0.19.0] — 2026-11-07
 
 ### 新增(platform)：windows/amd64 回归支持矩阵——上游 procx Windows 进程树路径落地（issue #34 收尾）
