@@ -55,6 +55,17 @@ type (
 	Capable = upstream.Capable
 	// CapableFunc 把普通函数适配成 Capable。
 	CapableFunc = upstream.CapableFunc
+	// EgressMode 出站档位（序即强弱）。
+	//
+	// 为什么它在**执行后端**这一层而不是在出口策略包：能力声明的返回值类型必须
+	// 唯一，而声明者是后端——见 EgressEnforcer。
+	EgressMode = upstream.EgressMode
+	// EgressEnforcer 可选能力面：后端声明它能**强制**哪一档出站。
+	//
+	// **不实现它即视为没有做出任何声明**——在安全判据里，沉默按最弱处理
+	// （见 agent-harness 的 egress.Spec.SatisfiedBy）。与 Capable 同一条方向：
+	// 漏声明得到的是「兜不住」，不是「兜得住」。
+	EgressEnforcer = upstream.EgressEnforcer
 )
 
 // 档位常量别名。
@@ -63,6 +74,13 @@ const (
 	LevelProcess = upstream.LevelProcess
 	LevelOS      = upstream.LevelOS
 	LevelMachine = upstream.LevelMachine
+)
+
+// 出站档位常量别名。
+const (
+	EgressUnrestricted = upstream.EgressUnrestricted
+	EgressProxy        = upstream.EgressProxy
+	EgressDenied       = upstream.EgressDenied
 )
 
 // 哨兵错误别名。

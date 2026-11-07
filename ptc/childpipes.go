@@ -51,7 +51,26 @@ type childPipes struct {
 // **在 spawn 之前**把出口档位的环境一次生成出来，生成不出就**不起子进程**。
 //
 // spec 的零值（不限制）逐字返回 base，故旧调用点行为不变。
-func newChildPipes(exe string, spec egress.Spec) (*childPipes, error) {
+//
+// # 兑现是两半，两半都在这里
+//
+//	① 能力问询：问后端「你能强制这一档吗」（Spec.SatisfiedBy）
+//	② 环境生成：把这一档落成子进程看得见的变量（Spec.Env）
+//
+// 只有 ② 是不够的：**环境变量只是建议**，一个能改 env 却没有任何强制面的后端
+// 依然让流量自由出网，而「生成了 env」在报告里看起来就是「已兑现」。故 ① 先于
+// ②：后端没有声明能力 ⇒ 连管道都不建。
+//
+// 两半放在**同一个函数**里是有意的：它们是同一件事（这份声明兑现得了吗），
+// 分开写会让「只做了一半」看起来仍然完成了兑现。
+func newChildPipes(exe string, spec egress.Spec, backend egress.Enforcer) (*childPipes, error) {
+	// ① 能力问询必须**先于**建管道：问不过就不该有子进程，也不该有半建成的资源。
+	// 不要求限制时 SatisfiedBy 恒放行，故旧调用点（Egress 零值）行为不变。
+
+	if err := spec.SatisfiedBy(backend); err != nil {
+		return nil, errors.Wrap(err, "ptc: 子进程出口声明无人兑现")
+	}
+
 	p := &childPipes{}
 
 	// 四条单向管道：启动读/启动写/调用请求写/调用响应读（子进程侧视角）。

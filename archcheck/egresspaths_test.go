@@ -18,9 +18,28 @@ import (
 // spawnSrc 一个**未挂出口**的启动点（最朴素的 exec.Command）。
 const spawnSrc = "package app\n\nimport \"os/exec\"\n\nfunc Spawn() error { return exec.Command(\"sh\").Run() }\n"
 
-// plumbedSrc 挂了出口声明的启动点：ffi 生成 env 失败即不起子进程。
+// plumbedSrc 两半都齐的启动点：先问后端能不能兑现，再把声明生成成 env。
 const plumbedSrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"github.com/yi-nology/agent-harness/egress\"\n)\n\n" +
+	"func Spawn(spec egress.Spec, backend egress.Enforcer) error {\n" +
+	"\tif err := spec.SatisfiedBy(backend); err != nil {\n\t\treturn err\n\t}\n" +
+	"\tcmd := exec.Command(\"sh\")\n\tenv, err := spec.Env(nil)\n" +
+	"\tif err != nil {\n\t\treturn err\n\t}\n\tcmd.Env = env\n\treturn cmd.Run()\n}\n"
+
+// envOnlySrc 只做了一半：env 生成齐全，但**从没问过后端能不能兑现**。
+//
+// 这一态是「声明→兑现」这条链最像完成的样子：环境变量真的生成了、真的挂到了
+// 子进程上，而报告里那一条看起来就是「已兑现」。可环境变量只是**建议**——
+// 一个能改 env 却没有任何强制面的后端照样让流量自由出网。旧判据对它静默放行。
+const envOnlySrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"github.com/yi-nology/agent-harness/egress\"\n)\n\n" +
 	"func Spawn(spec egress.Spec) error {\n\tcmd := exec.Command(\"sh\")\n\tenv, err := spec.Env(nil)\n" +
+	"\tif err != nil {\n\t\treturn err\n\t}\n\tcmd.Env = env\n\treturn cmd.Run()\n}\n"
+
+// fakeProbeSrc 有一个名叫 SatisfiedBy 的调用，但限定符**不是** egress：
+// 这是「按方法名认人」会把无关调用算成能力问询的形态。
+const fakeProbeSrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"example.com/pick\"\n" +
+	"\t\"github.com/yi-nology/agent-harness/egress\"\n)\n\n" +
+	"func Spawn(spec egress.Spec) error {\n\tif err := pick.SatisfiedBy(nil); err != nil {\n\t\treturn err\n\t}\n" +
+	"\tcmd := exec.Command(\"sh\")\n\tenv, err := spec.Env(nil)\n" +
 	"\tif err != nil {\n\t\treturn err\n\t}\n\tcmd.Env = env\n\treturn cmd.Run()\n}\n"
 
 // fakePlumbingSrc 只出现了同名的 .Env( 但**没有 import egress**：这是「按方法名认人」
@@ -73,6 +92,38 @@ func TestEgressGateCatchesMissingPlumbing(t *testing.T) {
 	}
 	if !containsText(vs, "看不见") {
 		t.Fatalf("要求经代理却没兑现必须报红，实得 %v", textsOf(vs))
+	}
+}
+
+// TestEgressGateCatchesMissingCapabilityProbe 钉住：**只生成 env 不够**。
+//
+// 这是本轮补上的那一半判据。旧判据（只看有没有 Env/Verify）对下面这个 fixture
+// 静默放行——env 生成了、挂上了，于是「要求经代理」在报告里显示已兑现；而后端
+// 能不能强制这一档，从来没有人问过。
+func TestEgressGateCatchesMissingCapabilityProbe(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{"app/app.go": envOnlySrc})
+	cfg := EgressPaths{Entries: []EgressEntry{{Path: "app/app.go", Fn: "Spawn", Mode: "proxy"}}}
+	vs, err := egressPathViolations(root, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsKind(vs, "egress_unprobed") {
+		t.Fatalf("只生成 env 却没问后端能力，必须报红，实得 %v", textsOf(vs))
+	}
+}
+
+// TestEgressGateRejectsFakeCapabilityProbe 钉住：能力问询也按 import 路径认人。
+func TestEgressGateRejectsFakeCapabilityProbe(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{"app/app.go": fakeProbeSrc})
+	cfg := EgressPaths{Entries: []EgressEntry{{Path: "app/app.go", Fn: "Spawn", Mode: "proxy"}}}
+	vs, err := egressPathViolations(root, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsKind(vs, "egress_unprobed") {
+		t.Fatalf("非 egress 的 SatisfiedBy 不是能力问询证据，实得 %v", textsOf(vs))
 	}
 }
 

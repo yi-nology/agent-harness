@@ -15,9 +15,12 @@
 //  1. **每个子进程启动点必须登记**（未登记即红）。方向是 fail-closed：
 //     「没登记」不等于「不要求出口」，而是**没人声明过它的出口是什么**——
 //     与 @sandbox_providers@ 的「有实现没登记必须报出来」同一条纪律。
-//  2. **登记的兑现必须能看见**（mode >= proxy 时，含启动的那个函数里必须出现
-//     出口 env 的生成/校验调用）。看不见兑现就走 env 的自我声明，那正是
-//     「声明了但没人执行」的形态。
+//  2. **登记的兑现必须能看见，且是两半**（mode >= proxy 时，含启动的那个函数里
+//     既要出现出口 env 的生成/校验调用，**也要**出现后端能力的问询调用）。
+//     只看得见 env 生成时，「声明了但没人执行」这一态是拦不住的：环境变量只是
+//     **建议**，一个能改 env 却没有任何强制面的后端照样让流量自由出网，而报告里
+//     「生成了 env」看起来就是「已兑现」。能力问询（SatisfiedBy）是那一半：
+//     它问的是「你**能强制**这一档吗」，问不到即不起子进程。
 //  3. **禁网档不许落在环境变量上**（mode: denied 直接红）。环境变量拦不住
 //     静态二进制、UDP 与原始 socket，登记成 denied 只是把「假装禁网」写进
 //     policy——比明确不声明更危险。
@@ -67,6 +70,12 @@ const egressPathRuleID = "harness-subprocess-egress"
 
 // defaultPlumbing 缺省的「兑现证据」函数名（egress.Spec 上的方法）。
 var defaultPlumbing = []string{"Env", "Verify"}
+
+// defaultCapability 缺省的「能力问询证据」函数名（同一份 Spec 上的方法）。
+//
+// 为什么它是**另一条**判据而不是 plumbing 的替代：见 judgeEgressEntry 的说明——
+// 生成 env 只证明「这一档落成了变量」，证明不了「这一档被执行面强制」。
+var defaultCapability = []string{"SatisfiedBy"}
 
 // egressModeWords 出口档位词表（与 egress 包三档同义，不另立口径）。
 var egressModeWords = map[string]bool{"unrestricted": true, "proxy": true, "denied": true}
@@ -258,22 +267,36 @@ func judgeEgressEntry(root string, e EgressEntry, sites []spawnSite, matched []b
 		return nil, true
 	}
 
-	// proxy：兑现证据必须在启动函数里看得见。
+	// proxy：兑现的两半都必须在启动函数里看得见（顺序即调用顺序）。
 	names := e.Plumbing
 	if len(names) == 0 {
 		names = defaultPlumbing
 	}
+	probes := e.Capability
+	if len(probes) == 0 {
+		probes = defaultCapability
+	}
 	for _, i := range hits {
-		if hasPlumbing(sites[i].body, sites[i].imports, names) {
-			continue
+		if !hasPlumbing(sites[i].body, sites[i].imports, names) {
+			return []Violation{{
+				Rule: egressPathRuleID, Path: sites[i].path, Line: sites[i].line,
+				Kind: "egress_unplumbed",
+				Text: fmt.Sprintf("登记要求出口经代理，但启动函数 %s 里看不见 env 的生成/校验（%s）："+
+					"环境变量不会自己跑到子进程上——必须在 spawn 之前用 egress.Spec.Env 生成，"+
+					"生成不出就不起子进程（fail closed）", fnLabel(sites[i].fn), strings.Join(names, " / ")),
+			}}, true
 		}
-		return []Violation{{
-			Rule: egressPathRuleID, Path: sites[i].path, Line: sites[i].line,
-			Kind: "egress_unplumbed",
-			Text: fmt.Sprintf("登记要求出口经代理，但启动函数 %s 里看不见 env 的生成/校验（%s）："+
-				"环境变量不会自己跑到子进程上——必须在 spawn 之前用 egress.Spec.Env 生成，"+
-				"生成不出就不起子进程（fail closed）", fnLabel(sites[i].fn), strings.Join(names, " / ")),
-		}}, true
+		if !hasCapabilityProbe(sites[i].body, sites[i].imports, probes) {
+			return []Violation{{
+				Rule: egressPathRuleID, Path: sites[i].path, Line: sites[i].line,
+				Kind: "egress_unprobed",
+				Text: fmt.Sprintf("登记要求出口经代理，但启动函数 %s 里看不见后端能力的问询（%s）："+
+					"只生成 env 证明的是「这一档落成了变量」，证明不了它被执行面强制——"+
+					"环境变量只是建议，能改 env 而没有强制面的后端照样让流量自由出网。"+
+					"spawn 之前必须问一句「你能兑现这一档吗」，问不到即不起子进程",
+					fnLabel(sites[i].fn), strings.Join(probes, " / ")),
+			}}, true
+		}
 	}
 	return nil, true
 }
@@ -286,68 +309,6 @@ func funcDeclared(root, rel, fn string) bool {
 	}
 	for _, d := range f.Decls {
 		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == fn {
-			return true
-		}
-	}
-	return false
-}
-
-// hasPlumbing 判函数体里是否出现了「出口 env 的生成/校验」调用。
-//
-// 认两种形态（都是真实调用形态，不是文本匹配）：
-//
-//   - 包限定调用：egress.Env(...) / egress.Verify(...)；
-//   - 接收者调用：spec.Env(...) / spec.Verify(...)，前提是**本文件确实 import 了
-//     egress**（否则那个 .Env 可能是任何东西的 Env）。
-//
-// 第二种必须带 import 前提：只按方法名认人会把 "re.Env" 这类无关调用也算成兑现证据，
-// 那样这条判据就变成「函数里随便有个 .Env( 就过」。
-func hasPlumbing(body *ast.BlockStmt, imports map[string]string, names []string) bool {
-	if body == nil {
-		return false
-	}
-	importsEgress := false
-	for _, p := range imports {
-		if pathLastSegment(p) == "egress" {
-			importsEgress = true
-			break
-		}
-	}
-	found := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		if found {
-			return false
-		}
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if !containsString(names, sel.Sel.Name) {
-			return true
-		}
-		ident, ok := sel.X.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		if imp, isImport := imports[ident.Name]; isImport {
-			found = pathLastSegment(imp) == "egress"
-			return true
-		}
-		// 接收者是变量：型别信息拿不到，退一步要求本文件 import 了 egress。
-		found = importsEgress
-		return true
-	})
-	return found
-}
-
-// containsString 报告切片里是否有该元素。
-func containsString(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
 			return true
 		}
 	}

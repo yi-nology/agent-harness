@@ -18,8 +18,13 @@ type EgressEntry struct {
 	// Mode 该启动点的出口档位：unrestricted / proxy / denied（缺省 unrestricted，
 	// 但**仍须显式登记**——「没登记」不等于「不要求」）。
 	Mode string `yaml:"mode"`
-	// Plumbing 兑现证据的函数名（缺省 Env / Verify）。
+	// Plumbing 兑现证据的函数名（缺省 Env / Verify）——「这一档落成 env」那一半。
 	Plumbing []string `yaml:"plumbing"`
+	// Capability 能力问询证据的函数名（缺省 SatisfiedBy）——「这一档有人强制」那一半。
+	//
+	// 两半分开可配而不是并成一个列表：它们是**两条**判据，报错要说清缺哪一半
+	// （加 Env 与加后端是两种完全不同的修法）。
+	Capability []string `yaml:"capability"`
 	// Notes 为什么是这个档（写给人看的那一句）。
 	Notes string `yaml:"notes"`
 }

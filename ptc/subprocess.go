@@ -76,6 +76,23 @@ type SubprocessOptions struct {
 	// 它的出站流量完全在本进程 netguard 之外，父侧唯一能施加影响的时点就是
 	// spawn 之前。装配（谁决定这一档）归宿主；兑现与判据归 egress。
 	Egress egress.Spec
+	// EgressBackend 兑现 Egress 声明的那个对象（通常是宿主起的强制代理）。
+	//
+	// # 为什么必须有这一格
+	//
+	// Egress 只写「要求哪一档」，它本身不会跑到任何地方去。而在 spawn 之前，
+	// 父侧唯一能做的事就是问一句「**你**能兑现这一档吗」——没有这一问，
+	// 声明与执行之间就没有任何信号：宿主写了「只经代理」，子进程照样裸奔出网，
+	// 而报告里那一条显示「已声明」。
+	//
+	// # nil 的含义是「没人声明」，不是「不限制」
+	//
+	// 不填它而 Egress 又要求了限制 ⇒ **拒绝执行**（fail closed）。安全判据里
+	// 沉默必须按最弱处理：「没人反对」不等于「做得到」。不要求限制时它不被问。
+	//
+	// 判据在 egress.Spec.SatisfiedBy，本字段只负责把兑现者带到位——判定与
+	// 声明面同源，不在本包另立一套。
+	EgressBackend egress.Enforcer
 	// ExePath 子进程可执行文件路径。空 = 用宿主自己的可执行文件（re-exec）。
 	//
 	// **re-exec 宿主自己的二进制**是默认：随包发小二进制要宿主额外安装，
@@ -160,8 +177,8 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 	// 才谈得上「父侧改了子侧自动跟」——各写一遍必然分叉。
 	lim := normalizeLimits(p.opts.Timeout, p.opts.MaxCalls, p.opts.MaxBytes)
 
-	// 管道与子进程：见 childpipes.go（建立四条管道 + 装好子进程的那一侧）。
-	pipes, err := newChildPipes(exe, p.opts.Egress)
+	// 管道与子进程：见 childpipes.go（能力问询 + 出口 env 生成 + 建立四条管道）。
+	pipes, err := newChildPipes(exe, p.opts.Egress, p.opts.EgressBackend)
 	if err != nil {
 		return wire.Result{}, err
 	}

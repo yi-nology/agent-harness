@@ -14,7 +14,8 @@
 // # 本包给什么、不给什么
 //
 // **给**：① 出口策略的**词表**（三档，可比较强弱）；② 子进程环境的**生成**；
-// ③ 「声明 vs 实际」的**判据**（Verify）；④ 后端能力声明接口（Enforcer）。
+// ③ 「声明 vs 实际」的**判据**（Verify）；④ 后端能力声明接口（Enforcer）——
+// 词表与契约的真相在上游 guardx/sandbox，本包只做 alias（理由见 Mode 的注释）。
 //
 // **不给**：代理本体与网络强制实现——那是执行环境的事（上游安全层 / 宿主）。
 // 本包只在**声明面**与**判据面**上保证一致，不造第二套网络栈。
@@ -40,35 +41,47 @@ import (
 	"strings"
 
 	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/agent-harness/sandbox"
 )
 
-// Mode 出口策略档位（值越大越严）。
-type Mode int
+// 档位词表与能力声明契约**不在本包定义**，而是 type alias 指向上游
+// guardx/sandbox（本仓 sandbox 门面同源）：
+//
+//	type Mode = sandbox.EgressMode
+//	type Enforcer = sandbox.EgressEnforcer
+//
+// # 为什么必须这样（这不是风格选择）
+//
+// 本包的 Spec.SatisfiedBy 要问一个后端「你能兑现哪一档」，而 Go 的接口一致性
+// 要求**返回值类型同一**。词表曾经就定义在本包，于是上游任何执行后端若要实现
+// Enforcer，都得 import 本仓——而本仓依赖 guardx，成环。后果不是「写起来别扭」，
+// 是**那条接口在结构上只可能由宿主实现**：上游提供一个能兑现的后端这条路被类型
+// 系统堵死，且编译期一声不响（不报错，只是永远没人能满足它）。
+//
+// 实测代价：一整条出口声明链（档位 / 自检 / env 生成 / Verify / 能力问询）全齐，
+// 却没有任何后端能声明「我能兑现」——声明面看起来完整，兑现面是空的。
+//
+// 故词表下沉到 tier 0 的 guardx/sandbox，与 Level 同层同理：跨模块共享的**词表**
+// 必须低于所有实现方。本包保留同名 alias，调用点一行不动。
+type (
+	// Mode 出口策略档位（值越大越严）。
+	Mode = sandbox.EgressMode
+	// Enforcer 后端能力声明：它能**强制**哪一档出站。
+	//
+	// 未实现它的后端一律判不满足（见 SatisfiedBy）：它没有做出任何声明，而
+	// 「没声明」不等于「不受限」——安全判据里沉默必须按最弱处理。
+	Enforcer = sandbox.EgressEnforcer
+)
 
 const (
 	// ModeUnrestricted 不要求（默认；零值即此档，故旧调用点行为不变）。
-	ModeUnrestricted Mode = iota
+	ModeUnrestricted = sandbox.EgressUnrestricted
 	// ModeProxy 要求出站经代理（可配合 Allow 做目标白名单）。
-	ModeProxy
+	ModeProxy = sandbox.EgressProxy
 	// ModeDenied 要求完全禁网（只能由执行后端强制，环境变量做不到）。
-	ModeDenied
+	ModeDenied = sandbox.EgressDenied
 )
-
-func (m Mode) String() string {
-	switch m {
-	case ModeUnrestricted:
-		return "unrestricted"
-	case ModeProxy:
-		return "proxy"
-	case ModeDenied:
-		return "denied"
-	default:
-		return "unknown"
-	}
-}
-
-// Satisfies 判本档是否满足 required（本档 ≥ required）。
-func (m Mode) Satisfies(required Mode) bool { return m >= required }
 
 // Spec 一次执行对出口策略的要求。
 type Spec struct {
@@ -82,7 +95,7 @@ type Spec struct {
 
 // Validate 自检声明本身是否可兑现（配置写错即报错，不静默降级）。
 func (s Spec) Validate() error {
-	if s.Mode < ModeUnrestricted || s.Mode > ModeDenied {
+	if !s.Mode.Valid() {
 		return errors.Errorf("egress: 未知档位 %d", int(s.Mode))
 	}
 	if s.Mode != ModeProxy {
@@ -172,16 +185,6 @@ func isProxyVar(kv string) bool {
 		}
 	}
 	return name == "NO_PROXY" || name == "no_proxy"
-}
-
-// Enforcer 由执行后端**可选**实现：声明它能兑现的出口档位。
-//
-// 为什么是可选接口而不是必选方法：改了必选方法就要动上游 sandbox.Provider
-// （那是跨仓破坏性变更），而本包只需要「能问就问，问不到即拒绝」——
-// fail-closed 的判定不依赖于上游改造。
-type Enforcer interface {
-	// Egress 返回该后端实际能兑现的档位。
-	Egress() Mode
 }
 
 // SatisfiedBy 判一个后端能否兑现本声明。

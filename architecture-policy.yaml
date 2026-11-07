@@ -201,7 +201,9 @@ modules:
     managed: true
     notes: |
       执行沙箱的档位语义与后端协议：Level（隔离档位，单调可比）+ Provider（后端
-      协议）+ Registry（登记簿，按要求档位选**最弱**满足者，无满足者即拒绝）。
+      协议）+ Registry（登记簿，按要求档位选**最弱**满足者，无满足者即拒绝）+
+      EgressMode/EgressEnforcer（出站档位词表与可选能力声明——词表必须低于所有
+      实现方，否则上游后端无法实现该接口）。
       零内部依赖——它是叶子层，ptc 反过来依赖它（适配器方向只能是 ptc → sandbox：
       沙箱机制不认识任何后端，后端认识沙箱）。
 
@@ -312,7 +314,7 @@ modules:
 
   - id: egress
     roots: [egress]
-    requires: ["ext:github.com/oekit/pkg"]
+    requires: ["ext:github.com/oekit/pkg", sandbox]
     owner: harness
     managed: true
     notes: |
@@ -321,6 +323,12 @@ modules:
       本包**不含代理本体**（那是上游 guardx 与宿主的活）——它只回答三件此前没人回答
       的事：①这次执行要求哪一档出口；②宿主给的环境变量是否**真的**兑现了那一档；
       ③某个沙箱后端能不能兑现它。
+
+      依赖 sandbox 只是为**类型同一**：出口档位词表与能力声明契约的真相在
+      上游的 guardx/sandbox（EgressMode / EgressEnforcer），本包用 type alias 指过去。
+      为什么不能在本包定义词表：Go 的接口一致性要求返回值类型同一，词表留在本包则
+      上游任何执行后端要声明「我能兑现」都得 import 本仓 ⇒ 成环 ⇒ 那条接口在结构上
+      只可能由宿主实现，且编译期不报错。实测代价是一整条出口声明链空转一轮。
 
       底层的判据是「**沉默按最弱处理**」：后端不声明 Enforcer 就视为不限制，
       而不是视为满足——否则一个从没实现过出口控制的后端会因为「没说不支持」而被
@@ -1131,8 +1139,13 @@ execution_paths:
 #   1. **未登记的启动点即红**——方向是 fail-closed：「没登记」不等于「不要求出口」，
 #      而是「没人声明过它的出口是什么」。放成宽松侧的话，加一个 spawn 点就是一次
 #      静默扩大判定面：未登记的启动点越多，判定面越小。
-#   2. **mode: proxy 的必须在启动函数里看得见兑现证据**（Env / Verify 调用）。
-#      看不见就等于是靠 env 自我声明，那正是「声明了但没人执行」的形态。
+#   2. **mode: proxy 的必须在启动函数里看得见兑现的两半**：① env 的生成/校验
+#      （Env / Verify 调用）② **后端能力的问询**（SatisfiedBy 调用）。
+#      只看得见 ① 时，「声明了但没人执行」这一态拦不住——环境变量只是**建议**，
+#      一个能改 env 却没有任何强制面的后端照样让流量自由出网，而「env 生成了、
+#      挂上了」在报告里看起来就是「已兑现」。② 问的正是那一半：你**能强制**
+#      这一档吗，问不到即不起子进程。两半分开报错（unplumbed / unprobed），
+#      因为修法完全不同（加 Env vs 加后端）。
 #   3. **mode: denied 直接红**——环境变量拦不住静态二进制、UDP 与原始 socket，
 #      写在登记里等于把「假装禁网」写进 policy。禁网只能由带能力声明的后端强制。
 #   4. **陈旧登记即红**——文件/函数不存在，或那个函数里没有启动调用。
@@ -1161,13 +1174,15 @@ execution_paths:
 egress_paths:
   enabled: true
   severity: error
-  desc: 每个子进程启动点都必须登记出口档位，要求经代理的必须在 spawn 之前看得见 env 的生成/校验，且不得把全量环境（os.Environ）交给子进程
+  desc: 每个子进程启动点都必须登记出口档位；要求经代理的必须在 spawn 之前既看得见 env 的生成/校验、也看得见后端能力的问询（只生成 env 证明不了它被执行面强制）；且不得把全量环境（os.Environ）交给子进程
   entries:
     - path: ptc/childpipes.go
       fn: newChildPipes
       mode: proxy
       notes: |
-        ptc 子进程后端的唯一 spawn 点（re-exec 宿主自己的可执行文件）。登记成 proxy 是
+        ptc 子进程后端的唯一 spawn 点（re-exec 宿主自己的可执行文件）。兑现的两半都在
+        newChildPipes 里：Spec.SatisfiedBy(opts.EgressBackend) 先问「这个后端能强制这一
+        档吗」（问不到即不起子进程），再由 Spec.Env 把它落成子进程变量。登记成 proxy 是
         **结构性事实而非本仓的策略选择**：本仓给这一层能施加影响的唯一时点就是 spawn
         之前，故这里保证的是「只要宿主声明了代理，env 一定按声明生成，生成不出就不起
         子进程」——SubprocessOptions.Egress 的零值（不限制）逐字返回原 env，旧调用点行为
