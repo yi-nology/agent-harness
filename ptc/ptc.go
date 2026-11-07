@@ -36,13 +36,13 @@ package ptc
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/dop251/goja"
 	"github.com/oagentkit/guardx/invoke"
 	"github.com/oekit/logx"
+	"github.com/oekit/pkg/encoding"
 	"github.com/oekit/pkg/errors"
 	"github.com/yi-nology/agent-harness/toolname"
 )
@@ -319,11 +319,7 @@ func argString(v goja.Value) (string, error) {
 	if s, ok := v.Export().(string); ok {
 		return s, nil
 	}
-	b, err := json.Marshal(v.Export())
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return encoding.MarshalToString(v.Export())
 }
 
 // normalizeValue goja 导出值→JSON 友好形态（map[interface{}] 等非规整键统一字符串化

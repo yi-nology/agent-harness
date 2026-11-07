@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/slicex"
 )
 
 // TaskID 子任务标识。
@@ -310,9 +311,5 @@ func detectCycle(byID map[TaskID]Task) []TaskID {
 
 // joinIDs 把 id 列表拼成一段可读文本。
 func joinIDs(ids []TaskID) string {
-	parts := make([]string, len(ids))
-	for i, id := range ids {
-		parts[i] = string(id)
-	}
-	return strings.Join(parts, ", ")
+	return strings.Join(slicex.Map(ids, func(id TaskID) string { return string(id) }), ", ")
 }

@@ -42,6 +42,7 @@ import (
 	"strings"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/slicex"
 
 	"github.com/yi-nology/agent-harness/sandbox"
 )
@@ -196,12 +197,7 @@ func (s Spec) Verify(env map[string]string) error {
 
 // normList 折成「去空白、去空条目、排序」的形态（比较目标清单前先归一）。
 func normList(items []string) []string {
-	out := make([]string, 0, len(items))
-	for _, x := range items {
-		if x = strings.TrimSpace(x); x != "" {
-			out = append(out, x)
-		}
-	}
+	out := slicex.Filter(slicex.Map(items, strings.TrimSpace), func(x string) bool { return x != "" })
 	sort.Strings(out)
 	return out
 }

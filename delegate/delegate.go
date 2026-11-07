@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/slicex"
 )
 
 // Capability 能力标识（宿主自定词表：本包只做集合包含判定）。
@@ -171,9 +172,5 @@ func (r Receipt) Validate() error {
 
 // joinCaps 把能力列表拼成可读文本。
 func joinCaps(cs []Capability) string {
-	parts := make([]string, 0, len(cs))
-	for _, c := range cs {
-		parts = append(parts, string(c))
-	}
-	return strings.Join(parts, ", ")
+	return strings.Join(slicex.Map(cs, func(c Capability) string { return string(c) }), ", ")
 }

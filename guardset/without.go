@@ -15,7 +15,10 @@
 package guardset
 
 import (
+	"slices"
+
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/slicex"
 )
 
 // Without 返回一份**去掉指定守卫**的新集合。原集合**不变**。
@@ -45,12 +48,7 @@ func (s *Set) Without(names ...string) (*Set, error) {
 	for _, n := range names {
 		drop[n] = true
 	}
-	kept := make([]Guard, 0, len(s.guards))
-	for _, g := range s.guards {
-		if !drop[g.Name] {
-			kept = append(kept, g)
-		}
-	}
+	kept := slicex.Filter(s.guards, func(g Guard) bool { return !drop[g.Name] })
 	for _, n := range names {
 		if !s.hasGuard(n) {
 			return nil, errors.Wrap(ErrUnknownGuard, "guardset: 撤销不存在的守卫", "guard", n)
@@ -62,10 +60,5 @@ func (s *Set) Without(names ...string) (*Set, error) {
 
 // hasGuard 判断集合里有没有这个守卫名。
 func (s *Set) hasGuard(name string) bool {
-	for _, g := range s.guards {
-		if g.Name == name {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(s.guards, func(g Guard) bool { return g.Name == name })
 }

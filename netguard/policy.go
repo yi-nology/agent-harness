@@ -55,6 +55,7 @@
 package netguard
 
 import (
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -323,7 +324,5 @@ func suffixesOf(p *Policy) []string {
 	if p == nil {
 		return nil
 	}
-	out := make([]string, len(p.suffixes))
-	copy(out, p.suffixes)
-	return out
+	return slices.Clone(p.suffixes)
 }

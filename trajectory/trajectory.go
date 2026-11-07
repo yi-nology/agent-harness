@@ -33,6 +33,7 @@ package trajectory
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -223,9 +224,7 @@ func (p *Projector) ApplyAll(evs []eventbus.Event) {
 func (p *Projector) Rows() []Row {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	out := make([]Row, len(p.rows))
-	copy(out, p.rows)
-	return out
+	return slices.Clone(p.rows)
 }
 
 // Len 当前轨迹行数。
@@ -243,9 +242,7 @@ func (p *Projector) Len() int {
 func (p *Projector) Issues() []Issue {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	out := make([]Issue, len(p.issues))
-	copy(out, p.issues)
-	return out
+	return slices.Clone(p.issues)
 }
 
 // Finalize 收口投影：把「不会再有新事件」落成显式事实。

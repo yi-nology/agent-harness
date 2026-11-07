@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/oekit/pkg/encoding"
 )
 
 // 报告协议类型契约：LLM 输出的结构面（StringList/Evidence/Rec/Chart/Report）。
@@ -35,8 +37,8 @@ func (s *StringList) UnmarshalJSON(data []byte) error {
 			case float64:
 				list = append(list, strconv.FormatFloat(t, 'f', -1, 64))
 			default:
-				b, _ := json.Marshal(t)
-				list = append(list, string(b))
+				text, _ := encoding.MarshalToString(t)
+				list = append(list, text)
 			}
 		}
 		*s = list

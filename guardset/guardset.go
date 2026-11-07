@@ -67,6 +67,7 @@ package guardset
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -243,8 +244,7 @@ func New(guards ...Guard) (*Set, error) {
 		}
 		seen[g.Name] = true
 	}
-	ordered := make([]Guard, len(guards))
-	copy(ordered, guards)
+	ordered := slices.Clone(guards)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Rank < ordered[j].Rank })
 	return &Set{guards: ordered}, nil
 }

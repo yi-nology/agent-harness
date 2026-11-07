@@ -48,10 +48,12 @@ package preset
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/oekit/pkg/errors"
+	"github.com/oekit/pkg/slicex"
 
 	"github.com/yi-nology/agent-harness/egress"
 	"github.com/yi-nology/agent-harness/gatecheck"
@@ -188,10 +190,7 @@ func (s *Set) Names() []string {
 	if s == nil {
 		return nil
 	}
-	out := make([]string, 0, len(s.presets))
-	for _, p := range s.presets {
-		out = append(out, p.Name)
-	}
+	out := slicex.Map(s.presets, func(p Preset) string { return p.Name })
 	sort.Strings(out)
 	return out
 }
@@ -201,8 +200,7 @@ func (s *Set) All() []Preset {
 	if s == nil {
 		return nil
 	}
-	out := make([]Preset, len(s.presets))
-	copy(out, s.presets)
+	out := slices.Clone(s.presets)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
