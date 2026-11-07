@@ -1968,10 +1968,16 @@ prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
 // 子进程后端还需在 main 里加一行 ptc.MaybeRunChild()（re-exec 宿主自己的二进制）。
 ```
 
-**三条必须知道的**
+**几条必须知道的**
 
 - `Spec.Env(base)` 生成子进程环境；**生成失败即不起子进程**（fail closed）。
   所以 `ModeDenied` 在本层**必然报错**——那一档只能由执行后端兑现，靠 env 兑现它是造假。
+- **`Allow` 不是「绕过代理」的名单**（v0.20.1 起修正）：`Spec.Allow` 是「**允许经代理访问**的目标」，
+  由代理判定（对应 `egressproxy.Policy.AllowHosts`），本包**不**把它写进 `NO_PROXY`。要表达
+  「这些目标不走代理」请用 **`Spec.Bypass`**（写 `NO_PROXY` / `no_proxy`）。v0.20.0 及以前
+  把 `Allow` 写进了 `NO_PROXY`，语义正好相反：允许名单里的目标直连，于是代理的**拒绝名单、
+  端口白名单、只读档对它全部失效**，而报告里那条声明仍然显示「已兑现」。两个相反的语义
+  不能塞进同一个字段。
 - **兑现者必须显式给**（v0.20.0 起的行为收紧）：`Egress` 只写「要求哪一档」，它自己不会跑到
   任何地方去；父侧唯一能施加影响的时点就是 **spawn 之前**，所以那里先问一句
   `Spec.SatisfiedBy(EgressBackend)`——**不填兑现者或能力不足 ⇒ 不起子进程**。
