@@ -135,12 +135,13 @@ func wrapperSource(ps parsedSignature) string {
 	// 可选槽位**只在真的给了值时才写入**。写进去一个 undefined 到 JSON 里就是
 	// null，宿主收到 {"count":null} 与「没给 count」是两件事：前者可能走进显式的
 	// 空值分支，后者才是走默认值——这两条路的后果不一样，不能混。
-	b.WriteString("var __ptcO={")
-	b.WriteString(ps.params[0].name)
-	b.WriteString(":")
-	b.WriteString(ps.params[0].name)
-	b.WriteString("}")
-	for _, p := range ps.params[1:] {
+	//
+	// 条件写入对**全部形参**生效，首形参不豁免（issue #53）：守卫只生成给
+	// params[1:] 的话，t(a?) 在 t() / t(undefined) 下照样落 {"a":null}——
+	// 而该形态不被「可选后跟必填」的装配校验拒绝，是合法签名。null 与缺失
+	// 的契约自破正是 signature_optional_test 钉死的不变量。
+	b.WriteString("var __ptcO={}")
+	for _, p := range ps.params {
 		b.WriteString(";if(")
 		b.WriteString(p.name)
 		b.WriteString("!==undefined){__ptcO.")

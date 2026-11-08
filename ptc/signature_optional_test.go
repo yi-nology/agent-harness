@@ -90,6 +90,60 @@ func TestOptionalStillArityBounded(t *testing.T) {
 	}
 }
 
+// TestFirstOptionalParamOmitted 首形参即可选（t(a?)）时不传/显式 undefined，
+// JSON 里**不得出现该键**（issue #53）。
+//
+// 此前条件写入只生成给 params[1:]，首形参无条件写入：t(a?) 调 t() 时宿主收到
+// {"a":null} 而不是 {}——null 可能走进宿主的显式空值分支而非默认值分支，
+// 「null 与缺失是两件事」的契约自破。该形态不被装配校验拒（它只拒「可选后跟
+// 必填」），故只能靠这里钉住。
+func TestFirstOptionalParamOmitted(t *testing.T) {
+	for _, prog := range []string{`return host.t()`, `return host.t(undefined)`} {
+		var got string
+		bind := []Binding{optBind("t", "t(a?)", `ok`, &got)}
+		r := Run(context.Background(), prog, bind, Options{})
+		if !r.OK {
+			t.Fatalf("%s: 实得 %q / %q", prog, r.ErrorKind, r.Error)
+		}
+		if got != "{}" {
+			t.Fatalf("%s: 首形参未提供时宿主应收到 {}（null 与缺失不是一回事），实得 %s", prog, got)
+		}
+	}
+}
+
+// TestFirstOptionalParamProvided 首形参即可选且真的给了值时照常带上。
+func TestFirstOptionalParamProvided(t *testing.T) {
+	var got string
+	bind := []Binding{optBind("t", "t(a?)", `ok`, &got)}
+	r := Run(context.Background(), `return host.t("x")`, bind, Options{})
+	if !r.OK {
+		t.Fatalf("实得 %q / %q", r.ErrorKind, r.Error)
+	}
+	if !strings.Contains(got, `"a":"x"`) {
+		t.Fatalf("已提供的首形参应带上，实得 %s", got)
+	}
+}
+
+// TestFirstRequiredUndefinedStaysOmitted 全必填签名下首形参传 undefined 同样不落 null。
+//
+// 守卫改为全形参生效后，t(a,b) 调 t(undefined, "y") 的宿主账面从 {"a":null,"b":"y"}
+// 变成 {"b":"y"}——undefined 本就「视同未提供」（TestExplicitUndefinedTreatedAsAbsent
+// 的口径），首形参没有理由例外。
+func TestFirstRequiredUndefinedStaysOmitted(t *testing.T) {
+	var got string
+	bind := []Binding{optBind("t", "t(a, b)", `ok`, &got)}
+	r := Run(context.Background(), `return host.t(undefined, "y")`, bind, Options{})
+	if !r.OK {
+		t.Fatalf("实得 %q / %q", r.ErrorKind, r.Error)
+	}
+	if strings.Contains(got, `"a"`) {
+		t.Fatalf("首形参 undefined 不应出现在 JSON 里，实得 %s", got)
+	}
+	if !strings.Contains(got, `"b":"y"`) {
+		t.Fatalf("第二形参应在，实得 %s", got)
+	}
+}
+
 // TestOptionalOutOfOrderRejected 可选形参后面还有必填时判非法。
 //
 // 那种形态下，模型为了传后面的必填项就得先把前面的空位填上——而填进去的值是编的。
