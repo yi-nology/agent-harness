@@ -289,6 +289,16 @@ func (s *Set) Evaluate(ctx context.Context, c invoke.Call) Outcome {
 			Guard: g.Name, Reason: v.Reason, Retryable: v.Retryable,
 		})
 	}
+	// fail-closed（issue #43）：nil 或零值 Set（无守卫）不得放行——那是
+	// 「没人看着的调用」，New 在构造期就拒绝空集合，能走到这里的空集
+	// 只剩零值构造（var s Set / &Set{}）与 Assembly 未装配的回落形态，
+	// 两者都必须按拒绝收口，而不是当「全部守卫都同意」放行。
+	if s == nil || len(s.guards) == 0 {
+		return Outcome{
+			Allowed: false,
+			Denials: []Denial{{Guard: "guardset", Reason: "守卫集合为空（零值/未装配）——fail-closed 拒绝，请经 New/ NewAssembly 装配", Retryable: false}},
+		}
+	}
 	if len(denials) == 0 {
 		return Outcome{Allowed: true}
 	}

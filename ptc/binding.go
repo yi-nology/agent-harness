@@ -91,11 +91,13 @@ func mountBindings(
 				res.CallLog = append(res.CallLog, CallRecord{
 					Name: b.Name, Status: StatusDenied, Error: serr.Error(),
 				})
-				// 类型化判定结论夹带出去：JS 拒绝只剩字符串，而收口处要靠它把
-				// 「守卫判定拒绝」与「守卫自己崩了」分成两类（见 stageOutcome）。
-				// 程序自己 try/catch 掉时用不到，只在未被捕获的路径上被读到。
-				res.stageErr = serr
-				panic(vm.NewGoError(serr))
+				// 分类随值走（issue #44）：载体装进 JS 异常抛出（goja 对非
+				// goja 值的 panic 会穿透成 host panic，不能被 try/catch），
+				// lastThrown 记下最近一次抛出供收口处文本锚定——程序捕获后
+				// 再抛自己的错误时锚定失配，陈值毒化无从发生。
+				kind, _ := stageOutcome(serr)
+				res.lastThrown = &thrownRejection{err: serr, kind: kind}
+				panic(vm.NewGoError(res.lastThrown))
 			}
 			start := time.Now()
 			// callIt 直调宿主 Binding.Call：宿主侧 panic 经 goja 对非 goja
@@ -139,7 +141,11 @@ func mountBindings(
 				return goja.Undefined()
 			}
 			if err != nil {
-				panic(vm.NewGoError(err)) // 程序可 try/catch；未捕获=拒绝落 Result
+				// 分类随值走（issue #45）：调用错误自带的 toolfail 分类
+				// （子进程侧 remoteFailure.Kind() 等）经载体穿过包装，
+				// 收口处不再把「策略否定」误映射成 transient。
+				res.lastThrown = &thrownRejection{err: err, kind: rejectionKindOf(err)}
+				panic(vm.NewGoError(res.lastThrown)) // 程序可 try/catch；未捕获=拒绝落 Result
 			}
 			return vm.ToValue(out)
 		}

@@ -154,12 +154,9 @@ type Result struct {
 	Calls       int
 	Bytes       int
 	CallLog     []CallRecord
-	// stageErr 本次执行里判定环给出的类型化错误（nil 表示没有）。
-	//
-	// 刻意不导出、也不进 JSON：它给的是**收口处做分类**用的，不是给调用方读的。
-	// JS 拒绝只保留字符串（goja 的 rejection reason 经格式化即失真），类型化判定
-	// 结论走不了序列化那条路，只能由绑定闭包在这里夹带出来。
-	stageErr error
+	// lastThrown 最近一次本包抛出的分类载体（文本锚定归因用，见
+	// rejection.go；issue #44/#45）。
+	lastThrown *thrownRejection
 }
 
 // findBindingCollision 找绑定面的标识符冲突：工具名经 toolname.Normalize 净化后可能撞名。
