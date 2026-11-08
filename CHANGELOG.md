@@ -2,31 +2,32 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.27.1] — 2026-11-09
+
+### 修复：agent-harness 第三轮 issue 清零（#53 #54 #55 #56 #57 #58 #59）
+
+* fix(ptc): 调用形态包装对全部形参生成条件写入，首形参可选不再落 null（#53）
+* fix(pending): ColumnValue 零值 kind fail-fast，消灭零值入参下的挂起态静默消失（#54）
+* fix(drain): converge 留痕与取消原因按 ctx.Err() 分道，二次取消不再误标排水超时（#55）
+* fix(protocol): steps 形态判定对「{」命中先过 JSON 预检，POSIX 花括号组不再误拒（#56）
+* fix(ptc): 拒绝归因链三项修正——锚定改 nonce 全等、分类探针链感知认规范失败类型、判定环前缀只认 DenyError（#57 #58 #59）
+* docs: docsync 行数对账——ptc/pending/drain/protocol 修订后 25,847 行/142 文件
+---------
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
 ## [v0.27.0] — 2026-11-08
 
-### Fixed（契约面五连——审计 issue #42-#46 清零）
+### 修复(lint)：删除已死的 stageErr 字段——分类载体化后无读写（unused 门禁）
 
-- **ptc.SubprocessProvider.Exec 对不匹配的请求程序 fail-closed（#46）**：
-  单程序后端的 req.Program 此前是死参数——宿主按 Provider 协议的每请求
-  形态调用时实际跑的是 opts 配置的程序，结果却按请求上报（「判过的后端
-  ≠ 实际跑的后端」静默落差）。现请求程序与配置不一致即拒（结构化错误），
-  空请求程序 = 「跑配置的那个」显式放行；Supports 与 Exec 读同一预算源。
-- **ptc 拒绝分类跨执行形态同源（#45）**：子进程形态下父侧判定环拒绝
-  （permission_denied）此前在 remoteFailure→GoError 包装里丢失分类，落进
-  runtime→transient——「重试也永不满足」的策略否定被报成「值得重试」，
-  retryplan 会无穷重试。进程内同调用报 stage_denied（保守侧），两形态
-  不再分叉。
-- **ptc 陈旧 stageErr 不再毒化归因（#44）**：程序捕获判定环拒绝后抛
-  自己的错误，结果级单槽读到的是上一次的 stageErr——程序 bug 被误归
-  stage_denied（调用方质问守卫而非改程序）。分类载体随抛出携带 +
-  文本锚定归因（被拒值必须包含最近抛出的载体消息），锚定失配一律 runtime。
-- **guardset 零值/未装配 fail-closed（#43）**：零值 Set 与未装配
-  Assembly（含 Stage() 链环）此前 allow-all，与包的 fail-closed 纪律相反
-  ——New 构造期拒绝空集合后，能走通的空集只剩这两个形态。现按拒绝收口
-  （Guard=guardset 可归因）。
-- **egress.Verify 查无绕过声明下的 NO_PROXY（#42）**：Spec.Bypass 为空时
-  此前完全不查 NO_PROXY——环境继承的 `NO_PROXY=*`/no_proxy 把代理架空成
-  全直连，「经代理强制」验证仍绿。现两个大小写变体同查（空串视同缺席）。
+- c71db20
+
+### 修复：契约面五连——拒绝分类同源/单程序后端 fail-closed/guardset 闭合/NO_PROXY 查验（issue #42-#46）
+
+逐条见 CHANGELOG v0.20.0 段。
+
+- 文档：docsync 行数对账——rejection.go 新增后 25,722 行/142 文件/179 测试文件
+
+- 格式：gofmt 两个新测试文件
 
 ## [v0.26.0] — 2026-11-08
 
