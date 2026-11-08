@@ -154,8 +154,8 @@ type Result struct {
 	Calls       int
 	Bytes       int
 	CallLog     []CallRecord
-	// lastThrown 最近一次本包抛出的分类载体（文本锚定归因用，见
-	// rejection.go；issue #44/#45）。
+	// lastThrown 最近一次本包抛出的分类载体（精确锚定归因用，见
+	// rejection.go；issue #44/#45/#57）。
 	lastThrown *thrownRejection
 }
 

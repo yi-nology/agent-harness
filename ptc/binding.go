@@ -93,10 +93,10 @@ func mountBindings(
 				})
 				// 分类随值走（issue #44）：载体装进 JS 异常抛出（goja 对非
 				// goja 值的 panic 会穿透成 host panic，不能被 try/catch），
-				// lastThrown 记下最近一次抛出供收口处文本锚定——程序捕获后
+				// lastThrown 记下最近一次抛出供收口处精确锚定——程序捕获后
 				// 再抛自己的错误时锚定失配，陈值毒化无从发生。
 				kind, _ := stageOutcome(serr)
-				res.lastThrown = &thrownRejection{err: serr, kind: kind}
+				res.lastThrown = &thrownRejection{err: serr, kind: kind, nonce: newRejectionNonce()}
 				panic(vm.NewGoError(res.lastThrown))
 			}
 			start := time.Now()
@@ -141,10 +141,11 @@ func mountBindings(
 				return goja.Undefined()
 			}
 			if err != nil {
-				// 分类随值走（issue #45）：调用错误自带的 toolfail 分类
-				// （子进程侧 remoteFailure.Kind() 等）经载体穿过包装，
-				// 收口处不再把「策略否定」误映射成 transient。
-				res.lastThrown = &thrownRejection{err: err, kind: rejectionKindOf(err)}
+				// 分类随值走（issue #45/#58）：调用错误自带的 toolfail 分类
+				// （规范失败类型 *toolfail.Failure、子进程侧 remoteFailure.Kind()
+				// 等，链感知探测）经载体穿过包装，收口处不再把「策略否定」
+				// 误映射成 transient。
+				res.lastThrown = &thrownRejection{err: err, kind: rejectionKindOf(err), nonce: newRejectionNonce()}
 				panic(vm.NewGoError(res.lastThrown)) // 程序可 try/catch；未捕获=拒绝落 Result
 			}
 			return vm.ToValue(out)
@@ -214,16 +215,27 @@ const (
 //
 // 第一返回值为空串表示「这次失败与判定环无关」，调用方保留自己的分类。
 //
+// 归因链先看**错误是谁家的**（issue #59）：判定环的拒绝/故障统一归口为
+// *invoke.DenyError（EvaluateStages 的公开契约），宿主绑定失败、toolfail
+// 规范失败、自定义 Kind() 拒绝都不是它——此前只靠 errors.Is 排除两类哨兵，
+// 其余一切错误都被冠「判定环拒绝」，宿主审计门/工具自身的权限拒绝被归因到
+// 判定环，排障的人去查根本没参与的守卫配置，而收口的 else 分支成了死代码。
+// 现在**不是 DenyError 的错误返回 ("", "")**，无前缀无 stage kind。
+//
 // 两个取值直接对应 invoke 的归口，不是本包另定的一套语义：
 //   - stage_denied：守卫判定拒绝（正常裁决），前缀「判定环拒绝」；
 //   - stage_failed：守卫自己报错/崩溃，或压根没有可判定的对象（空名），
 //     前缀「判定环故障」——那是宿主侧的故障，不是程序的问题。
 //
-// 判据用 errors.Is 而不是读 Stage 字段：归口环节名是 invoke 包内未导出常量，
-// 本包引用不到；哨兵错误是它留的公开契约。
+// 哨兵判据用 errors.Is 而不是读 Stage 字段：归口环节名是 invoke 包内未导出
+// 常量，本包引用不到；哨兵错误是它留的公开契约。
 func stageOutcome(serr error) (kind, prefix string) {
 	if serr == nil {
 		return "", ""
+	}
+	var de *invoke.DenyError
+	if !errors.As(serr, &de) {
+		return "", "" // 与判定环无关（宿主/程序侧错误），不做判定环归因
 	}
 	if errors.Is(serr, invoke.ErrStageFailed) || errors.Is(serr, invoke.ErrEmptyName) {
 		return "stage_failed", "判定环故障"
