@@ -106,20 +106,25 @@ func execute(
 		res.OK = true
 		res.Value = strings.TrimSpace(buf.String())
 	case goja.PromiseStateRejected:
-		// 归因按文本锚定（issue #44/#45，见 rejection.go）：被拒值消息
-		// 包含最近抛出的载体消息 ⇒ 这次拒绝就是那次抛出，分类采信（stage
-		// 两类带判定环前缀；toolfail 分类原样透传给 kindForErrorKind）；
-		// 锚定失配 ⇒ 程序捕获后自己抛的运行时错误，一律 runtime——
-		// stageErr 单槽陈值毒化路径已随载体化移除。
+		// 归因按**精确锚定**（issue #44/#45/#57，见 rejection.go）：被拒值必须
+		// 逐字等于最近抛出的载体在未捕获时的渲染（含每次抛出随机生成的 nonce）
+		// ⇒ 这次拒绝就是那次抛出，分类采信（stage 两类带判定环前缀；toolfail
+		// 分类原样透传给 kindForErrorKind）；锚定失配 ⇒ 程序捕获后改写/重包过
+		// 的错误，一律 runtime——旧的单向 Contains 会让改写过的消息（"failed: "+
+		// e.message）也命中，程序自己的 bug 误继承 stage 分类。
 		rejected := fmt.Sprintf("%v", p.Result())
 		tr := res.lastThrown
-		if tr == nil || !strings.Contains(rejected, tr.err.Error()) || tr.kind == "" {
+		if tr == nil || tr.nonce == "" || tr.kind == "" || rejected != rejectionAnchor(vm, tr) {
 			// 锚定失配（程序捕获后自己抛的）或无分类（普通绑定失败）⇒ runtime
 			res.Error, res.ErrorKind = fmt.Sprintf("程序拒绝: %v", p.Result()), "runtime"
 		} else if _, prefix := stageOutcome(tr.err); prefix != "" {
-			res.Error, res.ErrorKind = fmt.Sprintf("%s: %s", prefix, rejected), tr.kind
+			// 判定环的拒绝/故障：前缀只认 *invoke.DenyError（issue #59）。
+			// 锚标记剥离后再冠前缀：nonce 是 Go 侧锚定用的机械标记，不进模型可见消息。
+			res.Error, res.ErrorKind = fmt.Sprintf("%s: %s", prefix, tr.rejectionText(rejected)), tr.kind
 		} else {
-			res.Error, res.ErrorKind = rejected, tr.kind
+			// 已分类但与判定环无关（toolfail 规范失败、自定义 Kind() 拒绝）：
+			// 分类照采，前缀不加——归因到判定环会把排障方向引向守卫（issue #59）。
+			res.Error, res.ErrorKind = tr.rejectionText(rejected), tr.kind
 		}
 	default:
 		res.Error, res.ErrorKind = "await 永不落定的 Promise（VM 无定时器，绑定均为同步调用）", "pending"

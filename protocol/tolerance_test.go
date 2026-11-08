@@ -214,6 +214,19 @@ func TestStepsContractViolation(t *testing.T) {
 	if _, err := mk("du -sh /System/Volumes/Data/* | head -20").Validate(); err != nil {
 		t.Fatalf("命令形态步骤应放行: %v", err)
 	}
+	// 花括号组是 POSIX 规范语法里的合法单条复合命令，RealRun 逐字符串当 shell
+	// 命令执行能真跑通——「{」前缀命中后必须先过 JSON 预检（形态反证通道），
+	// 解不出 JSON 对象的放行（issue #56：此前按前缀独断整份拒掉触发无谓重试）。
+	if _, err := mk("{ echo a; echo b; }").Validate(); err != nil {
+		t.Fatalf("POSIX 花括号组是合法单条 shell 复合命令，应放行: %v", err)
+	}
+	if _, err := mk("{ du -sh /data; }").Validate(); err != nil {
+		t.Fatalf("花括号组放行: %v", err)
+	}
+	// 反证通道不许放走真 JSON：能解出 JSON 对象的步骤照旧拦（负对照）。
+	if _, err := mk(`{"steps":["a","b"]}`).Validate(); err == nil {
+		t.Fatal("能解出 JSON 对象的步骤仍应 critical 拦截")
+	}
 }
 
 // TestParseReportChangeParamsNumericValues（http_query per_page:20 同型巡检补齐）：

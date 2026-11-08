@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -52,9 +53,12 @@ func (r *Report) Validate() ([]string, error) {
 		}
 		// —— steps 执行契约（实弹 2026-09-08）：RealRun 逐步骤当 shell 命令执行，
 		// 行动指南 JSON / 中文条目形态会"假成功"（exit=0 但什么都没执行）。一律 critical 拦截重试。
+		// 「{」开头的判定走形态反证（issue #56）：先过 JSON 预检，能解出对象才拦——
+		// { cmd1; cmd2; } 是 POSIX 规范语法里的合法单条复合命令（RealRun 能真跑通），
+		// 前缀启发独断会把它整份拒掉触发无谓重试；「【」是中文条目形态，无反证通道，照旧拦。
 		for i, st := range rec.Steps.Std() {
 			t := strings.TrimSpace(st)
-			if strings.HasPrefix(t, "{") || strings.HasPrefix(t, "【") {
+			if strings.HasPrefix(t, "【") || (strings.HasPrefix(t, "{") && stepsIsJSON(t)) {
 				critical = append(critical,
 					fmt.Sprintf("steps[%d] 非可执行命令形态（须为单条 shell 命令字符串，说明性内容放 needs_followup）", i))
 			}
@@ -134,6 +138,18 @@ func hasConcreteData(s string) bool {
 		}
 	}
 	return false
+}
+
+// stepsIsJSON steps 形态反证（issue #56）：调用方已保证 t 以「{」开头，故
+// Unmarshal 成功即解出了 JSON 对象——那是模型把行动指南 JSON 塞进 steps 的形态，
+// 该拦。失败（含截断的「{」、POSIX 花括号组 { cmd1; cmd2; }）说明不是 JSON，
+// 是 shell 文本，放行给 RealRun 当命令执行。
+//
+// 预检只在这一个判据点用，刻意不解进具体类型：判定对象是「形态是不是 JSON」，
+// 不是「内容是什么」。
+func stepsIsJSON(t string) bool {
+	var v any
+	return json.Unmarshal([]byte(t), &v) == nil
 }
 
 // flattenSnippet 把证据关键行拍平为单行（模型常把多行 JSON 快照回填进 snippet，

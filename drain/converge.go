@@ -16,6 +16,8 @@ package drain
 import (
 	"context"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // pollInterval 收敛轮询间隔。
@@ -93,9 +95,18 @@ func awaitConverged(ctx context.Context, tgt convergeTarget, msg convergeLog, bu
 		select {
 		case <-ctx.Done():
 			// 关停链二次取消与预算耗尽走同一档处置：都没时间再等了。
+			// 但留痕与取消原因必须分开（issue #55）：DeadlineExceeded=排水预算
+			// 到点，cause 用哨兵 ErrDeadline（宿主按它与普通停机区分留痕来源）；
+			// Canceled=关停链在预算到点前就二次取消——按「排水超时」去调宽限期
+			// 是白调，真实原因只有 ctx.Err() 自己知道。此前 cause 恒为 ErrDeadline，
+			// 二次取消被审计误标成「排水超时」，cancel(cause) 传给下游的也是假原因。
+			cause := ErrDeadline
+			if errors.Is(ctx.Err(), context.Canceled) {
+				cause = ctx.Err()
+			}
 			if left := tgt.active(); left > 0 {
-				log.CtxWarn(ctx, msg.timeout, withKV(base, "left", left, "cause", ErrDeadline.Error())...)
-				tgt.cancel(ErrDeadline)
+				log.CtxWarn(ctx, msg.timeout, withKV(base, "left", left, "cause", cause.Error())...)
+				tgt.cancel(cause)
 			}
 			return
 		case <-ticker.C:

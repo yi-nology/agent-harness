@@ -1,6 +1,9 @@
 package pending
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestColumnValueAlwaysProducesDecodableJSON 钉住「列内容恒 JSON」这条承诺。
 //
@@ -37,5 +40,31 @@ func TestColumnValueAlwaysProducesDecodableJSON(t *testing.T) {
 func TestColumnValueEmptyUnchanged(t *testing.T) {
 	if got := ColumnValue("", "disambig"); got != "" {
 		t.Fatalf("空输入应原样返回空，实得 %q", got)
+	}
+}
+
+// TestColumnValueEmptyKindPanics 零值 kind 必须 fail-fast，不得落列（issue #54）。
+//
+// 此前 kind=="" 时 Encode(State{Kind: "", Word: clarify}) 产物缺 k 键，读路径
+// Parse 判 s.Kind != "" 失败返回零值——写入成功、读回为零、两头都不报错，
+// 「挂起态静默消失」在本函数自己的零值入参下复现。
+func TestColumnValueEmptyKindPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("kind 为空且 clarify 非空应 panic（fail-fast），不得落列")
+		}
+		if s, ok := r.(string); !ok || !strings.Contains(s, "kind") {
+			t.Fatalf("panic 消息应指明 kind 缺失，实得 %v", r)
+		}
+	}()
+	_ = ColumnValue("裸关键词", "")
+}
+
+// TestColumnValueEmptyKindWithEmptyClarify clarify 为空时 kind 零值无关紧要：
+// 没有内容就没有挂起态，原样返回空（fail-fast 只守「有内容要落列」的路径）。
+func TestColumnValueEmptyKindWithEmptyClarify(t *testing.T) {
+	if got := ColumnValue("", ""); got != "" {
+		t.Fatalf("空输入+空 kind 应原样返回空，实得 %q", got)
 	}
 }

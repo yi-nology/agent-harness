@@ -72,6 +72,40 @@ func TestDrainDeadlineCancelsLeftovers(t *testing.T) {
 	}
 }
 
+// TestDrainCancelNotMisreportedAsDeadline 关停链二次取消 → cause 必须是真实原因
+// context.Canceled，不得记成 ErrDeadline（issue #55）。
+//
+// 此前 ctx.Done 分支恒记 ErrDeadline：运维在审计里看到「排水超时」会去调宽限期，
+// 而真实原因是关停链提前二次取消——两者修法完全不同。留痕 cause 与 cancel(cause)
+// 同源（同一个变量），故这里钉住 cancel 面即同时钉住留痕面。
+func TestDrainCancelNotMisreportedAsDeadline(t *testing.T) {
+	f := &fakeTurns{active: 2}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		Drain(ctx, f, Budget(time.Hour)) // 预算远未到点，等的是二次取消
+		close(done)
+	}()
+
+	// 让 Drain 先进入收敛等待再取消：覆盖的是循环内的 Done 分支（与入口即 Done
+	// 同一分支，但这是关停链二次取消的真实时序——排水已跑了一段时间）。
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ctx 取消后 Drain 应返回")
+	}
+	cause := f.lastCause(t)
+	if !errors.Is(cause, context.Canceled) {
+		t.Fatalf("二次取消的 cause 应为 context.Canceled, got: %v", cause)
+	}
+	if errors.Is(cause, ErrDeadline) {
+		t.Fatal("二次取消不得被误标为排水超时（ErrDeadline）")
+	}
+}
+
 // TestDrainNoForceWhenConverged 已收敛的轮不该被强杀（否则等于没排水）。
 func TestDrainNoForceWhenConverged(t *testing.T) {
 	f := &fakeTurns{} // 空 registry
