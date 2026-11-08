@@ -475,6 +475,32 @@ oekit/pkg v0.37.1 已由 origin/main 的 windows 支持矩阵先抬到位，本�
 先占了该版本号，故本版为 v0.20.0。
 
 
+## [v0.20.0] — 2026-11-08
+
+### Fixed（契约面五连——审计 issue #42-#46 清零）
+
+- **ptc.SubprocessProvider.Exec 对不匹配的请求程序 fail-closed（#46）**：
+  单程序后端的 req.Program 此前是死参数——宿主按 Provider 协议的每请求
+  形态调用时实际跑的是 opts 配置的程序，结果却按请求上报（「判过的后端
+  ≠ 实际跑的后端」静默落差）。现请求程序与配置不一致即拒（结构化错误），
+  空请求程序 = 「跑配置的那个」显式放行；Supports 与 Exec 读同一预算源。
+- **ptc 拒绝分类跨执行形态同源（#45）**：子进程形态下父侧判定环拒绝
+  （permission_denied）此前在 remoteFailure→GoError 包装里丢失分类，落进
+  runtime→transient——「重试也永不满足」的策略否定被报成「值得重试」，
+  retryplan 会无穷重试。进程内同调用报 stage_denied（保守侧），两形态
+  不再分叉。
+- **ptc 陈旧 stageErr 不再毒化归因（#44）**：程序捕获判定环拒绝后抛
+  自己的错误，结果级单槽读到的是上一次的 stageErr——程序 bug 被误归
+  stage_denied（调用方质问守卫而非改程序）。分类载体随抛出携带 +
+  文本锚定归因（被拒值必须包含最近抛出的载体消息），锚定失配一律 runtime。
+- **guardset 零值/未装配 fail-closed（#43）**：零值 Set 与未装配
+  Assembly（含 Stage() 链环）此前 allow-all，与包的 fail-closed 纪律相反
+  ——New 构造期拒绝空集合后，能走通的空集只剩这两个形态。现按拒绝收口
+  （Guard=guardset 可归因）。
+- **egress.Verify 查无绕过声明下的 NO_PROXY（#42）**：Spec.Bypass 为空时
+  此前完全不查 NO_PROXY——环境继承的 `NO_PROXY=*`/no_proxy 把代理架空成
+  全直连，「经代理强制」验证仍绿。现两个大小写变体同查（空串视同缺席）。
+
 ## [v0.19.0] — 2026-11-07
 
 ### 新增(platform)：windows/amd64 回归支持矩阵——上游 procx Windows 进程树路径落地（issue #34 收尾）

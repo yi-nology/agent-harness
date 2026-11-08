@@ -182,6 +182,17 @@ func (s Spec) Verify(env map[string]string) error {
 		if !slices.Equal(want, got) {
 			return errors.Errorf("egress: 绕过名单未兑现（要求 %v，实际 %q）", want, env["NO_PROXY"])
 		}
+	} else {
+		// 声明无绕过时 NO_PROXY 必须缺席或为空（issue #42）：NO_PROXY=*、
+		// 继承自宿主的 no_proxy 等会让客户端对**所有目标**直连——代理声明
+		// 被环境变量架空，而此前的 Verify 对 Bypass 为空完全不查 NO_PROXY，
+		// 「经代理强制」验证为绿的实际上是无防刷过的环境。两个大小写变体
+		// 同查（客户端任取其一）。
+		for _, k := range []string{"NO_PROXY", "no_proxy"} {
+			if v, ok := env[k]; ok && strings.TrimSpace(v) != "" {
+				return errors.Errorf("egress: 声明无绕过但环境携带 %s=%q——代理将被绕过架空", k, v)
+			}
+		}
 	}
 	var seen []string
 	for _, k := range proxyVars {

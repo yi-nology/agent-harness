@@ -106,10 +106,20 @@ func execute(
 		res.OK = true
 		res.Value = strings.TrimSpace(buf.String())
 	case goja.PromiseStateRejected:
-		if kind, prefix := stageOutcome(res.stageErr); kind != "" {
-			res.Error, res.ErrorKind = fmt.Sprintf("%s: %v", prefix, p.Result()), kind
-		} else {
+		// 归因按文本锚定（issue #44/#45，见 rejection.go）：被拒值消息
+		// 包含最近抛出的载体消息 ⇒ 这次拒绝就是那次抛出，分类采信（stage
+		// 两类带判定环前缀；toolfail 分类原样透传给 kindForErrorKind）；
+		// 锚定失配 ⇒ 程序捕获后自己抛的运行时错误，一律 runtime——
+		// stageErr 单槽陈值毒化路径已随载体化移除。
+		rejected := fmt.Sprintf("%v", p.Result())
+		tr := res.lastThrown
+		if tr == nil || !strings.Contains(rejected, tr.err.Error()) || tr.kind == "" {
+			// 锚定失配（程序捕获后自己抛的）或无分类（普通绑定失败）⇒ runtime
 			res.Error, res.ErrorKind = fmt.Sprintf("程序拒绝: %v", p.Result()), "runtime"
+		} else if _, prefix := stageOutcome(tr.err); prefix != "" {
+			res.Error, res.ErrorKind = fmt.Sprintf("%s: %s", prefix, rejected), tr.kind
+		} else {
+			res.Error, res.ErrorKind = rejected, tr.kind
 		}
 	default:
 		res.Error, res.ErrorKind = "await 永不落定的 Promise（VM 无定时器，绑定均为同步调用）", "pending"

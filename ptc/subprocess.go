@@ -151,6 +151,16 @@ func (p *SubprocessProvider) Supports(b sandbox.Budget) bool {
 
 // Exec 实现 sandbox.Provider：起子进程、跑一次程序、收结果。
 func (p *SubprocessProvider) Exec(ctx context.Context, req sandbox.Request) (sandbox.Outcome, error) {
+	// 契约收口（issue #46）：本后端是**单程序后端**——程序与预算在装配期
+	// 配死（Start 帧从 opts 构造），req.Program 此前是死参数：宿主按
+	// Provider 协议的通用形态（每请求程序）调用时，实际跑的是 opts 里
+	// 配的程序，结果却按请求的程序上报——「判过的后端 ≠ 实际跑的后端」
+	// 的静默落差。按 fail-closed 收口：请求程序与配置不一致即拒，
+	// 空请求程序 = 「跑配置的那个」的显式形态，放行。
+	if req.Program != "" && req.Program != p.opts.Program {
+		return sandbox.Outcome{}, fmt.Errorf("ptc: 单程序后端收到不匹配的请求程序（配置 %d 字节 ≠ 请求 %d 字节）——SubprocessProvider 的程序在装配期配死，每请求程序请走进程内 Provider 或新建后端实例",
+			len(p.opts.Program), len(req.Program))
+	}
 	res, err := p.run(ctx)
 	if err != nil {
 		return sandbox.Outcome{}, err
