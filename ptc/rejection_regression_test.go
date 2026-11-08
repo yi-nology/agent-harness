@@ -9,7 +9,7 @@ import (
 )
 
 // #44：判定环拒绝被程序捕获后再抛自己的错误——ErrorKind 必须 runtime
-//（改程序），不得被陈旧的 stageErr 单槽毒化成 stage_denied（去质问守卫）。
+// （改程序），不得被陈旧的 stageErr 单槽毒化成 stage_denied（去质问守卫）。
 func TestStageDenialCatchThenThrowStaysRuntime(t *testing.T) {
 	deny := invoke.StageFunc{StageName: "审计门",
 		Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
