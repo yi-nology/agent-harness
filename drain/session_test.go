@@ -102,10 +102,13 @@ func TestDrainSessionForceCancelOnlyThatSession(t *testing.T) {
 	f.seed("s-stuck", 1)
 	f.seed("s-healthy", 1)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // 已耗尽的预算
+	// 用**真正到点的 deadline** 模拟「预算耗尽」（issue #55 起 二次取消与预算耗尽
+	// 在留痕面上分道）：此前这里用 pre-cancel 的 ctx 冒充，正是 cause 恒记
+	// ErrDeadline 时代两态不分的产物——取消语境的 cause 现在如实是 context.Canceled。
+	dctx, dcancel := context.WithTimeout(context.Background(), -time.Second)
+	defer dcancel()
 
-	DrainSession(ctx, f, "s-stuck", Budget(time.Second))
+	DrainSession(dctx, f, "s-stuck", Budget(time.Second))
 
 	if got := f.cancelled["s-stuck"]; got != ErrDeadline {
 		t.Fatalf("目标会话应被强杀且 cause 为 ErrDeadline，实得 %v", got)
