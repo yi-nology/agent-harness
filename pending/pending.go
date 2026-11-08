@@ -51,9 +51,20 @@ func Parse(v string) State {
 // 这类串原样落列；Parse 解不出便返回零值，**挂起态被静默丢掉**——不是降级，
 // 是消失。透传条件改成「真能 Parse 出带 Kind 的 State」，坏串则被当作 Word 保留，
 // 至少内容不丢。
+//
+// kind 为空时 fail-fast panic（issue #54）：零值 kind 落出的 Encode 产物没有
+// k 键，读路径 Parse 判 s.Kind != "" 失败返回零值——本函数要消灭的「挂起态
+// 静默消失」恰在自己的零值入参下复现，且丢的方式最隐蔽（写入成功、读回为零、
+// 两头都不报错）。落内置哨兵 Kind 不能治它：哨兵值不在宿主决策链的 Kind 词表
+// 里，宿主读到一个不认识的 Kind 照样不恢复挂起态——消失只是往后挪了一层。
+// 空 kind 是调用方装配缺陷，在写入点当场炸出来，好过静默丢一列挂起态。
+// clarify 为空不受此限：没有内容就没有挂起态，返回空与 kind 取值无关。
 func ColumnValue(clarify, kind string) string {
 	if clarify == "" {
 		return clarify
+	}
+	if kind == "" {
+		panic("pending.ColumnValue: kind 为空——落出的列值 Parse 永远读不回（挂起态静默消失），调用方必须给出 Kind")
 	}
 	if s := Parse(clarify); s.Kind != "" {
 		return clarify // 已是 Encode 产物，原样透传
