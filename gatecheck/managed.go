@@ -62,9 +62,10 @@ type Managed struct {
 	MinLevel sandbox.Level
 	// OpFunc 从「程序 + 预算」推出审批层要判的操作。
 	//
-	// 缺省时用 `OpToolCall`（只读采集面）——但**变更类工具**在
-	// `OpToolCall` + Mutating 下会被上游的变异守卫直接拒，
-	// 所以缺省是**保守**的（宁可多问一次人）。
+	// 缺省时用 `OpToolCall` 且**不设变更标记**（三态 nil=未知）——上游对
+	// 未标记的调用 fail-safe 升人审（`Op.Mutating` 三态化后的语义：门无法
+	// 从工具名判定变更性，不得默认按非变更放行）。要走出人审，宿主在映射里
+	// 显式声明 `Mutating: policy.Mutating(false/true)`。
 	OpFunc func(program string, budget sandbox.Budget) policy.Op
 }
 
@@ -134,6 +135,10 @@ func (m *Managed) Exec(ctx context.Context, req sandbox.Request) (sandbox.Outcom
 		return sandbox.Outcome{}, errNoInner
 	}
 
+	// 默认映射**不带变更标记**（Mutating=nil=未知）：宿主没给映射时，本层
+	// 不替它猜「非变更」——上游对未标记的 tool_call fail-safe 升人审（不得
+	// 默认按非变更放行）。要走出人审，宿主用 OpFunc 显式声明
+	// `Mutating: policy.Mutating(false/true)`。
 	op := policy.Op{Type: policy.OpToolCall}
 	if m.OpFunc != nil {
 		op = m.OpFunc(req.Program, req.Budget)

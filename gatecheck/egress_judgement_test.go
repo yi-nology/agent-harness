@@ -35,7 +35,7 @@ func registryWith(p sandbox.Provider) *sandbox.Registry {
 func TestEgressSatisfiedProceeds(t *testing.T) {
 	reg := registryWith(egressProvider{level: sandbox.LevelOS, mode: egress.ModeProxy})
 	req := Request{
-		Op:       policy.Op{Type: policy.OpToolCall},
+		Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
 		MinLevel: sandbox.LevelProcess,
 		Egress:   egress.Spec{Mode: egress.ModeProxy, Proxy: "http://127.0.0.1:3128"},
 	}
@@ -52,7 +52,7 @@ func TestEgressSatisfiedProceeds(t *testing.T) {
 func TestEgressShortWhenProviderWeaker(t *testing.T) {
 	reg := registryWith(egressProvider{level: sandbox.LevelMachine, mode: egress.ModeProxy})
 	req := Request{
-		Op:       policy.Op{Type: policy.OpToolCall},
+		Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
 		MinLevel: sandbox.LevelProcess,
 		Egress:   egress.Spec{Mode: egress.ModeDenied},
 	}
@@ -69,7 +69,7 @@ func TestEgressShortWhenProviderWeaker(t *testing.T) {
 func TestEgressShortWhenProviderSilent(t *testing.T) {
 	reg := registryOf(sandbox.LevelOS)
 	req := Request{
-		Op:       policy.Op{Type: policy.OpToolCall},
+		Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
 		MinLevel: sandbox.LevelProcess,
 		Egress:   egress.Spec{Mode: egress.ModeProxy, Proxy: "http://127.0.0.1:3128"},
 	}
@@ -86,7 +86,7 @@ func TestEgressShortWhenProviderSilent(t *testing.T) {
 func TestEgressInvalidSpecFailsClosed(t *testing.T) {
 	reg := registryOf(sandbox.LevelOS)
 	req := Request{
-		Op:       policy.Op{Type: policy.OpToolCall},
+		Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
 		MinLevel: sandbox.LevelProcess,
 		Egress:   egress.Spec{Mode: egress.ModeProxy},
 	}
@@ -102,7 +102,7 @@ func TestEgressInvalidSpecFailsClosed(t *testing.T) {
 // 要求了出口策略却没有登记簿 ⇒ 没有兑现者 ⇒ 拒绝（而不是「没要求隔离所以放行」）。
 func TestEgressWithoutRegistryFailsClosed(t *testing.T) {
 	req := Request{
-		Op:     policy.Op{Type: policy.OpToolCall},
+		Op:     policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
 		Egress: egress.Spec{Mode: egress.ModeProxy, Proxy: "http://127.0.0.1:3128"},
 	}
 	d := Check(context.Background(), gateOf(policy.VerdictAuto), nil, req)
@@ -113,7 +113,7 @@ func TestEgressWithoutRegistryFailsClosed(t *testing.T) {
 
 // 不要求出口策略时，判定逐字退回旧行为（零值不影响既有调用点）。
 func TestEgressZeroValueUnchanged(t *testing.T) {
-	req := Request{Op: policy.Op{Type: policy.OpToolCall}}
+	req := Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)}}
 	d := Check(context.Background(), gateOf(policy.VerdictAuto), nil, req)
 	if d.Outcome != OutcomeProceed {
 		t.Fatalf("既不要档位也不要出口时应放行，got %v", d.Outcome)
@@ -124,7 +124,7 @@ func TestEgressZeroValueUnchanged(t *testing.T) {
 func TestApprovalBeatsEgress(t *testing.T) {
 	reg := registryOf(sandbox.LevelOS)
 	req := Request{
-		Op:       policy.Op{Type: policy.OpToolCall},
+		Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
 		MinLevel: sandbox.LevelProcess,
 		Egress:   egress.Spec{Mode: egress.ModeProxy}, // 故意的坏声明
 	}

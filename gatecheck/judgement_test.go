@@ -19,7 +19,7 @@ func TestBothAgreeProceeds(t *testing.T) {
 	d := Check(context.Background(),
 		gateOf(policy.VerdictAuto),
 		registryOf(sandbox.LevelProcess),
-		Request{Op: policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto}, MinLevel: sandbox.LevelProcess})
+		Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto}, MinLevel: sandbox.LevelProcess})
 
 	if d.Outcome != OutcomeProceed {
 		t.Fatalf("两层都同意应放行，实得 %v（%s）", d.Outcome, d.Reason)
@@ -38,7 +38,7 @@ func TestDenyBeatsLevelShort(t *testing.T) {
 	d := Check(context.Background(),
 		gateOf(policy.VerdictDeny),
 		registryOf(), // 连一个后端都没登记
-		Request{Op: policy.Op{Type: policy.OpToolCall}, MinLevel: sandbox.LevelOS})
+		Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)}, MinLevel: sandbox.LevelOS})
 
 	if d.Outcome != OutcomeDenied {
 		t.Fatalf("审批已否应判为 denied（优先于档位），实得 %v（%s）", d.Outcome, d.Reason)
@@ -54,7 +54,7 @@ func TestNeedHumanBeatsLevelShort(t *testing.T) {
 	d := Check(context.Background(),
 		gateOf(policy.VerdictNeedHuman),
 		registryOf(), // 档位选不到
-		Request{Op: policy.Op{Type: policy.OpToolCall}, MinLevel: sandbox.LevelOS})
+		Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)}, MinLevel: sandbox.LevelOS})
 
 	if d.Outcome != OutcomeNeedHuman {
 		t.Fatalf("需人审应优先于档位不足，实得 %v（%s）", d.Outcome, d.Reason)
@@ -68,7 +68,7 @@ func TestLevelShortWhenBackendUnavailable(t *testing.T) {
 	d := Check(context.Background(),
 		gateOf(policy.VerdictAuto),
 		registryOf(), // 没有后端
-		Request{Op: policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto}, MinLevel: sandbox.LevelOS})
+		Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto}, MinLevel: sandbox.LevelOS})
 
 	if d.Outcome != OutcomeLevelShort {
 		t.Fatalf("档位选不到应判为 level_short，实得 %v（%s）", d.Outcome, d.Reason)
@@ -82,7 +82,7 @@ func TestWeakerBackendRejected(t *testing.T) {
 	d := Check(context.Background(),
 		gateOf(policy.VerdictAuto),
 		registryOf(sandbox.LevelProcess), // 只有进程级
-		Request{Op: policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto}, MinLevel: sandbox.LevelOS})
+		Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto}, MinLevel: sandbox.LevelOS})
 
 	if d.Outcome != OutcomeLevelShort {
 		t.Fatalf("档位不够应判为 level_short，实得 %v（%s）", d.Outcome, d.Reason)
@@ -97,7 +97,7 @@ func TestNoLevelRequiredSkipsSandboxLayer(t *testing.T) {
 	d := Check(context.Background(),
 		gateOf(policy.VerdictAuto),
 		nil, // 压根没装登记簿
-		Request{Op: policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto}, MinLevel: sandbox.LevelNone})
+		Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto}, MinLevel: sandbox.LevelNone})
 
 	if d.Outcome != OutcomeProceed {
 		t.Fatalf("不要求隔离强度时应放行，实得 %v（%s）", d.Outcome, d.Reason)
@@ -113,7 +113,7 @@ func TestMissingRegistryWithLevelRequiredFailsClosed(t *testing.T) {
 	d := Check(context.Background(),
 		gateOf(policy.VerdictAuto),
 		nil,
-		Request{Op: policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto}, MinLevel: sandbox.LevelOS})
+		Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto}, MinLevel: sandbox.LevelOS})
 
 	if d.Outcome != OutcomeLevelShort {
 		t.Fatalf("要求了档位却没有登记簿应判为 level_short，实得 %v（%s）", d.Outcome, d.Reason)
@@ -128,7 +128,7 @@ func TestMissingGateNeedsHuman(t *testing.T) {
 	d := Check(context.Background(),
 		nil, // 没装审批门
 		registryOf(sandbox.LevelOS),
-		Request{Op: policy.Op{Type: policy.OpToolCall}, MinLevel: sandbox.LevelOS})
+		Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)}, MinLevel: sandbox.LevelOS})
 
 	if d.Outcome != OutcomeNeedHuman {
 		t.Fatalf("未装配审批门应判为 need_human，实得 %v（%s）", d.Outcome, d.Reason)

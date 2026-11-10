@@ -161,7 +161,9 @@ func (p *SubprocessProvider) Exec(ctx context.Context, req sandbox.Request) (san
 		return sandbox.Outcome{}, fmt.Errorf("ptc: 单程序后端收到不匹配的请求程序（配置 %d 字节 ≠ 请求 %d 字节）——SubprocessProvider 的程序在装配期配死，每请求程序请走进程内 Provider 或新建后端实例",
 			len(p.opts.Program), len(req.Program))
 	}
-	res, err := p.run(ctx)
+	// 预算收口（issue #66）：装配期配置与每请求预算逐项取严后写 Start 帧。
+	lim, maxMemory := p.effectiveBudget(req.Budget)
+	res, err := p.run(ctx, lim, maxMemory)
 	if err != nil {
 		return sandbox.Outcome{}, err
 	}
@@ -172,8 +174,9 @@ func (p *SubprocessProvider) Exec(ctx context.Context, req sandbox.Request) (san
 	return out, nil
 }
 
-// run 起子进程跑一次程序。
-func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
+// run 起子进程跑一次程序。lim 与 maxMemory 是**生效预算**（装配期与每请求
+// 取严后的口径，见 effectiveBudget）——Start 帧、期限等待与 cgroup 全用它。
+func (p *SubprocessProvider) run(ctx context.Context, lim runLimits, maxMemory int64) (wire.Result, error) {
 	exe := p.opts.ExePath
 	if exe == "" {
 		self, err := os.Executable()
@@ -182,10 +185,6 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 		}
 		exe = self
 	}
-	// 三项上限走同一份缺省口径（limits.go）：这里归一后写进 Start 帧发给子进程，
-	// 子进程收到后仍过同一个函数（Start 帧可能来自旧版父侧）。两处**同一份实现**
-	// 才谈得上「父侧改了子侧自动跟」——各写一遍必然分叉。
-	lim := normalizeLimits(p.opts.Timeout, p.opts.MaxCalls, p.opts.MaxBytes)
 
 	// 管道与子进程：见 childpipes.go（能力问询 + 出口 env 生成 + 建立四条管道）。
 	pipes, err := newChildPipes(exe, p.opts.Egress, p.opts.EgressBackend)
@@ -195,11 +194,11 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 
 	// 内存兜底：父侧建 cgroup，子进程进去即受约束（见 memlimit_linux.go）。
 	//
-	// MaxMemory <= 0 = 不要求上限 ⇒ 不建 cgroup（不是「建一个没有上限的 cgroup」）。
+	// maxMemory <= 0 = 不要求上限 ⇒ 不建 cgroup（不是「建一个没有上限的 cgroup」）。
 	//
 	// 建不出带 memory.max 的 cgroup ⇒ **拒绝执行**（fail closed）：
 	// 「以为兜住了、实际没有」正是这套机制要消灭的东西。
-	cg, err := p.openMemoryGate()
+	cg, err := p.openMemoryGate(maxMemory)
 	if err != nil {
 		closeAll(pipes.startReadR, pipes.startReadW, pipes.startWriteR, pipes.startWriteW, pipes.callReqR, pipes.callReqW, pipes.callRespR, pipes.callRespW)
 		return wire.Result{}, err
@@ -252,7 +251,7 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 			WallClock: lim.timeout,
 			MaxCalls:  lim.maxCalls,
 			MaxBytes:  lim.maxBytes,
-			MaxMemory: p.opts.MaxMemory,
+			MaxMemory: maxMemory,
 		},
 		ResultID: "r-1",
 	}
@@ -321,11 +320,29 @@ func (p *SubprocessProvider) handler() wire.Handler {
 	}
 	return func(ctx context.Context, req wire.Request) (wire.Response, error) {
 		// 判定环：与普通工具调用同一套。
+		//
+		// 归因与进程内路径**同一份实现**（issue #65）：此前这里把一切
+		// EvaluateStages 的错误（含守卫 panic/故障）都映射成 permission_denied
+		// ——「宿主门禁坏了」被上报为「策略否定」，排障方向被引向守卫配置，
+		// 正是 #59 在进程内路径修掉的误归因换了一条执行路径复发。现在经
+		// stageOutcome 分类：stage_denied（正常裁决）/ stage_failed（守卫自身
+		// 故障，宿主要修的不是程序）；非 DenyError 的错误不得冠判定环词汇，
+		// 按 unknown 走。Kind 用本包 ErrorKind 词表——子进程侧的收口对它
+		// 逐字采信（remoteFailure.Kind → Result.ErrorKind），两个后端对同一
+		// 次拒绝报同一个词。
 		if serr := invoke.EvaluateStages(ctx, p.opts.Stages, invoke.Call{Name: req.Tool, Args: req.Args}); serr != nil {
+			kind, prefix := stageOutcome(serr)
+			msg := serr.Error()
+			if prefix != "" {
+				msg = prefix + ": " + msg
+			}
+			if kind == "" {
+				kind = string(toolfail.ClassUnknown)
+			}
 			return wire.Response{
 				OK:    false,
-				Kind:  string(toolfail.ClassPermissionDenied),
-				Error: serr.Error(),
+				Kind:  kind,
+				Error: msg,
 			}, nil
 		}
 		b, ok := byName[req.Tool]

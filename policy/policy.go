@@ -50,6 +50,20 @@ const (
 func Normalize(s string) Mode { return policykit.Normalize(s) }
 func ValidMode(s string) bool { return policykit.ValidMode(s) }
 
+// Mutating 返回指向 b 的指针，供在 Op / Rule 字面量里内联填写变更标记：
+// `policy.Op{..., Mutating: policy.Mutating(true)}`。
+//
+// # 为什么门面必须转发它（issue #64）
+//
+// toolgate 把 `Op.Mutating` 从 bool 三态化为 `*bool`（nil=未知）后，宿主经
+// 门面写 `Op{Mutating: mutating}` 直接编译不过（bool 不能作 *bool），配套构造器
+// 又只有 toolgate 侧有——宿主被迫直引 toolgate/policy，同一文件里出现两个
+// policy 别名，「薄转发让宿主只 import 门面」的包设计在这里断掉。
+//
+// 三态的判定语义在 kit 侧（nil 时变异守卫 fail-safe 升人审，不得默认按非变更
+// 放行）：本仓只保证构造器经门面可达，不复制判定。
+func Mutating(b bool) *bool { return policykit.Mutating(b) }
+
 // NewGate 构造审计门（p 为 nil 用内置基座）。
 func NewGate(p *Policy, a Arbiter) *Gate { return policykit.NewGate(p, a) }
 

@@ -86,18 +86,56 @@ func TestDeniedCannotBeFakedByEnv(t *testing.T) {
 	}
 }
 
+// fullProxyEnv 六个代理变量全部指向 proxy 的环境（Env 生成形态的对照基线）。
+//
+// 词表在测试里显式展开而不是借 egress 内部清单：判据要钉的正是「这六个名字」，
+// 借生产清单会把「清单少了一个变量」这种缺陷一起藏掉。
+func fullProxyEnv(proxy string) map[string]string {
+	env := make(map[string]string, 6)
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
+		env[k] = proxy
+	}
+	return env
+}
+
+// TestVerify 代理变量判据（issue #62 收严为「六个一个不缺、一个不歪」）。
+//
+// 旧判据「六个里命中一个即绿」的最坏覆盖是应有面的 1/6：只配 HTTP_PROXY 的
+// 环境验成 enforced，而子进程的 HTTPS 流量没有任何代理、裸奔出网；HTTP_PROXY
+// 对而 HTTPS_PROXY 指向别处的环境也验成绿——流量走了一条声明从未授权的链路。
 func TestVerify(t *testing.T) {
 	spec := egress.Spec{Mode: egress.ModeProxy, Proxy: "http://127.0.0.1:3128"}
-	if err := spec.Verify(map[string]string{"HTTPS_PROXY": "http://127.0.0.1:3128"}); err != nil {
-		t.Fatalf("兑现了却判失败: %v", err)
+	if err := spec.Verify(fullProxyEnv("http://127.0.0.1:3128")); err != nil {
+		t.Fatalf("六个变量全对却判失败: %v", err)
 	}
-	if err := spec.Verify(map[string]string{"https_proxy": "http://127.0.0.1:3128"}); err != nil {
-		t.Fatalf("小写变量同样算兑现: %v", err)
+	lower := fullProxyEnv("http://127.0.0.1:3128")
+	delete(lower, "HTTP_PROXY")
+	delete(lower, "HTTPS_PROXY")
+	delete(lower, "ALL_PROXY")
+	if err := spec.Verify(lower); err == nil {
+		t.Fatal("只配小写三件（大写缺席）必须红——大写读者（curl 等）没代理")
 	}
-	err := spec.Verify(map[string]string{"HTTPS_PROXY": "http://other:1"})
+
+	// issue #62 的两个假绿形态必须红，且点名缺/歪的变量。
+	onlyHTTP := fullProxyEnv(spec.Proxy)
+	for _, k := range []string{"HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
+		delete(onlyHTTP, k)
+	}
+	err := spec.Verify(onlyHTTP)
 	if err == nil || !strings.Contains(err.Error(), "未兑现代理声明") {
-		t.Fatalf("没兑现必须报错（含实际值），got %v", err)
+		t.Fatalf("只配 HTTP_PROXY 必须红（HTTPS 裸奔），got %v", err)
 	}
+	if !strings.Contains(err.Error(), "缺失") || !strings.Contains(err.Error(), "HTTPS_PROXY") {
+		t.Fatalf("缺失的变量必须点名，got %v", err)
+	}
+
+	diverted := fullProxyEnv(spec.Proxy)
+	diverted["HTTPS_PROXY"] = "http://evil.example:9999"
+	err = spec.Verify(diverted)
+	if err == nil || !strings.Contains(err.Error(), "异值") || !strings.Contains(err.Error(), "HTTPS_PROXY=http://evil.example:9999") {
+		t.Fatalf("HTTPS_PROXY 指向别处必须红并点名异值，got %v", err)
+	}
+
 	if err := spec.Verify(nil); err == nil {
 		t.Fatal("空 env 必须报错")
 	}
@@ -148,23 +186,25 @@ func TestVerifyBypass(t *testing.T) {
 		Proxy:  "http://127.0.0.1:3128",
 		Bypass: []string{"b.internal", "a.internal"},
 	}
-	if err := spec.Verify(map[string]string{
-		"HTTPS_PROXY": "http://127.0.0.1:3128",
-		"NO_PROXY":    "a.internal,b.internal",
-	}); err != nil {
+	// 代理变量给全六个（#62 收严后的基线），绕过名单的判据才不被代理判据抢先红。
+	withBypass := func(noproxy string) map[string]string {
+		env := fullProxyEnv(spec.Proxy)
+		if noproxy != "" {
+			env["NO_PROXY"] = noproxy
+		}
+		return env
+	}
+	if err := spec.Verify(withBypass("a.internal,b.internal")); err != nil {
 		t.Fatalf("兑现了却判失败: %v", err)
 	}
-	if err := spec.Verify(map[string]string{
-		"HTTPS_PROXY": "http://127.0.0.1:3128",
-		"NO_PROXY":    " b.internal , a.internal ",
-	}); err != nil {
+	if err := spec.Verify(withBypass(" b.internal , a.internal ")); err != nil {
 		t.Fatalf("顺序/空白漂移是等价形态，判失败就是假红: %v", err)
 	}
 
 	for name, env := range map[string]map[string]string{
-		"整条缺失": {"HTTPS_PROXY": "http://127.0.0.1:3128"},
-		"少一条":  {"HTTPS_PROXY": "http://127.0.0.1:3128", "NO_PROXY": "a.internal"},
-		"多一条":  {"HTTPS_PROXY": "http://127.0.0.1:3128", "NO_PROXY": "a.internal,b.internal,c.internal"},
+		"整条缺失": fullProxyEnv(spec.Proxy),
+		"少一条":  withBypass("a.internal"),
+		"多一条":  withBypass("a.internal,b.internal,c.internal"),
 	} {
 		if err := spec.Verify(env); err == nil {
 			t.Fatalf("绕过名单%s却判通过: %v", name, env)

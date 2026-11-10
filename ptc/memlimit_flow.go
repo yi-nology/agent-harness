@@ -39,13 +39,16 @@ import (
 
 // openMemoryGate 打开本次执行的内存兜底闸。
 //
-// 不要求内存上限（MaxMemory <= 0）⇒ 返回一个**无约束闸**（不做任何事）。
+// maxMemory 是**生效上限**（装配期与每请求预算取严后的口径，见 effectiveBudget），
+// 不再读 p.opts——req.Budget 请求的更紧内存上限（issue #66）要真正落到 cgroup 上。
+//
+// 不要求内存上限（maxMemory <= 0）⇒ 返回一个**无约束闸**（不做任何事）。
 // 要求上限 ⇒ 建一个带 memory.max 的 cgroup；建不出 ⇒ **报错**（fail closed）。
-func (p *SubprocessProvider) openMemoryGate() (memCgroup, error) {
-	if p.opts.MaxMemory <= 0 {
+func (p *SubprocessProvider) openMemoryGate(maxMemory int64) (memCgroup, error) {
+	if maxMemory <= 0 {
 		return noopCgroup{}, nil
 	}
-	cg, err := newMemCgroupFn(p.opts.MaxMemory)
+	cg, err := newMemCgroupFn(maxMemory)
 	if err != nil {
 		return nil, errors.Wrap(err, "建不出带内存上限的执行环境")
 	}

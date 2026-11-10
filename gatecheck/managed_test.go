@@ -27,6 +27,9 @@ func TestManagedDoesNotDelegateOnDeny(t *testing.T) {
 	_ = reg.Register(inner)
 
 	m := NewManaged(inner, gateOf(policy.VerdictDeny), reg, sandbox.LevelNone)
+	m.OpFunc = func(string, sandbox.Budget) policy.Op {
+		return policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto, Mutating: policy.Mutating(false)}
+	}
 	out, err := m.Exec(context.Background(), sandbox.Request{Program: "return 1;"})
 	if err == nil {
 		t.Fatal("审批已否时该失败")
@@ -55,6 +58,9 @@ func TestManagedDelegatesWhenBothAgree(t *testing.T) {
 	_ = reg.Register(inner)
 
 	m := NewManaged(inner, gateOf(policy.VerdictAuto), reg, sandbox.LevelNone)
+	m.OpFunc = func(string, sandbox.Budget) policy.Op {
+		return policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto, Mutating: policy.Mutating(false)}
+	}
 	out, err := m.Exec(context.Background(), sandbox.Request{Program: "return 1;"})
 	if err != nil {
 		t.Fatalf("两层都同意不该失败: %v", err)
@@ -80,6 +86,9 @@ func TestManagedRequiresLevelOfInner(t *testing.T) {
 	_ = reg.Register(inner)
 
 	m := NewManaged(inner, gateOf(policy.VerdictAuto), reg, sandbox.LevelNone)
+	m.OpFunc = func(string, sandbox.Budget) policy.Op {
+		return policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto, Mutating: policy.Mutating(false)}
+	}
 	_, err := m.Exec(context.Background(), sandbox.Request{Program: "return 1;"})
 	// 登记簿里只有进程级后端 ⇒ 要求进程级 ⇒ 选得到 ⇒ 放行。
 	if err != nil {
@@ -127,7 +136,7 @@ func TestManagedUsesOpFuncForApproval(t *testing.T) {
 	gate := gateForOpTypes(policy.OpExecuteStep, policy.VerdictDeny)
 	m := NewManaged(inner, gate, reg, sandbox.LevelNone)
 	m.OpFunc = func(program string, budget sandbox.Budget) policy.Op {
-		return policy.Op{Type: policy.OpExecuteStep, Mode: policy.ModeFull}
+		return policy.Op{Type: policy.OpExecuteStep, Mode: policy.ModeFull, Mutating: policy.Mutating(false)}
 	}
 
 	_, err := m.Exec(context.Background(), sandbox.Request{Program: "do_change()"})
@@ -197,10 +206,35 @@ func TestManagedRequiresAtLeastInnerLevel(t *testing.T) {
 
 	m := NewManaged(strongInner, gateOf(policy.VerdictAuto), reg2, sandbox.LevelNone)
 	d := m.Check(context.Background(), Request{
-		Op:     policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto},
+		Op:     policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto},
 		Budget: sandbox.Budget{},
 	})
 	if d.Outcome != OutcomeLevelShort {
 		t.Fatalf("受管后端应要求达到真后端自报的档位（OS），登记簿里没有 ⇒ 拒绝；实得 %v（%s）", d.Outcome, d.Reason)
+	}
+}
+
+// TestManagedDefaultOpFailsSafeOnUnknownMutating 钉住：默认操作映射不带变更标记
+// （Mutating=nil=未知），上游 fail-safe 升人审——**不替宿主猜「非变更」**。
+//
+// 这是 toolgate 把 Op.Mutating 三态化后的新契约：漏填不再是「声明非变更」
+// （裸 bool 零值的老语义），而是独立的「未知」档。宿主要走出人审，必须经
+// OpFunc 显式声明 `Mutating: policy.Mutating(false/true)`。
+func TestManagedDefaultOpFailsSafeOnUnknownMutating(t *testing.T) {
+	calls := 0
+	inner := countingProvider{level: sandbox.LevelProcess, calls: &calls}
+	reg := sandbox.NewRegistry()
+	_ = reg.Register(inner)
+
+	m := NewManaged(inner, gateOf(policy.VerdictAuto), reg, sandbox.LevelNone)
+	d := m.Check(context.Background(), Request{
+		Op:       policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto}, // Mutating 未声明
+		MinLevel: sandbox.LevelNone,
+	})
+	if d.Outcome != OutcomeNeedHuman {
+		t.Fatalf("变更标记未声明的默认映射应 fail-safe 升人审, got %v（%s）", d.Outcome, d.Reason)
+	}
+	if calls != 0 {
+		t.Fatalf("人审档不得触达真后端, got %d 次", calls)
 	}
 }
