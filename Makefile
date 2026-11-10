@@ -74,7 +74,7 @@ CROSS_TARGETS := linux/amd64 linux/arm64 darwin/arm64 windows/amd64
 # govulncheck 版本口径：CI 装这个版本，与本机验证过的一致（同 lint 的理由）。
 GOVULNCHECK_VERSION := v1.7.0
 
-.PHONY: build fmt-check vet lint test race cover cover-gate vuln crossbuild versioncheck architecture-check docsync check tidy devlink devunlink clean
+.PHONY: build fmt-check vet lint test race cover cover-gate vuln crossbuild versioncheck architecture-check docsync site check tidy devlink devunlink clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -247,6 +247,9 @@ architecture-check: ## 架构治理门禁（域词污染红线 + 依赖方向）
 
 docsync: ## README 包表 ↔ 仓库实际（生产行数 / 外部依赖）一致性门禁
 	$(EXPORT) $(GOENV) go run ./cmd/docsync
+
+site: ## 生成 GitHub Pages 站点到 _site/（生成器 site/build.py，数字从 README / go.mod 读，不手抄）
+	python3 site/build.py . _site
 
 # ── 仓库卫生门禁（issue #1 的修法②）────────────────────────────────
 # 这两条原先只挂在 ci.yml 上，于是本地 `make check` 跑不到——门禁要等推到远端

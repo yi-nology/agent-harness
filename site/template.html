@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-harness · 多智能体编排通用内核</title>
+<meta name="description" content="编排是代码，LLM 只做单环节。agent-harness 提供确定性编排的机制面，不认识任何领域概念。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#9881;</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="#top">
+      <span class="mark">&#9881;</span>
+      <span class="brand-t">agent-harness</span>
+    </a>
+    <nav class="nav">
+      <a href="#why">为什么</a>
+      <a href="#boundary">边界</a>
+      <a href="#features">特性</a>
+      <a href="#packages">包清单</a>
+      <a href="#gates">门禁</a>
+      <a href="#start">快速开始</a>
+    </nav>
+    <a class="btn-gh" href="https://github.com/yi-nology/agent-harness">GitHub &#8599;</a>
+  </div>
+</header>
+
+<main id="top">
+
+<section class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Go 库 · MIT License · 零 replace</p>
+    <h1>编排是代码，<br><span class="grad">LLM 只做单环节</span></h1>
+    <p class="lede">
+      <strong>agent-harness</strong> 是多智能体编排的<strong>通用内核</strong>。
+      它只提供确定性编排的<strong>机制面</strong>——报告协议、工具判定环、续跑契约、
+      上下文预算、执行沙箱——<strong>不认识任何领域概念</strong>。
+    </p>
+    <p class="lede-sub">
+      运维词表、专家包、诊断链、拓扑内容、品牌文案都<strong>不属于本仓</strong>：
+      那是宿主的资产。内核只给机制与判据，宿主只给内容与拓扑。
+    </p>
+    <div class="cta">
+      <code class="install">go get github.com/yi-nology/agent-harness@latest</code>
+      <a class="btn" href="https://github.com/yi-nology/agent-harness/blob/main/docs/USAGE.md">接入指南</a>
+      <a class="btn btn-ghost" href="https://github.com/yi-nology/agent-harness#readme">读 README</a>
+    </div>
+    <dl class="stats">
+      <div><dt>能力包</dt><dd><!--PKG_COUNT--></dd></div>
+      <div><dt>生产代码</dt><dd><!--PROD_LINES--><small> 行</small></dd></div>
+      <div><dt>测试文件</dt><dd><!--TEST_FILES--></dd></div>
+      <div><dt>覆盖率门槛</dt><dd><!--COV_MIN--><small>% + 逐包 <!--PKG_COV_MIN-->%</small></dd></div>
+    </dl>
+  </div>
+</section>
+
+<section class="band" id="why">
+  <div class="wrap">
+    <h2 class="h2">为什么内核不该知道自己在给谁干活</h2>
+    <p class="h2-sub">
+      判定口诀只有一句：<strong>「这个包需要知道自己在给谁干活吗？」需要，就属于宿主。</strong>
+    </p>
+    <div class="cards">
+      <article class="card">
+        <h3>领域知识渗回是必然的</h3>
+        <p>拆完之后最现实的风险不是拆不动，而是业务代码一年年渗回内核，等发现时
+        harness 已退化成「换了个名字的 monolith」。</p>
+        <p class="card-note">所以边界不写在散文里——它写成了 <!--RULE_COUNT--> 条规则 + 5 条 <code>go/ast</code> 结构规则。</p>
+      </article>
+      <article class="card">
+        <h3>判定语义必须跨宿主一致</h3>
+        <p>失败分类、隔离档位、提交闸的判定若各宿主各写一套，必然漂移到没人发现为止。
+        组合逻辑归内核，判定归各自机制。</p>
+        <p class="card-note">因此门禁执行体是可导入包：宿主复用同一份判据，不必各写一遍。</p>
+      </article>
+      <article class="card">
+        <h3>门禁自身也要能被检查</h3>
+        <p>规则的失败形态必须是<strong>变红</strong>，不是变绿。改任何判定逻辑，
+        必须同时给「坏实现会红」的用例。</p>
+        <p class="card-note">「从没见过它触发的规则」等于没有规则——每条规则都做过反向验证。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="band alt" id="boundary">
+  <div class="wrap">
+    <h2 class="h2">边界</h2>
+    <p class="h2-sub">本仓有什么、没有什么——这条线由机器判，不由 review 判。</p>
+    <div class="split">
+      <div class="side side-has">
+        <h3><span class="tick">&#10003;</span> 有（机制，与领域无关）</h3>
+        <ul class="plist">
+          <li><code>protocol</code> 统一报告协议 + 五级容错解析 + 白名单校验</li>
+          <li><code>contract</code> / <code>statemachine</code> 编排运行契约与环节状态机</li>
+          <li><code>tooldisclose</code> / <code>guardset</code> / <code>toolfail</code> 工具判定环</li>
+          <li><code>checkpoint</code> / <code>commitgate</code> 续跑契约与终态独占提交闸</li>
+          <li><code>budget</code> / <code>offload</code> / <code>spill</code> 上下文三件套</li>
+          <li><code>netguard</code> / <code>pii</code> 出站守卫与个人信息脱敏</li>
+          <li><code>ptc</code> / <code>sandbox</code> 程序化工具编排与执行沙箱</li>
+          <li><code>sideeffect</code> / <code>retryplan</code> 副作用至多一次与重试处置</li>
+          <li><code>taskboard</code> / <code>skilldisclose</code> / <code>hookengine</code> 协调与披露面</li>
+        </ul>
+      </div>
+      <div class="side side-hasnt">
+        <h3><span class="cross">&#10007;</span> 没有（资产，属于宿主）</h3>
+        <ul class="plist">
+          <li>专家包 / 专家清单 / 技能</li>
+          <li>诊断链 / 编排图（拓扑内容）</li>
+          <li>运维词表（巡检域、集群词面…）</li>
+          <li>目标类型（主机 / 集群 / Pod）</li>
+          <li>审批风险分级与幂等键的存储实现</li>
+          <li>事件持久化与表结构</li>
+          <li>IM 通道 / 通知模板 / 品牌文案</li>
+          <li>工具实现（MCP server）</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="features">
+  <div class="wrap">
+    <h2 class="h2">特性</h2>
+    <p class="h2-sub">不是「我们支持什么」，是「我们把哪些坑变成了机制」。</p>
+    <div class="grid2">
+      <article class="feat">
+        <h3>工具调用只有一条路</h3>
+        <p>渐进披露、披露门、多守卫合成、失败分类、程序内调用——全部接成同一条判定环。
+        包括模型自己写的程序里的工具调用，也一样过。</p>
+        <pre class="ascii">普通工具调用 ─┐
+             ├─→ invoke.Stage 链 ─→ guardset ─→ tooldisclose
+ptc 程序内   ─┘                   └─→ policy ─→ dispatch</pre>
+        <p class="fnote">少接一段，那个位置就成了整条链上唯一绕过所有门禁的路径。</p>
+      </article>
+      <article class="feat">
+        <h3>崩了能接着跑</h3>
+        <p>恢复判定做成纯函数而不是留给宿主临场决定——临场决定必然选最坏的那个。
+        三条硬规则：可信边界按依赖判定、终态不自动重开、序号单调闸。</p>
+        <p>并且不会「两条分支都赢了」：终态独占权单独一道闸，<strong>放闸靠凭证而非内容比对</strong>。</p>
+      </article>
+      <article class="feat">
+        <h3>上下文是有限预算</h3>
+        <p><code>budget</code> 管输入侧分段计量（区分「工具面膨胀」与「历史膨胀」），
+        <code>offload</code> 管大对象外置（两阶段：首次只标记），
+        <code>spill</code> 管输出侧截断与分页取回。</p>
+      </article>
+      <article class="feat">
+        <h3>失败是数据表</h3>
+        <p><code>toolfail</code> 把「类别 → 可重试性 / 退避 / 需人工 / 重发安全 / 模型指引」
+        做成数据表而非散落的 if。不可归类一律不可重试。</p>
+        <p class="fnote">重发安全与重试价值是两个正交维度：超时值得重试，但服务端可能已执行。</p>
+      </article>
+      <article class="feat">
+        <h3>N 轮 ReAct 往返塌缩成 1 轮</h3>
+        <p><code>ptc</code> 让模型写程序、沙箱执行、只把归并后的小结果带回上下文：
+        <strong>原始数据不过模型面</strong>。三重预算（墙钟 / 调用数 / 字节数）替代 OS 沙盘，
+        纯 Go 零 CGO。</p>
+      </article>
+      <article class="feat">
+        <h3>派生状态只有一个真相</h3>
+        <p>任何「代次 / 版本 / 序号」只允许有一个真相。需要额外视图时，让它是真相的投影，
+        不要另开一个计数器——两个计数器在并发下必然漂移。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="band alt" id="gates">
+  <div class="wrap">
+    <h2 class="h2">边界不是文档，是门禁</h2>
+    <p class="h2-sub">
+      「内核不许长出领域知识」写在散文里就会烂掉。这里它是机器判据，
+      全部挂在 <code>make check</code> 上，CI 只执行这一条。
+    </p>
+    <div class="gate-grid">
+      <div class="gate">
+        <h3><!--RULE_COUNT--> 条规则</h3>
+        <ul>
+<!--RULE_ITEMS-->
+        </ul>
+      </div>
+      <div class="gate">
+        <h3>5 条 go/ast 结构规则</h3>
+        <ul>
+          <li><code>harness-facade-stays-facade</code> 门包不许长出实现</li>
+          <li><code>harness-module-dependency-direction</code> 包间依赖方向</li>
+          <li>沙箱档位登记（档位声明要有人签字）</li>
+          <li>执行路径不得绕过沙箱登记簿</li>
+          <li>子进程出口登记</li>
+        </ul>
+        <p class="fnote">结构性判定走语法树，不走逐行正则——import 声明有六种以上书写形态。
+        结构规则清单以 <code>architecture-policy.yaml</code> 的 facades / dependency_direction /
+        sandbox_providers / execution_paths 各段为准。</p>
+      </div>
+      <div class="gate">
+        <h3>提交前门禁全链</h3>
+        <ul class="plain">
+          <li>fmt · vet · lint · test</li>
+          <li>cover-gate（全局 60% + 逐包下限 70%）</li>
+          <li>govulncheck（依赖与标准库漏洞）</li>
+          <li>-race（竞态检测）</li>
+          <li>crossbuild（四平台交叉构建）</li>
+          <li>architecture-check（域词 + 依赖方向）</li>
+          <li>docsync（README ↔ 仓库事实一致）</li>
+        </ul>
+        <p class="fnote">门禁本体全在 make check 里，CI 只执行它——门禁不挂在工作流上变回「推送后门禁」。</p>
+      </div>
+    </div>
+    <div class="rulebox">
+      <p><strong>门禁的失败形态必须是变红，不是变绿。</strong></p>
+      <p>改任何判定逻辑，必须同时给「坏实现会红」的用例——只测「好实现能过」的用例，
+      一个把数字比较写成字符串比较的错实现照样全过。</p>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="packages">
+  <div class="wrap">
+    <h2 class="h2">包清单</h2>
+    <p class="h2-sub">
+      <strong><!--PKG_COUNT--> 个能力包</strong>，共 <!--TOTAL_LINES--> 行生产代码。
+      依赖列只列仓外 import；「无」表示该包只用标准库。
+      本表由 <code>make docsync</code> 机器校验。
+    </p>
+    <div class="table-scroll">
+      <table class="pkgs">
+        <thead><tr><th>包</th><th>行数</th><th>外部依赖</th><th>职责</th></tr></thead>
+        <tbody>
+<!--PKG_ROWS-->
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="band alt" id="start">
+  <div class="wrap">
+    <h2 class="h2">快速开始</h2>
+    <p class="h2-sub">按需跳读，不必全接。典型接入顺序：</p>
+    <div class="steps">
+      <div class="step"><span class="n">1</span><div><strong>契约面</strong><code>contract</code> + <code>statemachine</code><p>你的状态长什么样</p></div></div>
+      <div class="step"><span class="n">2</span><div><strong>工具判定环</strong><code>tooldisclose</code> + <code>guardset</code> + <code>toolfail</code><p>工具怎么被管住</p></div></div>
+      <div class="step"><span class="n">3</span><div><strong>报告协议</strong><code>protocol</code><p>环节产出怎么变成结构化报告</p></div></div>
+      <div class="step"><span class="n">4</span><div><strong>续跑契约</strong><code>checkpoint</code> + <code>commitgate</code><p>崩了怎么接着跑</p></div></div>
+      <div class="step"><span class="n">5</span><div><strong>上下文三件套</strong><code>budget</code> + <code>spill</code> + <code>offload</code><p>上下文怎么不被撑爆</p></div></div>
+      <div class="step"><span class="n">6</span><div><strong>程序化编排</strong><code>ptc</code><p>多工具聚合场景</p></div></div>
+    </div>
+    <div class="codeblock">
+      <div class="cb-head">安装</div>
+      <pre><code>go get github.com/yi-nology/agent-harness@latest</code></pre>
+      <div class="cb-head">接一个判定环</div>
+      <pre><code>import "github.com/yi-nology/agent-harness/dispatch"
+
+// 派发守卫：宿主提供拓扑，harness 提供机制
+type myEdgeSource struct{ reg *myRegistry }
+
+func (s myEdgeSource) Slugs() []string                   { return s.reg.Slugs() }
+func (s myEdgeSource) DispatchAllow(slug string) []string { return s.reg.Allow(slug) }
+
+g := dispatch.NewGuard(myEdgeSource{reg: reg}, maxDepth)
+if err := g.Assert(caller, callee, depth); err != nil {
+    // 结构化 *dispatch.DenyError
+}</code></pre>
+    </div>
+    <p class="fnote center">
+      完整接入路线图见
+      <a href="https://github.com/yi-nology/agent-harness/blob/main/docs/USAGE.md">docs/USAGE.md</a>
+      （九组能力逐个讲清「职责 → 最小集成片段 → 关键符号 → 坑」，末尾有按症状索引的坑速查表）。
+    </p>
+  </div>
+</section>
+
+<section class="band dep-band">
+  <div class="wrap">
+    <h2 class="h2">第一方依赖</h2>
+    <p class="h2-sub">
+      <!--DEP_COUNT--> 个上游模块，独立发版、版本化引入、<strong>零 replace</strong>。
+    </p>
+    <ul class="deps">
+<!--DEP_ITEMS-->
+    </ul>
+    <p class="fnote center">
+      本仓处在 oekit（基础库）→ oagentkit（agent 原语）→ agent-harness（编排内核）
+      → 上游宿主仓的同一条依赖链上。
+    </p>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <p>MIT License · <a href="https://github.com/yi-nology/agent-harness">github.com/yi-nology/agent-harness</a></p>
+    <p class="foot-note">
+      本站由仓库 <code>site/build.py</code> 从 README 与 go.mod 自动生成并部署，不手抄——
+      手抄就等于多一份会静默失真的真相。
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

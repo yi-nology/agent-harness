@@ -71,5 +71,10 @@
 /.guardx-work/
 /.*-work/
 
+# ── 站点生成产物 ──
+# make site / CI 的 pages 工作流从 README 生成的 GitHub Pages 输出。
+# 源码在 site/（build.py + template.html + style.css），产物是构建结果，不入库。
+/_site/
+
 # ── 系统 ──
 .DS_Store

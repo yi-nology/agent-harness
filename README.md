@@ -14,7 +14,7 @@
 > - [AGENTS.md](AGENTS.md) = 在本仓干活的工作纪律
 > - **[项目主页](https://yi-nology.github.io/agent-harness/)** = 介绍页（面向访客的精简视图）
 
-> **全部文档一览**（`docs/` 下的三份是**历史快照**，记录当时的判断与踩坑，
+> **全部文档一览**（`docs/` 下标着**历史快照**的那些记录当时的判断与踩坑，
 > 不是当前事实；当前事实一律以本文 + 门禁 + 源码为准）：
 >
 > | 文档 | 回答什么 | 性质 |
@@ -27,14 +27,14 @@
 > | [CHANGELOG.md](CHANGELOG.md) | 版本历史与破坏性变更 | 活文档（按 tag 切段生成）|
 > | [docs/OAGENTKIT-OVERLAP.md](docs/OAGENTKIT-OVERLAP.md) | 本仓与上游 `oagentkit` 的能力边界：哪些该做、哪些上游已有 | 活文档 |
 > | [docs/SANDBOX-DESIGN-20261021.md](docs/SANDBOX-DESIGN-20261021.md) | 执行沙箱的下一层：跨域执行与资源兜底（发现「内存无兜底」真缺陷 + 与上游 guardx 的分工）| 活文档 |
-| [docs/HARNESS-BENCHMARK-20261021.md](docs/HARNESS-BENCHMARK-20261021.md) | 对标 Codex / DSH / Octop / Coze 五家：借鉴了什么、什么归宿主、什么本轮没做 | 活文档 |
-| [docs/GAP-ANALYSIS-20261021.md](docs/GAP-ANALYSIS-20261021.md) | 与 Codex / DSH / Octop / Coze 的**逐项实测对齐**：差距在哪个维度、哪些该补、哪些不该补 | 活文档 |
-| [docs/GAP-ANALYSIS-20261106.md](docs/GAP-ANALYSIS-20261106.md) | 同一对标的**刷新**（2026-11-06 重拉五家）：Coze 已停更、DSH 219→400 叶子包、缺口从「可撤销性」移到「判定面的宽度」| 活文档 |
-| [docs/GAP-ANALYSIS-20261107.md](docs/GAP-ANALYSIS-20261107.md) | 第三次刷新（2026-11-07 重拉五家）：**参照系这轮没长出新机制面**；唯一开着的 P0 是出口强制件的**两端都空**（无代理 + 无 `Enforcer` 实现）| 活文档 |
-| [docs/CROSS-ENV-VERIFY-20261021.md](docs/CROSS-ENV-VERIFY-20261021.md) | 跨环境验证：平台相关的机制怎么在「CI 绿但其实跳过」的情况下真验（实测环境矩阵 + 交叉编译流程）| 活文档 |
+> | [docs/HARNESS-BENCHMARK-20261021.md](docs/HARNESS-BENCHMARK-20261021.md) | 对标 Codex / DSH / Octop / Coze 五家：借鉴了什么、什么归宿主、什么本轮没做 | 活文档 |
+> | [docs/GAP-ANALYSIS-20261021.md](docs/GAP-ANALYSIS-20261021.md) | 与 Codex / DSH / Octop / Coze 的**逐项实测对齐**：差距在哪个维度、哪些该补、哪些不该补 | 活文档 |
+> | [docs/GAP-ANALYSIS-20261106.md](docs/GAP-ANALYSIS-20261106.md) | 同一对标的**刷新**（2026-11-06 重拉五家）：Coze 已停更、DSH 219→400 叶子包、缺口从「可撤销性」移到「判定面的宽度」| 活文档 |
+> | [docs/GAP-ANALYSIS-20261107.md](docs/GAP-ANALYSIS-20261107.md) | 第三次刷新（2026-11-07 重拉五家）：**参照系这轮没长出新机制面**；唯一开着的 P0 是出口强制件的**两端都空**（无代理 + 无 `Enforcer` 实现）| 活文档 |
+> | [docs/CROSS-ENV-VERIFY-20261021.md](docs/CROSS-ENV-VERIFY-20261021.md) | 跨环境验证：平台相关的机制怎么在「CI 绿但其实跳过」的情况下真验（实测环境矩阵 + 交叉编译流程）| 活文档 |
 > | [docs/CHECKPOINT.md](docs/CHECKPOINT.md) | 续跑契约的设计推导、三条不变量与跨进程闸 | 活文档 |
 > | [docs/ENGINEERING-HISTORY.md](docs/ENGINEERING-HISTORY.md) | 「工程底座」表**九轮校准**的过程与账：为什么它漂过、后来怎么接进门禁 | **历史快照**（从 README 下沉，2026-11-11）|
-| [docs/SPLIT_PLAN.md](docs/SPLIT_PLAN.md) | 从宿主仓拆分的分层依据（L1/L2/L3）| **历史快照**（2026-10-17 写于 10 个包时）|
+> | [docs/SPLIT_PLAN.md](docs/SPLIT_PLAN.md) | 从宿主仓拆分的分层依据（L1/L2/L3）| **历史快照**（2026-10-17 写于 10 个包时）|
 > | [docs/MIGRATION_OAGENTKIT_20261018.md](docs/MIGRATION_OAGENTKIT_20261018.md) | 门面迁移与 errors 链路改写的执行记录 | **历史快照**（已于 2026-10-18 执行完毕）|
 > | [docs/SELF-AUDIT-20261018.md](docs/SELF-AUDIT-20261018.md) | 独立复核发现并修复的缺陷 | **历史快照**（2026-10-18 收尾）|
 
@@ -560,21 +560,23 @@ goroutine 怎么起、回调怎么声明、errors 怎么包），没有一条查
 
 面向访客的精简介绍页：定位、边界、特性、门禁、包清单、快速开始。
 
-站点住在 `gh-pages` **独立分支**，发布源是该分支根目录（`build_type: legacy`）——
-main 分支只放源码与文档，站点不与源码混在一起。
+**站点源码在本仓 [`site/`](site/)**（`build.py` + `template.html` + `style.css`），
+发布走 [`.github/workflows/pages.yml`](.github/workflows/pages.yml)（`build_type: workflow`）：
+push 到 main 且 `site/`、`README.md`、`go.mod`、`go.sum` 有变更时，CI 自动生成并部署。
 
-**站点上的每个数字都从本 README 生成，不手抄。** 生成器（`build.py` + `template.html`
-+ `style.css`）在 `gh-pages` 分支上：
+**站点上的每个数字都从本 README 与 `go.mod` 生成，不手抄。** 本地生成：
 
 ```bash
-git clone -b gh-pages https://github.com/yi-nology/agent-harness.git site
-cd site
-python3 build.py /path/to/agent-harness .    # 从 README 生成 index.html
+make site    # = python3 site/build.py . _site
 ```
 
 理由与本仓其它纪律同源：**手抄一遍就等于多一份会静默失真的真相**。包清单、生产行数、
-第一方依赖版本都从 README 与 `go.mod` 读，读不到就报错退出（不静默填默认值）——
-所以 README 改了、站点没重跑，下一次生成就能看出差异。
+第一方依赖版本都从 README 与 `go.mod` 读，读不到就报错退出（不静默填默认值）。
+CI 在每次相关变更后重跑生成，故线上站点不会因 README 改了而失真。
+
+> **迁移记录（2026-11-11）**：站点原先住在 `gh-pages` 独立分支（`build_type: legacy`），
+> 生成器与源码不在 main 里——恰好违反本仓「单一真相」的纪律。现迁回 `site/`，
+> `gh-pages` 分支**冻结为历史归档**（迁走前的最后一版，只作对照，不再接收产物）。
 
 ## 快速开始
 
