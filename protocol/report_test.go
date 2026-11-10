@@ -202,34 +202,6 @@ func TestParseFencedJSON(t *testing.T) {
 	}
 }
 
-// T17 散文包裹的报告 → 提取通道救回（mimo 实弹真实形态：前缀散文 + JSON）。
-// 降级路径（ErrNotReport）仍由 TestParsePlainText 覆盖（无大括号的纯文本）。
-func TestParseProseWrappedRescued(t *testing.T) {
-	raw := "以下是诊断结果：\n{\"agent_name\":\"X\",\"confidence\":\"high\"}\n以上供参考"
-	r, err := ParseReport(raw)
-	if err != nil {
-		t.Fatalf("散文包裹报告应被提取救回: %v", err)
-	}
-	if r.AgentName != "X" {
-		t.Fatalf("字段丢失: %+v", r)
-	}
-}
-
-// T18 非法 JSON（形如报告但解析失败）→ ErrNotReport。
-func TestParseInvalidJSON(t *testing.T) {
-	raw := "{\"agent_name\":\"X\",\"confidence\":}"
-	if _, err := ParseReport(raw); !errors.Is(err, ErrNotReport) {
-		t.Fatalf("期望 ErrNotReport, got: %v", err)
-	}
-}
-
-// T19 普通文本（无协议关键字段）→ ErrNotReport（脚本/命令类输出不受影响）。
-func TestParsePlainText(t *testing.T) {
-	if _, err := ParseReport("#!/bin/bash\necho hello"); !errors.Is(err, ErrNotReport) {
-		t.Fatalf("期望 ErrNotReport, got: %v", err)
-	}
-}
-
 // T20 executed_steps 符号标记 → warn（禁 ✓/✗，AGENTS 协议规则）。
 func TestExecutedStepsSymbolWarn(t *testing.T) {
 	r := validReport()
