@@ -302,7 +302,7 @@ func (p *SubprocessProvider) run(ctx context.Context) (wire.Result, error) {
 		// 合成一句话的话，宿主只能一律当故障处理。
 		aborted := abortedError(waitErr, startErr)
 		if ae, ok := aborted.(*ExecutionAborted); ok {
-			ae.Stderr = pipes.stderrTail.String()
+			ae.Stderr = redactChildStderr(pipes.stderrTail.String())
 		}
 		return wire.Result{}, aborted
 	}

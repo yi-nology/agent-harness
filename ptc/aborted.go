@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/oagentkit/guardx/logredact"
 	"github.com/oekit/pkg/errors"
 )
 
@@ -37,10 +38,18 @@ type ExecutionAborted struct {
 	// Unix 上被信号终止时 `ExitCode()` 返回 -1；Windows 上退出码恒为实际值。
 	// 故这个判据跨平台成立，不需要按平台分实现。
 	Signaled bool
-	// Stderr 子进程 stderr 的尾部（崩溃原因就在这里）。
+	// Stderr 子进程 stderr 的尾部（崩溃原因就在这里），**已脱敏**。
 	//
 	// 没有它，宿主只看到一个退出码——而退出码分不清「被内核杀掉（兜底生效）」
 	// 与「自己 fatal 退出（启动失败或 runtime 报错）」。这是**死因**，不是日志。
+	//
+	// 为什么是脱敏后的：子进程常把连接串、API key、token 打进 stderr
+	// （MCP server 启动时的配置回显最常见），而这段文本会**原样**进诊断报告
+	// 与错误消息——那等于凭据泄漏面。脱敏用上游 guardx/logredact（凭据形态打码），
+	// 本仓 pii 管的是个人信息，两者互补不重叠。
+	//
+	// 脱敏发生在**写入这个字段时**（不是 Error() 渲染时）：字段是公开的，
+	// 宿主可以直接读 e.Stderr——只在渲染面脱敏等于给宿主留了原文出口。
 	Stderr string
 }
 
@@ -59,6 +68,24 @@ func (e *ExecutionAborted) Unwrap() error { return e.Err }
 // trimTail 裁掉 stderr 尾部的换行与空白，让错误消息更紧凑。
 func trimTail(s string) string {
 	return strings.TrimRight(s, "\n\r\t ")
+}
+
+// redactChildStderr 给子进程 stderr 落盘前脱敏（凭据形态打码）。
+//
+// 为什么必须脱敏：子进程常把连接串、API key、token 打进 stderr——
+// MCP server 启动时回显配置是最高频形态。这段文本会原样进错误消息与
+// 诊断报告，等于把凭据抄送一份给日志系统与模型上下文。
+//
+// 为什么用上游 guardx/logredact：凭据形态打码是一张**持续维护的规则表**
+// （URL 内嵌凭据、Bearer 头、JWT、各家厂商 token 前缀、长 hex、键值对…）。
+// 本仓 pii 管的是个人信息（手机号、身份证），与凭据面互补不重叠——
+// 两者判的不是同一件事，不能互相替代。
+//
+// 误伤方向是**过度打码**而非漏打：上游表里像 SHA 校验和、UUID 这类
+// 合法长 hex 会被一并掩掉。诊断面宁可少几个字符，也不能让凭据原样出去——
+// 漏打才是事故方向。
+func redactChildStderr(s string) string {
+	return logredact.Redact(s)
 }
 
 // abortedError 把子进程的退出状态归类成 ExecutionAborted。

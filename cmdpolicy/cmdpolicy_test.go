@@ -70,14 +70,29 @@ func TestSplitCommandsBlocksPrefixBypass(t *testing.T) {
 	}
 }
 
+// ⭐ 段文本是**可往返**的：段再 Split 一次得到与原段逐项相同的 token。
+// 这不是美观问题——段若被摊平成空格分隔，token 边界就变了：
+// git 'a b' status 摊平后是 "git a b status"，再分词得 4 个 token（原 3 个），
+// 含空格的备选前缀（如 git + a b）从此永不命中 ⇒ 安全方向的漏判。
+//
+// 反向验证：把段拼接换成空格拼接，本用例必红。
 func TestSplitCommandsMergesAmpersand(t *testing.T) {
 	segs, err := cmdpolicy.SplitCommands("a && b || c & d")
 	if err != nil {
 		t.Fatalf("SplitCommands: %v", err)
 	}
-	want := []string{"a", "b", "c", "d"}
-	if strings.Join(segs, ",") != strings.Join(want, ",") {
-		t.Fatalf("got %v want %v", segs, want)
+	want := [][]string{{"a"}, {"b"}, {"c"}, {"d"}}
+	if len(segs) != len(want) {
+		t.Fatalf("want %d segments, got %v", len(want), segs)
+	}
+	for i, seg := range segs {
+		argv, err := cmdpolicy.Split(seg)
+		if err != nil {
+			t.Fatalf("段 %q 再分词失败: %v", seg, err)
+		}
+		if len(argv) != len(want[i]) || argv[0] != want[i][0] {
+			t.Fatalf("段 %d 往返后 token 变了：段=%q 得=%v 期望=%v", i, seg, argv, want[i])
+		}
 	}
 }
 

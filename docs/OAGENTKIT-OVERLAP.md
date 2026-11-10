@@ -21,7 +21,7 @@
 | `guardx/egress` | — | **不解析 DNS**：`checkHost` 对域名直接 `return nil // 域名：不解析`。**本仓 `netguard` 的解析层是真差异化，必须保留。** 反过来提醒：任何人直接拿 `egress.Check(url)` 挡 LLM 可控 URL，会得到零 DNS-rebinding 防护。 |
 | `guardx/bashguard` | 493 行 | `Analyze(cmd, *Table) Decision`——**这就是 octop `security/tool_guard/` 那套规则 DSL + 处置裁决的 Go 版**。上轮对标里我列为「最值得抄」的一条，**上游已有，本仓不必做**。 |
 | `guardx/permgate` | 325 行 | Capability/Rule/Ruleset/Decision——权限/能力门禁（含 deny 优先于 approval 的位置）。**不必做。** |
-| `guardx/fence` · `logredact` · `audit` | — | 转义包裹 / 凭据脱敏 / 审计日志。本仓 `pii`（个人信息类）与 `policy`（门面）与之互补，不重叠。 |
+| `guardx/fence` · `logredact` · `audit` | — | 转义包裹 / 凭据脱敏 / 审计日志。本仓 `pii`（个人信息类）与 `policy`（门面）与之互补，不重叠。**`logredact` 已于 2026-11-11 被实际接入**：`ptc` 的子进程 stderr 落进诊断报告前过它打码（凭据形态）；`pii` 仍是个人信息面，两者互补不重叠。 |
 | `toolgate/policy` | 48 行 | `AuditGate`——**与本仓 `policy.WithAuditGate` 签名同款**，属上游内部整合，与本仓无冲突。 |
 | `toolgate/toolprior` · `toolsched` | 181 / 462 行 | 优先级表 + 调用限流 + **并发调度器**。本仓无对应物，也不该有（属 agent 运行时，不属编排内核）。 |
 | `agent/clarify` | 153 行 | 消歧/澄清（词表加载、答案解析）。对应 SPLIT_PLAN L2 的 `intent.go`。 |
@@ -124,7 +124,8 @@ RECORD 375 条 0 条含 test）。版本差为补丁级，以下均为**行为**
 | `sandbox` | 上游 | `oagentkit/guardx/sandbox` | 门面（类型别名 + 常量别名 + 转发） |
 | `delta` | 上游基础机制 | `oagentkit/runtime/pacer` | 本仓在其上叠编排层（(kind,iteration) 键控 + 收口扫序） |
 | `eventbus` | 上游基础机制 | `oagentkit/runtime/progress` | 本仓在其上叠事件面 |
-| `pii` | 本仓 | — | 个人信息**价值面**脱敏；上游 `guardx/logredact` 是**凭据**脱敏（互补） |
+| `pii` | 本仓 | — | 个人信息**价值面**脱敏；上游 `guardx/logredact` 是**凭据**脱敏（互补）。**互补不等于不用**：`ptc` 的子进程 stderr 已在落进 `ExecutionAborted.Stderr` 前过 `logredact`（凭据形态打码），而 `pii` 管手机号/身份证（个人信息，无键名可依）——两者判的不是同一件事 |
+| `cmdpolicy` | 本仓 | 分词面用上游 `oekit/pkg/shellx` | 前缀规则 + 三态裁决 + 规则自带样例（判据面归本仓）；**分词面归上游**（`shellx.Split` / `shellx.QuoteArgv`）——2026-11-11 收编，本仓不再维护第二份分词器 |
 | `netguard` | 本仓 | IP 策略单源 `guardx/egress` | 本仓的解析层 + 名字层 + 拨号层闭窗是真差异化（上游 `egress` **不解析 DNS**） |
 | `budget` | 本仓 | — | 分段计量 + 上限计算 + 压实计划骨架（职责面与上游 `textx/compact` 不重叠，见下） |
 | `tooldisclose` | 本仓 | — | 渐进披露 + 两类失败二分（模型面；上游 `mcpkit.Catalog` 是 server 面） |

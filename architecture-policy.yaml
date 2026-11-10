@@ -312,6 +312,11 @@ modules:
       SplitCommands 单独存在是因为前缀判据有一个典型绕过："git status; rm -rf /" 的
       前缀是 git，对整串只判一次就会让一条 git 的 allow 规则放行后半段。
 
+      **分词面归上游**（2026-11-11 收编）：分词是 oekit/pkg/shellx.Split，段文本拼装是
+      shellx.QuoteArgv（它的逆运算，保证段可往返）。本仓不再维护第二份分词口径——
+      口径只有一处真相，且 POSIX 细节（双引号内反斜杠、分隔符合并、CR 归空白）
+      由上游维护。判据面（前缀规则 / 三态裁决 / 样例自检）仍归本仓。
+
   - id: egress
     roots: [egress]
     requires: ["ext:github.com/oekit/pkg", sandbox]
