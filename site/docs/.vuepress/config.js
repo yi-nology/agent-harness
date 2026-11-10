@@ -27,6 +27,14 @@ export default defineUserConfig({
       { text: '能力', link: '/guide/capabilities.html' },
       { text: '坑速查', link: '/reference/pitfalls.html' },
       {
+        text: 'AI 直读',
+        children: [
+          { text: '本站 llms.txt', link: 'https://yi-nology.github.io/agent-harness/llms.txt' },
+          { text: 'oekit llms.txt', link: 'https://oekit.github.io/llms.txt' },
+          { text: 'oagentkit llms.txt', link: 'https://oagentkit.github.io/llms.txt' },
+        ],
+      },
+      {
         text: '参考',
         children: [
           { text: '包清单与机器事实', link: '/reference/packages.html' },
@@ -35,6 +43,7 @@ export default defineUserConfig({
         ],
       },
     ],
+    footer: 'MIT License · github.com/yi-nology/agent-harness · <a href="https://yi-nology.github.io/agent-harness/llms.txt">AI 直读 llms.txt</a>',
     sidebar: {
       '/guide/': [
         {

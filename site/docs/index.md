@@ -34,5 +34,6 @@ footer: MIT License · github.com/yi-nology/agent-harness
   <a class="chip" href="./guide/getting-started.html">接入路线</a>
   <a class="chip" href="./reference/pitfalls.html">坑速查</a>
   <a class="chip" href="./reference/packages.html">机器事实</a>
+  <a class="chip chip-ai" href="/agent-harness/llms.txt">AI 直读 llms.txt</a>
   <a class="chip" href="https://github.com/yi-nology/agent-harness">GitHub &#8599;</a>
 </div>

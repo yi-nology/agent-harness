@@ -119,6 +119,41 @@
   to { transform: translate(-100px, 80px) scale(1.1); }
 }
 
+/* ── 图解容器（能力详解 / 介绍页的 SVG 图）── */
+.diagram {
+  margin: 22px 0 6px;
+  overflow-x: auto;
+  border: 1px solid var(--vp-c-border);
+  border-radius: 12px;
+  background: var(--vp-c-bg-alt);
+  padding: 16px 10px;
+}
+
+.diagram svg {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+}
+
+.diagram-cap {
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--vp-c-text-subtle);
+  margin: 4px 0 26px;
+}
+
+/* AI 直读胶囊（紫色系，与品牌蓝区分） */
+.chip-ai {
+  border-color: rgb(163 113 247 / 45%) !important;
+  color: #c9a9ff !important;
+}
+
+.chip-ai:hover {
+  border-color: #a371f7 !important;
+  box-shadow: 0 8px 24px rgb(163 113 247 / 20%) !important;
+}
+
 /* 首页压轴一句 + 导航胶囊 */
 .home-punch {
   text-align: center;

@@ -55,9 +55,33 @@ title: 介绍
 
 ## 在依赖链上的位置
 
-```
-oekit（基础库）→ oagentkit（agent 原语）→ agent-harness（编排内核：本仓）→ 宿主产品
-```
+<div class="diagram">
+<svg viewBox="0 0 720 116" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="ar6" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/>
+    </marker>
+  </defs>
+  <g font-size="12.5" fill="#e6edf3">
+    <rect x="10" y="30" width="150" height="48" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <text x="85" y="51" text-anchor="middle">oekit</text>
+    <text x="85" y="69" text-anchor="middle" fill="#9aa7b8" font-size="10.5">基础库</text>
+    <rect x="196" y="30" width="160" height="48" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <text x="276" y="51" text-anchor="middle">oagentkit</text>
+    <text x="276" y="69" text-anchor="middle" fill="#9aa7b8" font-size="10.5">agent 原语</text>
+    <rect x="392" y="30" width="176" height="48" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="480" y="51" text-anchor="middle">agent-harness</text>
+    <text x="480" y="69" text-anchor="middle" fill="#9aa7b8" font-size="10.5">编排内核 · 本仓（机制面）</text>
+    <rect x="604" y="30" width="106" height="48" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <text x="657" y="51" text-anchor="middle">宿主产品</text>
+    <text x="657" y="69" text-anchor="middle" fill="#9aa7b8" font-size="10.5">领域 · 内容</text>
+  </g>
+  <line x1="160" y1="54" x2="192" y2="54" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar6)"/>
+  <line x1="356" y1="54" x2="388" y2="54" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar6)"/>
+  <line x1="568" y1="54" x2="600" y2="54" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar6)"/>
+</svg>
+</div>
+<p class="diagram-cap">依赖链单向：本仓 import 上游，宿主 import 本仓——反向依赖是门禁红线。</p>
 
 两个上游都是公开的 Go 模块矩阵，各有文档站，值得一并了解：
 
@@ -65,7 +89,7 @@ oekit（基础库）→ oagentkit（agent 原语）→ agent-harness（编排内
 一套按「框架耦合分层」组织的 Go 模块矩阵：37 个独立发版单元（微工具库、日志/追踪/
 指标门面、注册发现、HTTP/Kitex 框架生态、应用引导），依赖严格自底向上，每仓独立
 SemVer + 独立 CI。本仓站在它上面的是三块基础件：`oekit/pkg`（errors / stringx /
-encoding 等微工具）、`oekit/concurrency`（GoSafe 等并发原语）、`oekit/logx`（日志门面）。
+encoding 等微工具）、`oekit/concurrency`（GoSafe 等并发原语）、`oekit/logx`（日志门面）。🤖 AI 直读：[oekit.github.io/llms.txt](https://oekit.github.io/llms.txt)。
 
 **[oagentkit](https://oagentkit.github.io/) — Open Agent Kit**（Agent / LLM 编排工具链
 模块矩阵）13 个独立发版的 Go 模块：模型客户端、MCP 工具池、技能库、知识检索、
@@ -75,6 +99,7 @@ Agent 编排、运行时基础设施；与 oekit 是姊妹项目（依赖其 pkg
 injectband）、审计门在 `oagentkit/toolgate`、进程原语在 `oagentkit/runtime/procx`；
 本仓的门面包（`dispatch` / `policy` / `reminder` / `toolfail` / `sandbox`）只做
 调用面转发，核心实现在上游——**跨宿主必须一致的判定语义不放两份实现**。
+🤖 AI 直读：[oagentkit.github.io/llms.txt](https://oagentkit.github.io/llms.txt)。
 
 - **独立发版、版本化引入、零 replace**：`go.mod` 含 replace 即门禁红（公开 module，
   replace 会让下游 `go get` 整体失败）。本地多仓并行开发走 `make devlink` 的 workspace。

@@ -211,4 +211,59 @@ mkdirSync(join(siteDir, 'docs', 'reference'), { recursive: true })
 writeFileSync(join(siteDir, 'docs', 'reference', 'packages.md'), md)
 writeFileSync(join(siteDir, 'docs', 'reference', 'pitfalls.md'), pitMd)
 writeFileSync(join(siteDir, 'docs', 'reference', 'releases.md'), relMd)
-console.log('gen.mjs: packages.md + pitfalls.md + releases.md 生成完毕（' + pkgs.length + ' 包 / ' + deps.length + ' 依赖 / ' + rules.length + ' 规则 / ' + pitfalls.length + ' 坑表行 / ' + releases.length + ' 版本）')
+
+// ── AI 直读入口：llms.txt（同样生成，数字不手抄）──────────────────────
+// 与 oekit / oagentkit 的 llms.txt 同一形态：给 AI 代理的紧凑事实页。
+const site = 'https://yi-nology.github.io/agent-harness'
+const gh = 'https://github.com/yi-nology/agent-harness'
+const short = (s) => {
+  const cut = s.split(/[；。]/)[0]
+  return (cut.length > 60 ? cut.slice(0, 60) + '…' : cut).trim()
+}
+const llms = [
+  '# agent-harness',
+  '',
+  '> 多智能体编排的通用内核（Go library）。**编排是代码，LLM 只做单环节**——',
+  '> 只提供确定性编排的机制面（报告协议 / 工具判定环 / 续跑契约 / 上下文预算 / 执行沙箱），',
+  '> 不认识任何领域概念：专家包、诊断链、词表、拓扑、文案全部属于宿主。',
+  '> 文档站: ' + site + '  |  GitHub: ' + gh,
+  '',
+  '> 本文件由 ' + bt + 'site/gen.mjs' + bt + ' 生成，数字取自 README / go.mod / architecture-policy.yaml / Makefile，随构建刷新。',
+  '',
+  '## 判定口诀',
+  '「这个包需要知道自己在给谁干活吗？」需要 → 属于宿主，不属于内核。换个宿主要改的代码不该在内核。',
+  '',
+  '## 三个必须先知道的约束',
+  '1. **内核只判定，不处置**：内核回报「该阻断/该重试/不可归类」，动作由宿主执行。',
+  '2. **门面的门朝外**：dispatch / policy / reminder 只做调用面转发，核心在上游 oagentkit。',
+  '3. **单向依赖**：本仓不 import 宿主，宿主 import 本仓（门禁强制）。',
+  '',
+  '## AI 直读入口（同族）',
+  '- oekit（基础库矩阵）: https://oekit.github.io/llms.txt',
+  '- oagentkit（Agent/LLM 编排工具链矩阵）: https://oagentkit.github.io/llms.txt',
+  '',
+  '## 文档（人读）',
+  '- 介绍（是什么/边界/依赖链）: ' + site + '/guide/introduction.html',
+  '- 设计初衷（为什么长这样）: ' + site + '/guide/philosophy.html',
+  '- 怎么用（安装/三约束/接入路线图）: ' + site + '/guide/getting-started.html',
+  '- 能力详解（九组图解）: ' + site + '/guide/capabilities.html',
+  '- 坑速查（症状→真因）: ' + site + '/reference/pitfalls.html',
+  '- 包清单与机器事实: ' + site + '/reference/packages.html',
+  '- 门禁体系: ' + site + '/reference/gates.html',
+  '- 完整接入指南（逐包：职责→片段→符号→坑）: ' + gh + '/blob/main/docs/USAGE.md',
+  '- README（边界纪律/下游升级须知）: ' + gh + '#readme',
+  '',
+  '## 事实快照',
+  '- 模块: ' + bt + 'github.com/yi-nology/agent-harness' + bt + ' · Go · MIT · 零 replace（go.mod 含 replace 即门禁红）',
+  '- 能力包 ' + pkgs.length + ' 个；生产代码 ' + base.prodLines + ' 行 / ' + base.prodFiles + ' 文件；测试 ' + base.testFiles + ' 个文件',
+  '- 覆盖率门槛: 全局 ' + th.cov + '% + 逐包下限 ' + th.pkgCov + '%',
+  '- 门禁规则 ' + rules.length + ' 条 + go/ast 结构判定；依赖方向登记于 ' + bt + 'architecture-policy.yaml' + bt,
+  '- 平台: linux/amd64 · linux/arm64 · darwin/arm64 · windows/amd64（进程树语义降级）',
+  '',
+  '## 包一览（' + pkgs.length + '）',
+  ...pkgs.map((p) => '- ' + bt + p.name + bt + ' — ' + short(p.desc)),
+  ''
+].join('\n')
+mkdirSync(join(siteDir, 'docs', '.vuepress', 'public'), { recursive: true })
+writeFileSync(join(siteDir, 'docs', '.vuepress', 'public', 'llms.txt'), llms)
+console.log('gen.mjs: packages.md + pitfalls.md + releases.md + llms.txt 生成完毕（' + pkgs.length + ' 包 / ' + deps.length + ' 依赖 / ' + rules.length + ' 规则 / ' + pitfalls.length + ' 坑表行 / ' + releases.length + ' 版本）')
