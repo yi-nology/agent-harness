@@ -60,18 +60,150 @@
 }
 
 #main-title {
+  background: linear-gradient(96deg, #58a6ff, #a371f7 45%, #58a6ff 90%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 60px rgb(88 166 255 / 25%);
+  animation: grad-flow 7s linear infinite;
+}
+
+@keyframes grad-flow {
+  to { background-position: 200% center; }
+}
+
+/* hero 双光晕球：缓慢漂移（只动 transform，不引起重排） */
+.vp-hero {
+  position: relative;
+  overflow: hidden;
+}
+
+.vp-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.vp-hero::before,
+.vp-hero::after {
+  content: '';
+  position: absolute;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  filter: blur(110px);
+  opacity: 0.2;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.vp-hero::before {
+  background: #2f6bff;
+  top: -180px;
+  left: -120px;
+  animation: float-a 14s ease-in-out infinite alternate;
+}
+
+.vp-hero::after {
+  background: #7a4dd8;
+  top: -220px;
+  right: -140px;
+  animation: float-b 18s ease-in-out infinite alternate;
+}
+
+@keyframes float-a {
+  to { transform: translate(120px, 60px) scale(1.15); }
+}
+
+@keyframes float-b {
+  to { transform: translate(-100px, 80px) scale(1.1); }
+}
+
+/* 首页压轴一句 + 导航胶囊 */
+.home-punch {
+  text-align: center;
+  font-size: 1.2rem;
+  color: var(--vp-c-text-mute);
+  margin: 4px 0 26px;
+}
+
+.home-punch strong {
   background: linear-gradient(96deg, #58a6ff, #a371f7 78%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  font-size: 1.45rem;
+  margin-right: 6px;
 }
 
-/* 特性卡：浮层面 + 描边 + 圆角（旧站 card 同款） */
+.home-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.home-links .chip {
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--vp-c-border);
+  background: var(--vp-c-bg-elv);
+  color: var(--vp-c-text);
+  font-size: 14px;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.home-links .chip:hover {
+  border-color: rgb(88 166 255 / 60%);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgb(88 166 255 / 18%);
+  text-decoration: none;
+}
+
+/* 特性卡：浮层面 + 描边 + 圆角（旧站 card 同款），悬浮微升起 + 蓝光描边。
+ * 宽屏 3 列收紧纵向占用——文案已是短句，网格不能还按长文的 2 列摊。 */
+/* 主题的 .vp-features 是 flex（flex-basis:30% + max-width:30%），
+ * grid 属性对它无效——要 3 列得把容器换成 grid 并清掉子项的 flex/max-width。 */
+.vp-features {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+
+@media (max-width: 1023px) {
+  .vp-features { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 639px) {
+  .vp-features { grid-template-columns: 1fr; }
+}
+
 .vp-feature {
+  flex: initial;
+  max-width: none;
   background: var(--vp-c-bg-elv);
   border: 1px solid var(--vp-c-border);
   border-radius: 12px;
-  padding: 22px 24px;
+  padding: 18px 20px;
+  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.vp-feature h2 {
+  font-size: 17px;
+  margin: 0;
+}
+
+.vp-feature p {
+  font-size: 13.5px;
+  line-height: 1.7;
+  margin-top: 8px;
+}
+
+.vp-feature:hover {
+  transform: translateY(-4px);
+  border-color: rgb(88 166 255 / 45%);
+  box-shadow: 0 14px 34px rgb(0 0 0 / 35%), 0 0 24px rgb(88 166 255 / 12%);
 }
 
 /* 按钮：主按钮蓝底深字，次按钮描边（旧站 .btn/.btn-ghost 同款） */
@@ -83,6 +215,17 @@
 .vp-hero-action-button.primary {
   background: #58a6ff;
   color: #06121f;
+}
+.vp-hero-action-button.primary:hover {
+  box-shadow: 0 10px 30px rgb(88 166 255 / 35%);
+}
+
+/* 尊重系统的减弱动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 .vp-hero-action-button.secondary {
   background: transparent;
