@@ -1,0 +1,7 @@
+docs: GitHub Pages 站点（首版）
+
+从 README 自动生成的介绍页：包清单、生产行数、依赖版本均取自仓库事实，
+不手抄——手抄就等于多一份会静默失真的真相。
+
+生成器 build.py + 模板 template.html + 样式 style.css 一并入库，
+README 改动后重跑 python3 build.py <repo> . 即可刷新。
