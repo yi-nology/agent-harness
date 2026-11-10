@@ -290,7 +290,7 @@ modules:
 
   - id: cmdpolicy
     roots: [cmdpolicy]
-    requires: ["ext:github.com/oekit/pkg"]
+    requires: ["ext:github.com/oekit/pkg", "ext:github.com/oagentkit/tools"]
     owner: harness
     managed: true
     notes: |
@@ -316,6 +316,12 @@ modules:
       shellx.QuoteArgv（它的逆运算，保证段可往返）。本仓不再维护第二份分词口径——
       口径只有一处真相，且 POSIX 细节（双引号内反斜杠、分隔符合并、CR 归空白）
       由上游维护。判据面（前缀规则 / 三态裁决 / 样例自检）仍归本仓。
+
+      **事实面归上游**（2026-11-11 收编）：「这条命令里出现了什么」（全调用集、
+      全重定向集、动态词）走 oagentkit/tools/bashguard 的真 shell AST（mvdan.cc/sh），
+      本仓不手写 shell 解析器。前缀判据的三类典型绕过（多段 / 命令替换 / 写重定向）
+      由「全调用面取最严 + 事实面下限（写重定向、动态展开 ⇒ 不低于 prompt）」闭合。
+      bashguard 的只读/不可逆风险分级是另一套语义，本包不用。
 
   - id: egress
     roots: [egress]

@@ -125,7 +125,7 @@ RECORD 375 条 0 条含 test）。版本差为补丁级，以下均为**行为**
 | `delta` | 上游基础机制 | `oagentkit/runtime/pacer` | 本仓在其上叠编排层（(kind,iteration) 键控 + 收口扫序） |
 | `eventbus` | 上游基础机制 | `oagentkit/runtime/progress` | 本仓在其上叠事件面 |
 | `pii` | 本仓 | — | 个人信息**价值面**脱敏；上游 `guardx/logredact` 是**凭据**脱敏（互补）。**互补不等于不用**：`ptc` 的子进程 stderr 已在落进 `ExecutionAborted.Stderr` 前过 `logredact`（凭据形态打码），而 `pii` 管手机号/身份证（个人信息，无键名可依）——两者判的不是同一件事 |
-| `cmdpolicy` | 本仓 | 分词面用上游 `oekit/pkg/shellx` | 前缀规则 + 三态裁决 + 规则自带样例（判据面归本仓）；**分词面归上游**（`shellx.Split` / `shellx.QuoteArgv`）——2026-11-11 收编，本仓不再维护第二份分词器 |
+| `cmdpolicy` | 本仓 | 分词面 `oekit/pkg/shellx` + 事实面 `oagentkit/tools/bashguard` | 前缀规则 + 三态裁决 + 规则自带样例（判据面归本仓）；**分词面归上游**（`shellx.Split` / `shellx.QuoteArgv`，2026-11-11 收编）；**事实面归上游**（`bashguard` 真 AST 的全调用集/全重定向集/动态词，同日收编——前缀判据的多段/命令替换/写重定向三类绕过由此闭合，本仓不手写 shell 解析器。bashguard 的只读/不可逆风险分级不用：那是另一套语义） |
 | `netguard` | 本仓 | IP 策略单源 `guardx/egress` | 本仓的解析层 + 名字层 + 拨号层闭窗是真差异化（上游 `egress` **不解析 DNS**） |
 | `budget` | 本仓 | — | 分段计量 + 上限计算 + 压实计划骨架（职责面与上游 `textx/compact` 不重叠，见下） |
 | `tooldisclose` | 本仓 | — | 渐进披露 + 两类失败二分（模型面；上游 `mcpkit.Catalog` 是 server 面） |

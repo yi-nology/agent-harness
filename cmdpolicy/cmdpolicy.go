@@ -107,6 +107,13 @@ type Verdict struct {
 	Justification string
 	// Matched 命中的 token 数（0 表示没有规则命中）。
 	Matched int
+	// Wrote 含写重定向（任一非读侧重定向）。写重定向是**语句级事实**，
+	// 不在 argv 里——前缀规则结构上看不见它，故它驱动「事实面下限」
+	// （见 DecideCommand）。仅由 DecideCommand 填写；Decide(argv) 不知情、恒 false。
+	Wrote bool
+	// Dynamic 含动态展开（$() / 反引号 / $VAR）。判据只看字面，
+	// 展开内容在判定时不可知 ⇒ 同样驱动事实面下限。同上，仅由 DecideCommand 填写。
+	Dynamic bool
 }
 
 // Policy 一组已自检通过的前缀规则（构造后只读，可并发共享）。
@@ -216,16 +223,54 @@ func (p *Policy) Decide(argv []string) Verdict {
 	}
 }
 
-// DecideCommand 分词后判定（宿主手上只有命令行字符串时用这个）。
+// DecideCommand 按命令行字符串判定（宿主手上只有命令行时用这个）。
 //
-// 分词失败（未闭合的引号）⇒ 返回错误：**判不了就不放行**，
-// 让调用方按自己的 fail-closed 口径处置，而不是把它当成「没有命中规则」。
+// # 判定面是全调用 AST，不只第一个 token
+//
+// 前缀判据有三类典型绕过，逐类在此闭合（事实面走上游 bashguard，见 facts.go）：
+//
+//   - **多段**：git status; rm -rf / 的前缀是 git——全调用面把 rm 那段也判了，
+//     取最严（SplitCommands 仍保留，供宿主逐段留痕）；
+//   - **命令替换**：echo $(rm -rf /) 里的 rm 是嵌套调用——全调用面看得见它；
+//   - **写重定向**：git status > /etc/passwd 的前缀仍是 git status，而 > 是
+//     语句级事实、不在 argv 里——前缀规则结构上看不见它。
+//
+// 语义三条：
+//
+//  1. **全调用面取最严**：管道后半、$(…) 嵌套、子 shell、多段里的每次调用
+//     都过一遍前缀规则，取最严者；同等严取名字字典序最小（确定性）。
+//  2. **事实面下限**：含写重定向或动态展开（$()/反引号/$VAR）时，裁决
+//     **不低于 prompt**——这两类语义前缀规则看不见，静默 allow 就是
+//     「判据比声明宽」。调用方若已把命令展开成 argv、且确知无重定向，
+//     用 Decide(argv) 即可（那条路径不做事实面判定）。
+//  3. **判不了就不放行**：分词失败（未闭合引号 / 尾随转义）与 AST 未评估
+//     （超长 / 解析失败）⇒ 返回错误，让调用方按自己的 fail-closed 口径处置，
+//     而不是把它当成「没有命中规则」。
 func (p *Policy) DecideCommand(cmdline string) (Verdict, error) {
-	argv, err := Split(cmdline)
+	if _, err := Split(cmdline); err != nil {
+		return Verdict{}, err
+	}
+	facts, err := commandFactsOf(cmdline)
 	if err != nil {
 		return Verdict{}, err
 	}
-	return p.Decide(argv), nil
+	v := Verdict{Decision: DecisionAllow}
+	for _, argv := range facts.calls {
+		got := p.Decide(argv)
+		strictest := got.Decision > v.Decision
+		if got.Decision == v.Decision && got.Rule != "" && (v.Rule == "" || got.Rule < v.Rule) {
+			strictest = true
+		}
+		if strictest {
+			v = got
+		}
+	}
+	v.Wrote = facts.wrote
+	v.Dynamic = facts.dynamic
+	if (facts.wrote || facts.dynamic) && v.Decision < DecisionPrompt {
+		v.Decision = DecisionPrompt
+	}
+	return v, nil
 }
 
 // matchPrefix 返回命中的 token 数。
@@ -259,13 +304,28 @@ func (p *Policy) Rules() []Rule {
 }
 
 // Explain 把裁决渲染成一句可回给模型的说明（拒绝/需人审时用）。
+//
+// 事实面信号（写重定向 / 动态展开）追加在后：它们常常是裁决被下限抬到
+// prompt 的**真正原因**，不写出来，模型看到「prompt (rule ...)" 会以为
+// 是那条规则判的——下次就学会了「绕开这条规则」而不是「别写重定向」。
 func (v Verdict) Explain() string {
-	if v.Rule == "" {
+	if v.Rule == "" && !v.Wrote && !v.Dynamic {
 		return "no rule matched"
 	}
-	msg := fmt.Sprintf("%s (rule %q)", v.Decision, v.Rule)
-	if v.Justification != "" {
-		msg += ": " + v.Justification
+	msg := v.Decision.String()
+	if v.Rule != "" {
+		msg += fmt.Sprintf(" (rule %q)", v.Rule)
+		if v.Justification != "" {
+			msg += ": " + v.Justification
+		}
+	} else {
+		msg += " (no rule matched)"
+	}
+	if v.Wrote {
+		msg += "；含写重定向"
+	}
+	if v.Dynamic {
+		msg += "；含动态展开（判定只看字面）"
 	}
 	return msg
 }

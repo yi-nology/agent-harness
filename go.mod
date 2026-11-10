@@ -28,6 +28,7 @@ require (
 	github.com/oagentkit/guardx v0.24.1
 	github.com/oagentkit/runtime v0.12.6
 	github.com/oagentkit/toolgate v0.17.0
+	github.com/oagentkit/tools v0.14.3
 	github.com/oekit/concurrency v0.32.0
 	github.com/oekit/logx v0.9.2
 	github.com/oekit/pkg v0.42.0
@@ -73,4 +74,5 @@ require (
 	golang.org/x/exp v0.0.0-20261109185158-a52e3aef5920 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 )
