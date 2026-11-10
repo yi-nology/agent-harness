@@ -71,6 +71,26 @@ function loadThresholds(src) {
   return { cov: cov[1], pkgCov: pkg[1] }
 }
 
+function loadReleases(src) {
+  // CHANGELOG 段头形如：## [v0.29.0] — 2026-11-11，紧随的 ### 行是该版主题。
+  const out = []
+  let cur = null
+  for (const line of src.split('\n')) {
+    const h = /^## \[(v[\d.]+)\] — (.+)$/.exec(line)
+    if (h) {
+      cur = { version: h[1], date: h[2].trim(), subject: '' }
+      out.push(cur)
+      continue
+    }
+    if (cur && !cur.subject) {
+      const t = /^### (.+)$/.exec(line)
+      if (t) cur.subject = t[1].trim()
+    }
+  }
+  if (!out.length) fail('CHANGELOG 解析出 0 个版本段——段头格式变了？')
+  return out
+}
+
 // markdown 表格单元格转义：竖线会截断表格。
 const cell = (s) => s.replace(/\|/g, '\\|')
 // 尖括号转义（反引号外）：VuePress 把 markdown 编译成 Vue 模板，裸 <x> 会被当
@@ -88,6 +108,7 @@ const base = loadBaseline(src)
 const deps = loadVersions(read('go.mod'))
 const rules = loadRules(read('architecture-policy.yaml'))
 const th = loadThresholds(read('Makefile'))
+const releases = loadReleases(read('CHANGELOG.md'))
 
 const md = [
   '---',
@@ -164,7 +185,30 @@ const pitMd = [
   ''
 ].join('\n')
 
+// 版本记录页：从 CHANGELOG 投影（版本 / 日期 / 主题），全文与下游须知看仓内 CHANGELOG 与 README。
+const relMd = [
+  '---',
+  'title: 版本记录',
+  '---',
+  '',
+  '# 版本记录',
+  '',
+  '::: warning 本页由 ' + bt + 'site/gen.mjs' + bt + ' 生成，勿手改',
+  '版本 / 日期 / 主题投影自仓内 ' + bt + 'CHANGELOG.md' + bt + '（发版时同步 CHANGELOG，本页随之更新）；',
+  '逐版完整变更与**下游升级须知**看仓内 ' + bt + 'CHANGELOG.md' + bt + ' 与 README 的「下游升级须知」表。',
+  ':::',
+  '',
+  '| 版本 | 日期 | 主题 |',
+  '|---|---|---|',
+  ...releases.map((r) => '| ' + bt + r.version + bt + ' | ' + r.date + ' | ' + cell(escAngles(r.subject || '（见 CHANGELOG）')) + ' |'),
+  '',
+  '> 完整变更：仓内 [CHANGELOG.md](https://github.com/yi-nology/agent-harness/blob/main/CHANGELOG.md)；',
+  '> 破坏性变更与迁移指引：仓内 [README「下游升级须知」](https://github.com/yi-nology/agent-harness/blob/main/README.md#下游升级须知破坏性变更)。',
+  ''
+].join('\n')
+
 mkdirSync(join(siteDir, 'docs', 'reference'), { recursive: true })
 writeFileSync(join(siteDir, 'docs', 'reference', 'packages.md'), md)
 writeFileSync(join(siteDir, 'docs', 'reference', 'pitfalls.md'), pitMd)
-console.log('gen.mjs: packages.md + pitfalls.md 生成完毕（' + pkgs.length + ' 包 / ' + deps.length + ' 依赖 / ' + rules.length + ' 规则 / ' + pitfalls.length + ' 坑表行）')
+writeFileSync(join(siteDir, 'docs', 'reference', 'releases.md'), relMd)
+console.log('gen.mjs: packages.md + pitfalls.md + releases.md 生成完毕（' + pkgs.length + ' 包 / ' + deps.length + ' 依赖 / ' + rules.length + ' 规则 / ' + pitfalls.length + ' 坑表行 / ' + releases.length + ' 版本）')

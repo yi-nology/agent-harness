@@ -31,6 +31,7 @@ export default defineUserConfig({
         children: [
           { text: '包清单与机器事实', link: '/reference/packages.html' },
           { text: '门禁体系', link: '/reference/gates.html' },
+          { text: '版本记录', link: '/reference/releases.html' },
         ],
       },
     ],
@@ -52,6 +53,7 @@ export default defineUserConfig({
           children: [
             '/reference/packages.md',
             '/reference/gates.md',
+            '/reference/releases.md',
             '/reference/pitfalls.md',
           ],
         },

@@ -2,6 +2,23 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.29.0] — 2026-11-11
+
+### 判据面补强：cmdpolicy 事实面收编上游 bashguard，闭合前缀判据三类绕过
+
+前缀判据有三类典型绕过（多段 / 命令替换 / 写重定向），此前没有任何机制面堵。
+本版把「这条命令里出现了什么」的事实面收编 `oagentkit/tools/bashguard`（mvdan.cc/sh
+真 AST，tools#35/#79/#80 的结构化输出）：全调用面取最严 + 事实面下限
+（写重定向 / 动态展开 ⇒ 裁决不低于 prompt），本仓不手写 shell 解析器。
+**下游可见的行为变化**：`DecideCommand` 判定变严（此前被绕过的三类命令会被拦/升
+prompt）、解析失败/超长从放行改报错（`ErrUnjudgeable`）、`Verdict` 新增 `Wrote`/
+`Dynamic` 字段——详见 README 下游升级须知 v0.29.0 行。`Decide(argv)` 纯前缀语义不动。
+
+* feat(cmdpolicy): 事实面收编上游 oagentkit/tools/bashguard——全调用 AST 判定（多段/嵌套 $(…)/管道后半逐调用取最严）+ 事实面下限（写重定向、动态展开 ⇒ 不低于 prompt）；新增哨兵 ErrUnjudgeable（AST 超长/解析失败判不了就不放行）、Verdict.Wrote/Dynamic 事实字段；依赖新增 oagentkit/tools v0.14.3（带入 mvdan.cc/sh v3.14.1）
+* docs: v0.28.0 须知行按实发内容对账——logredact 脱敏已随 c159773 在 tag 内（#70 的「待落」判断经 merge-base 核实有误，已归位）
+* docs(site): 配色/风格回退到迁站前的深色 GitHub 风 + 同族项目介绍
+* docs: 发版 v0.29.0——CHANGELOG 补段、站点版本记录（从 CHANGELOG 投影生成 releases 页）、README 去「未发版」标注
+
 ## [v0.28.0] — 2026-11-11
 
 ### 修复：egress 判据收严 + 门面补缺 + 子进程后端契约三处（#62 #63 #64 #65 #66 #67）
