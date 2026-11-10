@@ -1892,7 +1892,7 @@ d := g.Decide(ctx, policy.Op{
 	Type:     policy.OpToolCall,
 	Mode:     policy.Normalize(sessionMode), // 空/非法一律回落 confirm
 	Tool:     "restart",
-	Mutating: true,
+	Mutating: policy.Mutating(true), // 三态 *bool：nil=未知 ⇒ fail-safe 升人审（v0.28.0 起）
 })
 ```
 
@@ -1902,6 +1902,9 @@ d := g.Decide(ctx, policy.Op{
   要接成 invoke 链一环，宿主需自包一层 `guardset.Guard`，`Check` 里调 `Gate.Decide`。
 - **`DefaultPolicy` 未被门面转发**：要内置基座就传 `NewGate(nil, nil)`。
 - **`Normalize` 对空/非法一律回落 `confirm`**——审计门不允许因模式脏值放大权限。
+- **`Mutating` 是三态 `*bool`（v0.28.0 随 toolgate v0.17.0）**：字面量直接写
+  bool 编译不过，用门面的 `policy.Mutating(true/false)` 内联构造；不填（nil）
+  不是「非变更」，是「未知」——审计门 fail-safe 升人审，不替调用方猜。
 - **`Decide` 只读 policy，并发安全，可放工具调用热路径。**
 
 #### `reminder`：系统注入提示的防伪包裹

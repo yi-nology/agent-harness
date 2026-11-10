@@ -1,9 +1,16 @@
 package ptc
 
 import (
+	"context"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/oagentkit/guardx/invoke"
 	"github.com/oagentkit/guardx/sandbox"
+	"github.com/oagentkit/guardx/toolfail"
+	"github.com/oagentkit/guardx/wire"
+	"github.com/oekit/pkg/errors"
 	"github.com/yi-nology/agent-harness/toolname"
 )
 
@@ -129,5 +136,153 @@ func TestRemoteFailureCarriesKind(t *testing.T) {
 func TestToolNameNormalizeStable(t *testing.T) {
 	if toolname.Normalize("get-logs") != "get_logs" {
 		t.Error("工具名净化规则变了")
+	}
+}
+
+// TestSubprocessHandlerClassifiesStageOutcomes 父侧应答的判定环归因与进程内
+// 路径同一份（issue #65）。
+//
+// 旧实现把一切 EvaluateStages 错误（含守卫 panic/故障）都映射成
+// permission_denied——「宿主门禁坏了」被上报为「策略否定」，排障方向被引向
+// 守卫配置；#59 在进程内路径修掉的误归因在子进程路径复发。判据与
+// TestStagesFaultAndDenyGetDistinctKinds 同一套：拒绝/故障两个词，加一个
+// 「非 DenyError 不得冠判定环词汇」的防御分支。
+func TestSubprocessHandlerClassifiesStageOutcomes(t *testing.T) {
+	deny := invoke.StageFunc{StageName: "审计门", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+		return invoke.Verdict{Allow: false, Reason: "变更须走方案审批"}, nil
+	}}
+	crasher := invoke.StageFunc{StageName: "crasher", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+		panic("环里炸了")
+	}}
+	cases := []struct {
+		name       string
+		ring       invoke.Stage
+		wantKind   string
+		wantPrefix string
+	}{
+		{"判定拒绝", deny, "stage_denied", "判定环拒绝"},
+		{"守卫崩溃", crasher, "stage_failed", "判定环故障"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewSubprocessProvider(SubprocessOptions{Stages: []invoke.Stage{tc.ring}})
+			resp, err := p.handler()(context.Background(), wire.Request{Tool: "t", Args: "{}"})
+			if err != nil {
+				t.Fatalf("handler 不应返回 error（失败是 Response 字段）: %v", err)
+			}
+			if resp.OK {
+				t.Fatal("被拦下的调用不得 OK")
+			}
+			if resp.Kind != tc.wantKind {
+				t.Fatalf("Kind=%q，应为 %q（子进程侧收口对它逐字采信，两个后端必须同词）", resp.Kind, tc.wantKind)
+			}
+			if !strings.HasPrefix(resp.Error, tc.wantPrefix) {
+				t.Fatalf("Error 前缀应为 %q，实得 %q", tc.wantPrefix, resp.Error)
+			}
+			if tc.wantKind == "stage_failed" && strings.Contains(resp.Error, "permission") {
+				t.Fatalf("守卫故障不得冠权限类词汇: %q", resp.Error)
+			}
+		})
+	}
+}
+
+// TestSubprocessHandlerNonDenyErrorNotPermissionDenied 非 DenyError 的判定环
+// 错误不得冠 permission_denied（issue #65 的防御分支）：EvaluateStages 的公开
+// 契约是归口为 *invoke.DenyError，真出现别的错误只能按 unknown 走——
+// 「权限否定」是可被宿主拿去做免重试决策的词，不能当兜底桶。
+func TestSubprocessHandlerNonDenyErrorNotPermissionDenied(t *testing.T) {
+	// 构造一个返回非 DenyError 的环：正常配置下 EvaluateStages 会归口，
+	// 这里直接用一个既不 deny 也不 panic 但返回普通 error 的 StageFunc——
+	// 若归口层把它包成 DenyError(stage_failed) 也正确，本用例退化为验证
+	// stage_failed 路径；关键是任何情况下 Kind 都不得是 permission_denied
+	// 除非它真的是判定拒绝。
+	flaky := invoke.StageFunc{StageName: "flaky", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+		return invoke.Verdict{Allow: true}, errors.New("判定源不可用")
+	}}
+	p := NewSubprocessProvider(SubprocessOptions{Stages: []invoke.Stage{flaky}})
+	resp, err := p.handler()(context.Background(), wire.Request{Tool: "t", Args: "{}"})
+	if err != nil {
+		t.Fatalf("handler 不应返回 error: %v", err)
+	}
+	if resp.OK {
+		t.Fatal("环报错必须 fail-closed 拒绝，不得放行")
+	}
+	if resp.Kind == string(toolfail.ClassPermissionDenied) {
+		t.Fatalf("守卫自身故障不得上报为 permission_denied: Kind=%q Error=%q", resp.Kind, resp.Error)
+	}
+}
+
+// TestSubprocessEffectiveBudget 装配期配置与每请求预算逐项取严（issue #66）。
+//
+// 同一协议的进程内后端把 req.Budget 全量透传；本后端此前整个不读它——宿主
+// 请求更紧预算时静默按装配期宽限跑。判据：每项取 min（请求零值 = 沿用装配），
+// 内存同口径（含「请求了而后端没配 ⇒ 按请求」的 fail-closed 方向）。
+func TestSubprocessEffectiveBudget(t *testing.T) {
+	cases := []struct {
+		name       string
+		opts       SubprocessOptions
+		req        sandbox.Budget
+		wantClock  time.Duration
+		wantCalls  int
+		wantBytes  int
+		wantMemory int64
+	}{
+		{
+			name:      "请求零值沿用装配期（缺省归一）",
+			opts:      SubprocessOptions{},
+			req:       sandbox.Budget{},
+			wantClock: DefaultTimeout, wantCalls: DefaultMaxCalls, wantBytes: DefaultMaxBytes,
+		},
+		{
+			name:      "请求更紧的墙钟被采纳",
+			opts:      SubprocessOptions{Timeout: 30 * time.Second, MaxCalls: 50, MaxBytes: 4096},
+			req:       sandbox.Budget{WallClock: time.Second},
+			wantClock: time.Second, wantCalls: 50, wantBytes: 4096,
+		},
+		{
+			name:      "请求更紧的调用数与字节被采纳",
+			opts:      SubprocessOptions{Timeout: 30 * time.Second, MaxCalls: 50, MaxBytes: 4096},
+			req:       sandbox.Budget{MaxCalls: 2, MaxBytes: 128},
+			wantClock: 30 * time.Second, wantCalls: 2, wantBytes: 128,
+		},
+		{
+			name:      "请求更宽不放大（安全方向）",
+			opts:      SubprocessOptions{Timeout: time.Second, MaxCalls: 2, MaxBytes: 128},
+			req:       sandbox.Budget{WallClock: time.Hour, MaxCalls: 9999, MaxBytes: 1 << 20},
+			wantClock: time.Second, wantCalls: 2, wantBytes: 128,
+		},
+		{
+			name:      "内存取严：请求更紧被采纳",
+			opts:      SubprocessOptions{Timeout: time.Second, MaxCalls: 5, MaxBytes: 512, MaxMemory: 256 << 20},
+			req:       sandbox.Budget{MaxMemory: 64 << 20},
+			wantClock: time.Second, wantCalls: 5, wantBytes: 512,
+			wantMemory: 64 << 20,
+		},
+		{
+			name:      "内存取严：请求更宽不放大",
+			opts:      SubprocessOptions{Timeout: time.Second, MaxCalls: 5, MaxBytes: 512, MaxMemory: 64 << 20},
+			req:       sandbox.Budget{MaxMemory: 1 << 30},
+			wantClock: time.Second, wantCalls: 5, wantBytes: 512,
+			wantMemory: 64 << 20,
+		},
+		{
+			name:      "内存：后端没配而请求了 ⇒ 按请求（不退回不设上限）",
+			opts:      SubprocessOptions{Timeout: time.Second, MaxCalls: 5, MaxBytes: 512},
+			req:       sandbox.Budget{MaxMemory: 32 << 20},
+			wantClock: time.Second, wantCalls: 5, wantBytes: 512,
+			wantMemory: 32 << 20,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lim, maxMemory := NewSubprocessProvider(tc.opts).effectiveBudget(tc.req)
+			if lim.timeout != tc.wantClock || lim.maxCalls != tc.wantCalls || lim.maxBytes != tc.wantBytes {
+				t.Fatalf("三闸 = (%v,%d,%d)，应为 (%v,%d,%d)",
+					lim.timeout, lim.maxCalls, lim.maxBytes, tc.wantClock, tc.wantCalls, tc.wantBytes)
+			}
+			if maxMemory != tc.wantMemory {
+				t.Fatalf("内存上限 = %d，应为 %d", maxMemory, tc.wantMemory)
+			}
+		})
 	}
 }

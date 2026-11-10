@@ -30,7 +30,7 @@ func TestExecuteAndRunRunsTheJudgedProvider(t *testing.T) {
 		gateOf(policy.VerdictAuto),
 		reg,
 		Request{
-			Op:       policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto},
+			Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto},
 			MinLevel: sandbox.LevelProcess,
 			Program:  "return 1;",
 		})
@@ -58,7 +58,7 @@ func TestExecuteAndRunDoesNotExecuteOnDeny(t *testing.T) {
 		gateOf(policy.VerdictDeny),
 		reg,
 		Request{
-			Op:       policy.Op{Type: policy.OpToolCall},
+			Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
 			MinLevel: sandbox.LevelOS,
 			Program:  "return 1;",
 		})
@@ -84,7 +84,7 @@ func TestExecuteAndRunDoesNotExecuteOnNeedHuman(t *testing.T) {
 		gateOf(policy.VerdictNeedHuman),
 		reg,
 		Request{
-			Op:       policy.Op{Type: policy.OpToolCall},
+			Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
 			MinLevel: sandbox.LevelOS,
 			Program:  "return 1;",
 		})
@@ -111,7 +111,7 @@ func TestExecuteAndRunReportsExecutionFailure(t *testing.T) {
 		gateOf(policy.VerdictAuto),
 		reg,
 		Request{
-			Op:       policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto},
+			Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto},
 			MinLevel: sandbox.LevelProcess,
 			Program:  "return 1;",
 		})
@@ -134,7 +134,7 @@ func TestExecuteAndRunReportsExecutionFailure(t *testing.T) {
 func TestGuardZeroValueFailsClosed(t *testing.T) {
 	var g Guard
 	d := g.Check(context.Background(), Request{
-		Op:       policy.Op{Type: policy.OpToolCall},
+		Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
 		MinLevel: sandbox.LevelProcess,
 	})
 	if d.Outcome != OutcomeNeedHuman {
@@ -150,7 +150,7 @@ func TestGuardRunUsesJudgedProvider(t *testing.T) {
 
 	g := NewGuard(gateOf(policy.VerdictAuto), reg)
 	out, d := g.Run(context.Background(), Request{
-		Op:       policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto},
+		Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto},
 		MinLevel: sandbox.LevelProcess,
 		Program:  "return 1;",
 	})
@@ -173,7 +173,7 @@ func TestGuardDoesNotExecuteOnDeny(t *testing.T) {
 
 	g := NewGuard(gateOf(policy.VerdictDeny), reg)
 	_, d := g.Run(context.Background(), Request{
-		Op:       policy.Op{Type: policy.OpToolCall},
+		Op:       policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
 		MinLevel: sandbox.LevelOS,
 		Program:  "return 1;",
 	})

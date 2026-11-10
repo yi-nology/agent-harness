@@ -228,17 +228,34 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 		// 名义杀掉整个宿主进程。中断 goroutine 那侧与此正交：它早已走
 		// async.GoSafe（panic 留痕不杀进程）。
 		if r := recover(); r != nil {
-			res = Result{
-				Error:     fmt.Sprintf("宿主绑定 panic（这不是程序错误，是宿主侧要修的）: %v", r),
-				ErrorKind: "host_panic",
-				// 已执行步骤留痕： panic 前成功的调用照常记账——
-				// 半途痕迹是审计要的，收口不留等于没发生过。
-				Calls:   res.Calls,
-				Bytes:   res.Bytes,
-				CallLog: res.CallLog,
+			// 中断穿透到这里的 panic **不是宿主 bug**（issue #67 的第 3 道
+			// 安全网）：墙钟/ctx 取消的 vm.Interrupt 以 *goja.InterruptedError
+			// panic 穿透它所打断的任何 VM 入口——此前一律落 host_panic，
+			// 「程序超时」被上报成「宿主要修的」。归因按中断哨兵分道
+			// （deadline / runtime 带 ctx 语义），与 failFrom 同一份口径。
+			if ie, ok := r.(*goja.InterruptedError); ok {
+				msg, kind := interruptMessage(ie)
+				res = Result{
+					Error:     msg,
+					ErrorKind: kind,
+					Calls:     res.Calls,
+					Bytes:     res.Bytes,
+					CallLog:   res.CallLog,
+				}
+				logx.Error("ptc: 执行被中断打断，收敛为结果返回", "kind", kind)
+			} else {
+				res = Result{
+					Error:     fmt.Sprintf("宿主绑定 panic（这不是程序错误，是宿主侧要修的）: %v", r),
+					ErrorKind: "host_panic",
+					// 已执行步骤留痕： panic 前成功的调用照常记账——
+					// 半途痕迹是审计要的，收口不留等于没发生过。
+					Calls:   res.Calls,
+					Bytes:   res.Bytes,
+					CallLog: res.CallLog,
+				}
+				logx.Error("ptc: 宿主绑定 panic，收敛为结果返回",
+					"panic", fmt.Sprint(r))
 			}
-			logx.Error("ptc: 宿主绑定 panic，收敛为结果返回",
-				"panic", fmt.Sprint(r))
 		}
 		if !res.OK {
 			res.Suggestions = suggestionsFor(res.ErrorKind)

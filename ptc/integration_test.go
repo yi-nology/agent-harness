@@ -154,7 +154,7 @@ func TestRealGatesApplyInsideProgram(t *testing.T) {
 		t.Fatal("read_logs 应已加载")
 	}
 	audit := policy.NewGate(nil, nil)
-	stageForToolCall := policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto}
+	stageForToolCall := policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto}
 
 	bind := ptc.Binding{
 		Name:      "read_logs",
@@ -204,7 +204,7 @@ func TestRealAuditGateBlocksInsideProgram(t *testing.T) {
 	}}
 	audit := policy.NewGate(nil, nil)
 	stages := []invoke.Stage{
-		policy.Stage(audit, policy.Op{Type: policy.OpToolCall, Mode: policy.ModeFull, Mutating: true}, nil),
+		policy.Stage(audit, policy.Op{Type: policy.OpToolCall, Mode: policy.ModeFull, Mutating: policy.Mutating(true)}, nil),
 	}
 
 	const prog = `try { return host.restart_service("h1") } catch (e) { return "拒:" + e.message }`

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oagentkit/guardx/invoke"
 	"github.com/oagentkit/guardx/sandbox"
 	"github.com/yi-nology/agent-harness/ptc"
 )
@@ -179,5 +180,90 @@ func TestSubprocessMemoryLimitKillsChild(t *testing.T) {
 	if _, err := p.Exec(context.Background(), sandboxRequest()); err != nil &&
 		!strings.Contains(err.Error(), "执行域异常终止") {
 		t.Errorf("宿主应仍可执行，实得 %v", err)
+	}
+}
+
+// TestSubprocessStageOutcomeClassified 子进程路径的判定环归因与进程内同词
+// （issue #65 端到端）：父侧应答的分类（wire Response.Kind）经子进程收口
+// 逐字采信——守卫判定拒绝 ⇒ stage_denied（外层 toolfail 类 permission_denied）；
+// 守卫自身崩溃 ⇒ stage_failed，**不得**再被折成 permission_denied。
+func TestSubprocessStageOutcomeClassified(t *testing.T) {
+	bin := buildChildProgram(t)
+	deny := invoke.StageFunc{StageName: "审计门", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+		return invoke.Verdict{Allow: false, Reason: "策略否定"}, nil
+	}}
+	crasher := invoke.StageFunc{StageName: "crasher", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+		panic("环里炸了")
+	}}
+	cases := []struct {
+		name      string
+		ring      invoke.Stage
+		wantKind  string
+		wantMsgIn string
+	}{
+		{"判定拒绝", deny, "permission_denied", "判定环拒绝"},
+		{"守卫崩溃", crasher, "unknown", "判定环故障"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+				ExePath: bin,
+				Program: `return await host.echo("hi");`,
+				Bindings: []ptc.Binding{{Name: "echo", Call: func(context.Context, string) (string, error) {
+					return "OUT", nil
+				}}},
+				Stages:  []invoke.Stage{tc.ring},
+				Timeout: 20 * time.Second,
+			})
+			out, err := p.Exec(context.Background(), sandbox.Request{Program: ""})
+			if err != nil {
+				t.Fatalf("执行失败: %v", err)
+			}
+			if out.OK {
+				t.Fatalf("被判定环拦下的程序不得成功: %+v", out)
+			}
+			f, ok := out.Err.(*sandbox.Failure)
+			if !ok || f.Kind != tc.wantKind {
+				t.Fatalf("外层分类应为 %q, got %+v", tc.wantKind, out.Err)
+			}
+			if !strings.Contains(f.Message, tc.wantMsgIn) {
+				t.Fatalf("消息应含 %q, got %q", tc.wantMsgIn, f.Message)
+			}
+		})
+	}
+}
+
+// TestSubprocessHonorsTighterRequestBudget 每请求预算取严（issue #66 端到端）：
+// 装配期 MaxCalls=50，请求 MaxCalls=2——子进程必须按**请求的**更紧上限收口
+// （budget_calls），而不是静默按装配期宽限跑完。
+func TestSubprocessHonorsTighterRequestBudget(t *testing.T) {
+	bin := buildChildProgram(t)
+	calls := 0
+	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+		ExePath: bin,
+		Program: `await host.echo("1"); await host.echo("2"); await host.echo("3"); return "done";`,
+		Bindings: []ptc.Binding{{Name: "echo", Call: func(context.Context, string) (string, error) {
+			calls++
+			return "ok", nil
+		}}},
+		MaxCalls: 50,
+		Timeout:  20 * time.Second,
+	})
+	out, err := p.Exec(context.Background(), sandbox.Request{
+		Program: "",
+		Budget:  sandbox.Budget{MaxCalls: 2},
+	})
+	if err != nil {
+		t.Fatalf("执行失败: %v", err)
+	}
+	if out.OK {
+		t.Fatalf("请求了 MaxCalls=2 而程序要调 3 次，必须按请求上限拦下: %+v", out)
+	}
+	f, ok := out.Err.(*sandbox.Failure)
+	if !ok || f.Kind != "rate_limited" {
+		t.Fatalf("超请求上限应报 budget_calls（外层 rate_limited），got %+v", out.Err)
+	}
+	if calls != 2 {
+		t.Fatalf("宿主绑定应只被调 2 次（按请求上限），实得 %d 次", calls)
 	}
 }

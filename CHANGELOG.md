@@ -2,6 +2,24 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.28.0] — 2026-11-11
+
+### 修复：egress 判据收严 + 门面补缺 + 子进程后端契约三处（#62 #63 #64 #65 #66 #67）
+
+出口判据（egress.Verify）两条假绿收口、policy 门面补 Mutating 转发（随 toolgate
+v0.17.0 三态化）、子进程后端的归因/预算/收口竞态三处契约修复。**有新 API 面**
+（`policy.Mutating`）与**行为变更**（`Op.Mutating` 三态化后 nil ⇒ 审计门 fail-safe
+升人审；gatecheck 默认操作映射不再替宿主猜「非变更」），故升 minor。
+
+* fix(egress): 代理变量判据收严为「六个一个不缺、一个不歪」——只配 HTTP_PROXY 的环境不再验成 enforced（HTTPS 裸奔），缺失与异值在报错里分开点名（#62）
+* fix(egress): 绕过名单收口为对 NO_PROXY/no_proxy 两变体取**并集**的单一判定——大写对而小写 no_proxy=* 不再判绿，只有小写且正确不再误红；normList 归一补去重（#63）
+* feat(policy): 门面补转发 `Mutating(b bool) *bool` 构造器——toolgate v0.17.0 把 `Op.Mutating` 三态化为 `*bool` 后宿主经门面写不了字面量、被迫直引 toolgate/policy（#64）
+* fix(ptc): 子进程判定环归因复用 stageOutcome——守卫故障上报 stage_failed（外层 unknown、消息带「判定环故障」前缀），不再一律折成 permission_denied（#65）
+* fix(ptc): SubprocessProvider.Exec 把 req.Budget 与装配期预算**逐项取严**后写 Start 帧，内存同口径落到 cgroup——请求更紧的墙钟/调用数/字节不再被静默按装配期宽限跑（#66）
+* fix(ptc): 收口窗口不再在 VM 上跑用户 JS——拒绝锚定从「nonce 渲染全等」改为**对象身份**（指针相等），失配分支的文本渲染直调 String() 收在保护下；中断打穿收口按哨兵归类 deadline/中断，不再落 host_panic 或 %!v(PANIC=) 残渣（#67）
+* chore(deps): 第一方依赖抬升——toolgate v0.15.3→v0.17.0、guardx v0.23.4→v0.24.1、agent v0.14.5→v0.14.8、mcpkit v0.12.4→v0.12.8、runtime v0.12.4→v0.12.6、oekit/concurrency v0.31.0→v0.32.0、oekit/logx v0.8.12→v0.9.2、oekit/pkg v0.40.0→v0.42.0、eino v0.9.22→v0.9.23、goja 升至 2026-11-10 快照
+* docs: docsync 行数对账——egress/policy/gatecheck/ptc 修订后 26,032 行/142 文件
+
 ## [v0.27.1] — 2026-11-09
 
 ### 修复：agent-harness 第三轮 issue 清零（#53 #54 #55 #56 #57 #58 #59）

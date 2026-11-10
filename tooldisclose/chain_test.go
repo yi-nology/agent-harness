@@ -42,7 +42,7 @@ func catalogOf(names ...string) *Catalog {
 func TestChainBothGatesPass(t *testing.T) {
 	cat := catalogOf("read_logs")
 	cat.Load("read_logs")
-	c, hits := chain(t, cat, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto})
+	c, hits := chain(t, cat, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto})
 
 	if _, err := c.Do(context.Background(), invoke.Call{Name: "read_logs"}); err != nil {
 		t.Fatalf("两环应放行，实得 %v", err)
@@ -58,7 +58,7 @@ func TestChainBothGatesPass(t *testing.T) {
 // 于是模型为取 schema 得多绕一圈，渐进披露的收益当场归零。
 func TestChainNotLoadedIsRetryable(t *testing.T) {
 	cat := catalogOf("read_logs") // 未 Load
-	c, hits := chain(t, cat, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto})
+	c, hits := chain(t, cat, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto})
 
 	_, err := c.Do(context.Background(), invoke.Call{Name: "read_logs"})
 	if err == nil {
@@ -84,7 +84,7 @@ func TestChainNotLoadedIsRetryable(t *testing.T) {
 // 重试不会让不存在的东西出现；判成可重试就是把一次策略否定变成退避风暴。
 func TestChainNotInCatalogNotRetryable(t *testing.T) {
 	cat := catalogOf("read_logs")
-	c, hits := chain(t, cat, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto})
+	c, hits := chain(t, cat, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto})
 
 	_, err := c.Do(context.Background(), invoke.Call{Name: "unknown_tool"})
 	if err == nil {
@@ -105,7 +105,7 @@ func TestChainAuditGateBlocksAfterDisclosurePass(t *testing.T) {
 	cat.Load("restart_service")
 	// 审计门装配为变异工具必拒；披露门已放行。
 	c, hits := chain(t, cat, policy.NewGate(nil, nil),
-		policy.Op{Type: policy.OpToolCall, Mode: policy.ModeFull, Mutating: true})
+		policy.Op{Type: policy.OpToolCall, Mode: policy.ModeFull, Mutating: policy.Mutating(true)})
 
 	_, err := c.Do(context.Background(), invoke.Call{Name: "restart_service"})
 	if err == nil {
@@ -123,7 +123,7 @@ func TestChainAuditGateBlocksAfterDisclosurePass(t *testing.T) {
 //
 // 「没配置就当放行」是这个面最危险的默认：空目录会让全部门禁消失，且无任何信号。
 func TestChainNilCatalogFailsClosed(t *testing.T) {
-	c, hits := chain(t, nil, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto})
+	c, hits := chain(t, nil, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto})
 
 	_, err := c.Do(context.Background(), invoke.Call{Name: "read_logs"})
 	if err == nil {
@@ -152,14 +152,14 @@ func TestChainRecordsEveryOutcome(t *testing.T) {
 			c := catalogOf("read_logs")
 			c.Load("read_logs")
 			return c
-		}, policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto}, true},
+		}, policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto}, true},
 		{"披露门拒", func() *Catalog { return catalogOf("read_logs") },
-			policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto}, false},
+			policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto}, false},
 		{"审计门拒", func() *Catalog {
 			c := catalogOf("restart_service")
 			c.Load("restart_service")
 			return c
-		}, policy.Op{Type: policy.OpToolCall, Mode: policy.ModeFull, Mutating: true}, false},
+		}, policy.Op{Type: policy.OpToolCall, Mode: policy.ModeFull, Mutating: policy.Mutating(true)}, false},
 	}
 
 	for _, tc := range cases {
@@ -198,7 +198,7 @@ func TestChainRecordsEveryOutcome(t *testing.T) {
 // 留痕要能回答「是哪一环拒的」；链上看不到环节名，这个问题就没有答案。
 func TestChainStagesVisibleForAudit(t *testing.T) {
 	cat := catalogOf("read_logs")
-	c, _ := chain(t, cat, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mode: policy.ModeAuto})
+	c, _ := chain(t, cat, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto})
 
 	got := c.Stages()
 	if len(got) != 2 {

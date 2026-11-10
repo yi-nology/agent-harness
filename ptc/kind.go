@@ -17,6 +17,9 @@ import (
 //	预算类（budget_calls / budget_bytes）→ 限流类（可重试但要退避）
 //	确定性失败（syntax / binding_* / bad_result）→ 永久类（重试无意义）
 //	超时与中断 → 瞬时类（值得重试）
+//	判定环拒绝（stage_denied）→ 权限类（重试也不会满足，走审批或换工具）
+//	判定环故障（stage_failed）→ unknown（宿主门禁坏了：程序改不了它，
+//	  也不是「重试就会好」的瞬时故障——保守侧不可重试，issue #65）
 //	其余 → unknown（不可分类 = 不可重试，保守侧）
 func kindForErrorKind(kind string) string {
 	switch kind {
@@ -26,8 +29,10 @@ func kindForErrorKind(kind string) string {
 		return string(toolfail.ClassPermanent)
 	case "deadline", "runtime":
 		return string(toolfail.ClassTransient)
-	case "permission_denied":
+	case "permission_denied", "stage_denied":
 		return string(toolfail.ClassPermissionDenied)
+	case "stage_failed":
+		return string(toolfail.ClassUnknown)
 	default:
 		return string(toolfail.ClassUnknown)
 	}

@@ -38,7 +38,6 @@ package egress
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/oekit/pkg/errors"
@@ -152,7 +151,7 @@ func (s Spec) Env(base []string) ([]string, error) {
 	}
 	if len(s.Bypass) > 0 {
 		bypass := append([]string(nil), s.Bypass...)
-		sort.Strings(bypass) // 确定性：同一份声明必须产出同一份 env
+		slices.Sort(bypass) // 确定性：同一份声明必须产出同一份 env
 		out = append(out, "NO_PROXY="+strings.Join(bypass, ","))
 		out = append(out, "no_proxy="+strings.Join(bypass, ","))
 	}
@@ -163,6 +162,12 @@ func (s Spec) Env(base []string) ([]string, error) {
 //
 // 这是本包存在的理由——**声明与实际的对照**。env 由调用方在真正 spawn 之前取到，
 // 判不过即不执行（而不是执行完再补一句「好像没生效」）。
+//
+// 两项判据（绕过名单 / 代理变量）各只有一个实现、各覆盖全部大小写变体——
+// 「同一机制两份实现必然漂移」的教训就来自这里：绕过名单曾按 Bypass 空不空
+// 走两份只有大小写口径不同的实现，小写 no_proxy=* 从只查大写的那份底下绕过
+// （issue #63）；代理变量曾判「六个里命中一个就算兑现」，只配了 HTTP_PROXY
+// 的环境验成 enforced 而 HTTPS 裸奔（issue #62）。
 func (s Spec) Verify(env map[string]string) error {
 	if err := s.Validate(); err != nil {
 		return err
@@ -173,44 +178,84 @@ func (s Spec) Verify(env map[string]string) error {
 	case ModeDenied:
 		return errors.New("egress: 禁网无法从环境变量验证（必须由带能力声明的后端强制）")
 	}
-	if len(s.Bypass) > 0 {
-		// 判**语义等价**而不是字面相同：NO_PROXY 的顺序与空白无语义，
-		// 判字面会把自己拼 env 的调用方误判红（那是假红——判据的前提是
-		// 「兑现了没有」，不是「是不是用本包的 Env 生成的」）。
-		want := normList(s.Bypass)
-		got := normList(strings.Split(env["NO_PROXY"], ","))
-		if !slices.Equal(want, got) {
-			return errors.Errorf("egress: 绕过名单未兑现（要求 %v，实际 %q）", want, env["NO_PROXY"])
-		}
-	} else {
-		// 声明无绕过时 NO_PROXY 必须缺席或为空（issue #42）：NO_PROXY=*、
-		// 继承自宿主的 no_proxy 等会让客户端对**所有目标**直连——代理声明
-		// 被环境变量架空，而此前的 Verify 对 Bypass 为空完全不查 NO_PROXY，
-		// 「经代理强制」验证为绿的实际上是无防刷过的环境。两个大小写变体
-		// 同查（客户端任取其一）。
-		for _, k := range []string{"NO_PROXY", "no_proxy"} {
-			if v, ok := env[k]; ok && strings.TrimSpace(v) != "" {
-				return errors.Errorf("egress: 声明无绕过但环境携带 %s=%q——代理将被绕过架空", k, v)
-			}
-		}
+	if err := s.verifyBypass(env); err != nil {
+		return err
 	}
-	var seen []string
-	for _, k := range proxyVars {
-		if v, ok := env[k]; ok && v == s.Proxy {
-			return nil
-		}
-		if v, ok := env[k]; ok {
-			seen = append(seen, fmt.Sprintf("%s=%s", k, v))
-		}
-	}
-	return errors.Errorf("egress: 子进程环境未兑现代理声明（要求 %s，实际 %v）", s.Proxy, seen)
+	return s.verifyProxyVars(env)
 }
 
-// normList 折成「去空白、去空条目、排序」的形态（比较目标清单前先归一）。
+// bypassVars 绕过名单变量的两个大小写变体：客户端读哪个不可知（issue #42 起
+// 空名单分支就在同查两个变体），任何只查一个变体的判据都留了另一条绕过道。
+var bypassVars = []string{"NO_PROXY", "no_proxy"}
+
+// verifyBypass 绕过名单判据（issue #63 收口为**单实现**）：对两个大小写变体
+// 取**并集**后判与声明的语义等价——
+//
+//   - 两个变体都缺席：声明了绕过 ⇒ 红（名单没兑现）；声明无绕过 ⇒ 绿；
+//   - 任一变体在场：并集必须与声明语义等价（顺序与空白无语义——判字面会把
+//     自己拼 env 的调用方误判红，那是假红），否则红并点名变体与实际值。
+//
+// 并集口径同时封住两个方向的洞：大写正确而小写携带 `*`（并集多出 `*` ⇒ 红，
+// 此前只比大写验成绿——小写读者对所有目标直连）；只有小写且正确（并集=声明
+// ⇒ 绿，此前只读大写 env["NO_PROXY"] 判空误红）。空串变体折成空集（视同缺席，
+// 与 Env 生成的「整条不出现」形态兼容）。Bypass 为空时并集须为空集，即 #42
+// 的「无绕过声明不得携带 NO_PROXY」——同一份实现，不再两份口径各查一半。
+func (s Spec) verifyBypass(env map[string]string) error {
+	want := normList(s.Bypass)
+	var present, union []string
+	for _, k := range bypassVars {
+		v, ok := env[k]
+		if !ok {
+			continue
+		}
+		present = append(present, fmt.Sprintf("%s=%q", k, v))
+		union = append(union, strings.Split(v, ",")...)
+	}
+	if slices.Equal(want, normList(union)) {
+		return nil
+	}
+	if len(want) == 0 {
+		return errors.Errorf("egress: 声明无绕过但环境携带 %s——代理将被绕过架空", strings.Join(present, "、"))
+	}
+	if len(present) == 0 {
+		return errors.Errorf("egress: 绕过名单未兑现（要求 %v，实际 NO_PROXY/no_proxy 两个变体都缺席）", want)
+	}
+	return errors.Errorf("egress: 绕过名单未兑现（要求 %v，实际 %v）", want, present)
+}
+
+// verifyProxyVars 代理变量判据（issue #62）：六个变量**一个不缺、一个不歪**。
+//
+// Env 自己写的就是全部六个（proxyVars），而客户端各读各的——curl 读
+// http_proxy、多数 SDK 读 HTTPS_PROXY、Go 的 ProxyFromEnvironment 小写优先。
+// 于是「缺一个」意味着某一类流量根本没代理（HTTPS 裸奔），「指到别处」意味着
+// 流量走了一条声明从未授权的链路（HTTP_PROXY 对、HTTPS_PROXY 指向别的代理）。
+// 两种形态都点名列出：缺失与异值的处置不同（补变量 vs 查污染源），合成一句
+// 「实际 [...]」会让排障的人对着正确的变量找错。
+func (s Spec) verifyProxyVars(env map[string]string) error {
+	var missing, wrong []string
+	for _, k := range proxyVars {
+		v, ok := env[k]
+		switch {
+		case !ok:
+			missing = append(missing, k)
+		case v != s.Proxy:
+			wrong = append(wrong, fmt.Sprintf("%s=%s", k, v))
+		}
+	}
+	if len(missing) == 0 && len(wrong) == 0 {
+		return nil
+	}
+	return errors.Errorf("egress: 子进程环境未兑现代理声明（要求 %s；缺失 %v；异值 %v）", s.Proxy, missing, wrong)
+}
+
+// normList 折成「去空白、去空条目、排序、去重」的形态（比较目标清单前先归一）。
+//
+// 去重是并集判据（issue #63）的前提：同一目标出现在两个大小写变体里时，
+// 折半后的清单须与单次声明的清单等价，重复项会把等价判成失配。
 func normList(items []string) []string {
 	out := slicex.Filter(slicex.Map(items, strings.TrimSpace), func(x string) bool { return x != "" })
-	sort.Strings(out)
-	return out
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 func isProxyVar(kv string) bool {

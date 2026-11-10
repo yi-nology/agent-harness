@@ -106,25 +106,34 @@ func execute(
 		res.OK = true
 		res.Value = strings.TrimSpace(buf.String())
 	case goja.PromiseStateRejected:
-		// 归因按**精确锚定**（issue #44/#45/#57，见 rejection.go）：被拒值必须
-		// 逐字等于最近抛出的载体在未捕获时的渲染（含每次抛出随机生成的 nonce）
+		// 归因按**载体身份锚定**（issue #44/#45/#57 的演进，#67 定形，见
+		// rejection.go）：被拒值与最近抛出的载体是**同一个对象**（指针相等）
 		// ⇒ 这次拒绝就是那次抛出，分类采信（stage 两类带判定环前缀；toolfail
-		// 分类原样透传给 kindForErrorKind）；锚定失配 ⇒ 程序捕获后改写/重包过
-		// 的错误，一律 runtime——旧的单向 Contains 会让改写过的消息（"failed: "+
-		// e.message）也命中，程序自己的 bug 误继承 stage 分类。
-		rejected := fmt.Sprintf("%v", p.Result())
+		// 分类原样透传）；失配 ⇒ 程序捕获后改写/重包过的错误，一律 runtime。
+		// 身份比较不进 VM（#67 的根因修复）——旧文本锚定要渲染两侧，而
+		// *goja.Object 的 String() 会跑用户 JS：敌意 toString 死循环 ⇒ 收口
+		// 无界挂起；墙钟/取消恰在渲染窗口 Interrupt ⇒ panic 被 Run 的 recover
+		// 误收成 host_panic，真实分类丢失。
 		tr := res.lastThrown
-		if tr == nil || tr.nonce == "" || tr.kind == "" || rejected != rejectionAnchor(vm, tr) {
-			// 锚定失配（程序捕获后自己抛的）或无分类（普通绑定失败）⇒ runtime
-			res.Error, res.ErrorKind = fmt.Sprintf("程序拒绝: %v", p.Result()), "runtime"
+		if tr == nil || tr.kind == "" || !rejectionIsCarrier(p.Result(), tr) {
+			// 锚定失配（程序捕获后自己抛的）或无分类（普通绑定失败）⇒ runtime。
+			// 文本渲染仍要进 JS（Error 对象的可读文案在 toString 里，Export 折
+			// map 会丢），但收在保护下（renderRejection，#67）。
+			text, intKind := renderRejection(p.Result())
+			if intKind != "" {
+				// 渲染被打断：墙钟/取消赢了，结果的主语义是「没跑完」——
+				// 归因 deadline/中断，拒绝分类此刻让位。
+				res.Error, res.ErrorKind = text, intKind
+				return *res
+			}
+			res.Error, res.ErrorKind = "程序拒绝: "+text, "runtime"
 		} else if _, prefix := stageOutcome(tr.err); prefix != "" {
 			// 判定环的拒绝/故障：前缀只认 *invoke.DenyError（issue #59）。
-			// 锚标记剥离后再冠前缀：nonce 是 Go 侧锚定用的机械标记，不进模型可见消息。
-			res.Error, res.ErrorKind = fmt.Sprintf("%s: %s", prefix, tr.rejectionText(rejected)), tr.kind
+			res.Error, res.ErrorKind = fmt.Sprintf("%s: %v", prefix, tr.err), tr.kind
 		} else {
 			// 已分类但与判定环无关（toolfail 规范失败、自定义 Kind() 拒绝）：
 			// 分类照采，前缀不加——归因到判定环会把排障方向引向守卫（issue #59）。
-			res.Error, res.ErrorKind = tr.rejectionText(rejected), tr.kind
+			res.Error, res.ErrorKind = fmt.Sprintf("%v", tr.err), tr.kind
 		}
 	default:
 		res.Error, res.ErrorKind = "await 永不落定的 Promise（VM 无定时器，绑定均为同步调用）", "pending"

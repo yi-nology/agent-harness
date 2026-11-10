@@ -95,9 +95,14 @@ func mountBindings(
 				// goja 值的 panic 会穿透成 host panic，不能被 try/catch），
 				// lastThrown 记下最近一次抛出供收口处精确锚定——程序捕获后
 				// 再抛自己的错误时锚定失配，陈值毒化无从发生。
+				// anchor 记下包装对象本身：收口处以**指针相等**锚定（#67，
+				// 不渲染不进 VM，敌意 toString 无从介入）。
 				kind, _ := stageOutcome(serr)
-				res.lastThrown = &thrownRejection{err: serr, kind: kind, nonce: newRejectionNonce()}
-				panic(vm.NewGoError(res.lastThrown))
+				tr := &thrownRejection{err: serr, kind: kind}
+				ge := vm.NewGoError(tr)
+				tr.anchor = ge
+				res.lastThrown = tr
+				panic(ge)
 			}
 			start := time.Now()
 			// callIt 直调宿主 Binding.Call：宿主侧 panic 经 goja 对非 goja
@@ -144,9 +149,12 @@ func mountBindings(
 				// 分类随值走（issue #45/#58）：调用错误自带的 toolfail 分类
 				// （规范失败类型 *toolfail.Failure、子进程侧 remoteFailure.Kind()
 				// 等，链感知探测）经载体穿过包装，收口处不再把「策略否定」
-				// 误映射成 transient。
-				res.lastThrown = &thrownRejection{err: err, kind: rejectionKindOf(err), nonce: newRejectionNonce()}
-				panic(vm.NewGoError(res.lastThrown)) // 程序可 try/catch；未捕获=拒绝落 Result
+				// 误映射成 transient。anchor 同上：身份锚定（#67）。
+				tr := &thrownRejection{err: err, kind: rejectionKindOf(err)}
+				ge := vm.NewGoError(tr)
+				tr.anchor = ge
+				res.lastThrown = tr
+				panic(ge) // 程序可 try/catch；未捕获=拒绝落 Result
 			}
 			return vm.ToValue(out)
 		}

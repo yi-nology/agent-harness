@@ -203,3 +203,47 @@ func TestStageNilGateDoesNotBlock(t *testing.T) {
 		t.Fatalf("未装配审批门时不应拦下调用: %v", verr)
 	}
 }
+
+// ── 6. Mutating 构造器转发（issue #64）──
+//
+// toolgate 把 `Op.Mutating` 三态化为 `*bool`（nil=未知）后，宿主经门面写
+// `Op{Mutating: mutating}` 编译不过（bool 不能作 *bool），配套构造器若不在
+// 门面上，宿主就被迫直引 toolgate/policy——同一文件两个 policy 别名，
+// 「薄转发让宿主只 import 门面」的设计在这里断掉。
+//
+// 表驱动钉三态的可观察行为：红线只在显式 true 时触发、放行只在显式 false
+// 时发生、nil fail-safe 升人审。
+func TestMutatingForwarderFeedsGate(t *testing.T) {
+	if b := Mutating(true); b == nil || *b != true {
+		t.Fatalf("Mutating(true) 应返回指向 true 的指针, got %v", b)
+	}
+	if b := Mutating(false); b == nil || *b != false {
+		t.Fatalf("Mutating(false) 应返回指向 false 的指针, got %v", b)
+	}
+
+	cases := []struct {
+		name        string
+		mutating    *bool
+		wantVerdict Verdict
+		wantRule    string
+	}{
+		{"显式变更（红线触发）", Mutating(true), VerdictDeny, "mutating_tool_guard"},
+		{"标记未知（fail-safe 升人审）", nil, VerdictNeedHuman, "mutating_unclassified"},
+		{"显式只读（矩阵层按规则放行）", Mutating(false), VerdictAuto, "test_auto"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &Policy{AutoMaxRisk: 2}
+			p.Rules = []Rule{{ID: "test_auto", OpTypes: []string{string(OpToolCall)}, Verdict: VerdictAuto}}
+			g := NewGate(p, nil)
+			// 经门面构造的 Op 字面量（这条编译本身就是用例的一部分）。
+			d := g.Decide(context.Background(), Op{Type: OpToolCall, Mode: ModeAuto, Mutating: tc.mutating})
+			if d.Verdict != tc.wantVerdict {
+				t.Fatalf("Verdict=%q, want %q（Reason=%q）", d.Verdict, tc.wantVerdict, d.Reason)
+			}
+			if d.RuleID != tc.wantRule {
+				t.Fatalf("RuleID=%q, want %q（判定没走预期的路径）", d.RuleID, tc.wantRule)
+			}
+		})
+	}
+}
