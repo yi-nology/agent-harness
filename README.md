@@ -641,6 +641,7 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 | 本仓版本 | 变更 | 下游要做什么 |
 |---|---|---|
+| **v0.27.1**（已发版，tag `v0.27.1`） | **修复轮，无破坏性变更**：`ptc` 的拒绝分类载体化（issue #53-#59）——分类随抛出对象一起走，收口处据此把「守卫判定拒绝」与「守卫自己崩了」分成两类，不再一律映射成 transient；另修 `protocol` 的报告校验、`drain` 的预算归一、`pending` 的列值解析。**依赖地板不变** | **无需 `go mod tidy`**，调用面逐字不变。**若你的宿主按「拒绝一律可重试」处理 ptc 的拒绝**，请改按 `toolfail` 的分类分流（`Kind` 随拒绝一起给出）——本版起「权限拒绝被当成瞬时错」这条误判已修正 |
 | **v0.27.0**（**未发版**，工作树现状） | **第一方依赖全量抬到最新 + 一处下游可见的解析口径变化**：① 依赖地板抬升——`oekit/concurrency` v0.28.4→**v0.31.0**、`oekit/pkg` v0.37.4→**v0.40.0**、`oekit/logx` v0.8.10→**v0.8.12**、`oagentkit/agent` v0.14.3→**v0.14.5**、`guardx` v0.23.2→**v0.23.4**、`runtime` v0.12.2→**v0.12.4**、`toolgate` v0.15.2→**v0.15.3**、`mcpkit` v0.12.1→**v0.12.4**；② **`protocol` 的解析通道边界随之扩宽**——`oekit/pkg` v0.38 起 `jsonrepair.Repair` 的输出契约明写「`:` 后缺值补 null」（pkg#268），故形如 `{"agent_name":"X","confidence":}` 的**非法 JSON 从「拒收」变成「被修复通道救回」**；救回点落在本仓 `markRepaired` 的既有设计内（修复产物**必降置信 low**，下游 verify/needs_review 承接），本仓代码**零改动**、只把测试的不变量从「失败即拒收」改写为「凡经修复通道放行必为 low」，并补了成对的反向判据（缺冒号、无 JSON 结构仍拒收） | **① `go mod tidy`**——地板抬升对下游是隐式 breaking，不跑就报 `updates to go.mod needed`，且报错不提真正原因。<br>**② 若你的宿主直接调 `protocol.ParseReport` / `ParseLLMReport`**：缺值形态的模型输出现在**不再返回 `ErrNotReport`**，而是返回一份 `Confidence="low"` 的报告。这不是回归——上游修复通道的扩宽是刻意行为，且本仓既有设计（`markRepaired` 降置信）本就是为这类形态准备的。**若你把「解析失败」当拒收信号用**，请改判 `Confidence == protocol.ConfidenceLow`。（结构不可修复的形态——缺冒号、无 JSON 结构——仍照常返回 `ErrNotReport`，本仓补了成对的反向用例钉住这条边界。）<br>**③ 上游 `oekit/concurrency` v0.28.2 起 `async.PanicHandler` 签名改为 `func(ctx context.Context, r any, stack []byte)`**——本仓**未定义**该 handler（故编译未破），但**你的宿主若自行实现了它，需要改签名**。这是本轮唯一一处**真正传导到下游的 BREAKING**，请务必核对。 |
 | **v0.22.0**（已发版，tag `v0.22.0`） | **依赖地板抬升 + 三处零行为重构**：`guardx` v0.21.0→v0.22.0、`toolgate` v0.13.0→v0.14.0、`mcpkit` v0.11.0→v0.12.0、`logx` v0.8.4→v0.8.6；本仓代码只做等价收口（`archcheck` 删掉两个**同体异名**的证据判定包装、`protocol` 的手写 nil 判空换 `ptrx.Deref`、`taskboard` 的循环二次拼接换 `strings.Join`），**公开 API 零变更、零行为差异** | **只需 `go mod tidy`**——地板抬升对下游是隐式 breaking：不跑就报 `updates to go.mod needed`，且报错不提真正原因。三处重构的调用面逐字不变。**一处刻意不采用**：`mcpkit` v0.12.0 新增的 `DisclosureGate`（模型面三态披露契约）本仓不接——它绑 `mcpkit/mcp` 的 `Catalog`，而那个包依赖 eino + mcp-go，引入等于拿一个三态判定换一整条 mcp SDK 依赖；且本仓 `tooldisclose.Gate` 的哨兵二分 + `Retryable` 自报 + `Activated` 副作用仍要留（`toolfail` 靠 `Retryable` 分流，不解析文案） |
 | **v0.21.0**（已发版，tag `v0.21.0`；**本行由 v0.22.0 轮补录**，该版当时未补行） | `trajectory` 的 OTel 映射长成**契约表**：新增 `AttrSpecs` / `AttrSpecOf` / `ForbiddenLabels` 与 `TraceGranularity` / `Domain` / `Cardinality`——每个属性有主、只有有界枚举才许当 label、父子关系落 `Span.ParentID`。**无 API 删除、无依赖地板变化** | **无需 `go mod tidy`**、无需改调用面。补录依据是 `git log v0.20.1..v0.21.0`（一个 feat + 两个 docs 提交）；**若你依赖 `trajectory` 的 label 面**，请自行对照 `AttrSpecs` 自查——本次补录未逐条核对这版对 label 的收窄 |
@@ -687,12 +688,12 @@ go get github.com/yi-nology/agent-harness@latest
 ```
 
 ```go
-require github.com/yi-nology/agent-harness v0.6.4   // 零 replace，直接版本化引入
+require github.com/yi-nology/agent-harness v0.27.1   // 零 replace，直接版本化引入
 ```
 
 > 升级前用 `git ls-remote --tags origin` 核候选版本真的存在——
 > `go list -m -versions` 报的是 proxy 的缓存目录，不是远端现实。
-> 当前已发布 tag 以远端为准（写稿时为 v0.6.4）。
+> 当前已发布 tag 以远端为准（写稿时为 v0.27.1）。
 >
 > ⚠️ **require 里写的是「最低版本」，不是「锁定版本」**：下游 `go mod tidy`
 > 只保证不低于这个版本，不会自动升到最新版。要用新版本必须显式
