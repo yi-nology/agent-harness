@@ -17,6 +17,8 @@ v0.17.0 三态化）、子进程后端的归因/预算/收口竞态三处契约�
 * fix(ptc): 子进程判定环归因复用 stageOutcome——守卫故障上报 stage_failed（外层 unknown、消息带「判定环故障」前缀），不再一律折成 permission_denied（#65）
 * fix(ptc): SubprocessProvider.Exec 把 req.Budget 与装配期预算**逐项取严**后写 Start 帧，内存同口径落到 cgroup——请求更紧的墙钟/调用数/字节不再被静默按装配期宽限跑（#66）
 * fix(ptc): 收口窗口不再在 VM 上跑用户 JS——拒绝锚定从「nonce 渲染全等」改为**对象身份**（指针相等），失配分支的文本渲染直调 String() 收在保护下；中断打穿收口按哨兵归类 deadline/中断，不再落 host_panic 或 %!v(PANIC=) 残渣（#67）
+* refactor(cmdpolicy)!: 分词面收编上游 oekit/pkg/shellx，删掉手写分词器——顺带修三处 POSIX 错误（双引号内反斜杠、分隔符相邻合并、CR 归空白），SplitCommands 段文本改 QuoteArgv 拼装可往返
+* docs(site): 站点迁回 main 的 site/ 并升级 VuePress，发布改走 GitHub Actions
 * chore(deps): 第一方依赖抬升——toolgate v0.15.3→v0.17.0、guardx v0.23.4→v0.24.1、agent v0.14.5→v0.14.8、mcpkit v0.12.4→v0.12.8、runtime v0.12.4→v0.12.6、oekit/concurrency v0.31.0→v0.32.0、oekit/logx v0.8.12→v0.9.2、oekit/pkg v0.40.0→v0.42.0、eino v0.9.22→v0.9.23、goja 升至 2026-11-10 快照
 * docs: docsync 行数对账——egress/policy/gatecheck/ptc 修订后 26,032 行/142 文件
 
