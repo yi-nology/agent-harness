@@ -198,25 +198,30 @@
 
 /* 特性卡：浮层面 + 描边 + 圆角（旧站 card 同款），悬浮微升起 + 蓝光描边。
  * 宽屏 3 列收紧纵向占用——文案已是短句，网格不能还按长文的 2 列摊。 */
-/* 主题的 .vp-features 是 flex（flex-basis:30% + max-width:30%），
- * grid 属性对它无效——要 3 列得把容器换成 grid 并清掉子项的 flex/max-width。 */
+/* 主题的 .vp-features 是 flex（flex-basis:30% + place-content:stretch
+ * space-between）——一旦旧样式被缓存或 cascade 顺序变化，卡片会被甩到两侧、
+ * 中间裂开一条大空档。这里做**双保险**：容器强推 grid，子项同时按 flex
+ * 三分之一宽兜底（两种布局模型下都排成整齐等宽列），并用 !important 压过
+ * 主题同特异性规则。 */
 .vp-features {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
+  display: grid !important;
+  grid-template-columns: repeat(3, 1fr) !important;
+  gap: 18px !important;
+  place-content: initial !important;
 }
 
 @media (max-width: 1023px) {
-  .vp-features { grid-template-columns: repeat(2, 1fr); }
+  .vp-features { grid-template-columns: repeat(2, 1fr) !important; }
 }
 
 @media (max-width: 639px) {
-  .vp-features { grid-template-columns: 1fr; }
+  .vp-features { grid-template-columns: 1fr !important; }
 }
 
 .vp-feature {
-  flex: initial;
-  max-width: none;
+  flex: none !important;
+  width: auto !important;
+  max-width: none !important;
   background: var(--vp-c-bg-elv);
   border: 1px solid var(--vp-c-border);
   border-radius: 12px;

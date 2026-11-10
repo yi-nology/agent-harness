@@ -20,6 +20,9 @@ export default defineUserConfig({
     // 纯深色（旧站风格），不提供明暗切换
     colorMode: 'dark',
     colorModeSwitch: false,
+    // 关掉 changelog 挂件：它会在页面上浮出「commit/<hash>」胶囊（半截裁在
+    // 边缘），对读者是噪声——版本史看仓内 CHANGELOG，入口在参考区。
+    changelog: false,
     navbar: [
       { text: '介绍', link: '/guide/introduction.html' },
       { text: '设计初衷', link: '/guide/philosophy.html' },
