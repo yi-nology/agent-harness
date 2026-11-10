@@ -71,10 +71,16 @@
 /.guardx-work/
 /.*-work/
 
-# ── 站点生成产物 ──
-# make site / CI 的 pages 工作流从 README 生成的 GitHub Pages 输出。
-# 源码在 site/（build.py + template.html + style.css），产物是构建结果，不入库。
-/_site/
+# ── 站点（VuePress）──
+# 源码在 site/（docs/ 内容 + gen.mjs + .vuepress/config.js）；以下都是构建产物：
+# 依赖、输出目录、缓存，以及 gen.mjs 的生成页（每次构建重新生成——
+# 生成物入库就会没人重新生成，等于把「自动」改回「手抄」）。
+/site/node_modules/
+/site/docs/.vuepress/dist/
+/site/docs/.vuepress/.cache/
+/site/docs/.vuepress/.temp/
+/site/docs/reference/packages.md
+/site/docs/reference/pitfalls.md
 
 # ── 系统 ──
 .DS_Store

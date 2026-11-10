@@ -248,8 +248,8 @@ architecture-check: ## 架构治理门禁（域词污染红线 + 依赖方向）
 docsync: ## README 包表 ↔ 仓库实际（生产行数 / 外部依赖）一致性门禁
 	$(EXPORT) $(GOENV) go run ./cmd/docsync
 
-site: ## 生成 GitHub Pages 站点到 _site/（生成器 site/build.py，数字从 README / go.mod 读，不手抄）
-	python3 site/build.py . _site
+site: ## 构建 VuePress 文档站到 site/docs/.vuepress/dist（gen.mjs 先生成机器事实页，解析失败即退出）
+	cd site && (test -d node_modules || npm ci --no-audit --no-fund) && npm run docs:build
 
 # ── 仓库卫生门禁（issue #1 的修法②）────────────────────────────────
 # 这两条原先只挂在 ci.yml 上，于是本地 `make check` 跑不到——门禁要等推到远端

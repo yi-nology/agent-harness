@@ -1,15 +1,14 @@
 name: pages
 
-# 站点发布流水线：从 README / go.mod 生成介绍页，部署 GitHub Pages。
+# 站点发布流水线：VuePress 文档站从仓库事实生成并部署 GitHub Pages。
 #
 # 与 ci.yml 的分工同源：门禁判「内容合不合规」（make check），这里只负责
-# 「把合格的内容发出去」。站点上的每个数字都由 site/build.py 从 README 与
-# go.mod 读取（读不到即报错退出），所以触发条件就是这两个**输入**的变更——
-# 改了代码没改 README 的推送不必重新生成，数字不变。
+# 「把合格的内容发出去」。站点上的每个数字由 site/gen.mjs 从 README、go.mod、
+# architecture-policy.yaml、Makefile、docs/USAGE.md 读取（读不到即构建失败），
+# 所以触发条件就是这些**输入**的变更——改了无关代码的推送不必重新生成。
 #
-# 发布源 = GitHub Actions（build_type: workflow）。2026-11-11 起站点源码
-# 从 gh-pages 分支迁回 main 的 site/，gh-pages 分支冻结为历史归档，
-# 不再接收构建产物——线上站点是它迁走前的最后一版，只作对照。
+# 发布源 = GitHub Actions（build_type: workflow）。gh-pages 分支是历史归档
+# （2026-11-11 迁回 main 前的最后一版），不再接收构建产物。
 on:
   push:
     branches: [main]
@@ -18,6 +17,9 @@ on:
       - 'README.md'
       - 'go.mod'
       - 'go.sum'
+      - 'Makefile'
+      - 'architecture-policy.yaml'
+      - 'docs/USAGE.md'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -31,22 +33,32 @@ concurrency:
 
 jobs:
   build:
-    name: 生成站点（数字从 README / go.mod 读）
+    name: 生成站点（VuePress 构建，数字由 gen.mjs 从仓库读）
     # 钉 major.minor 与 ci.yml 同口径：迁移要显式升版，不随镜像标签悄悄换底座。
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
+      # Node 版本钉 24（LTS）：VuePress 2 要求 Node >= 18，取 LTS 不取 latest。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
       # 提前失败：Pages 未配置成「GitHub Actions」发布源时，报错落在构建这一步，
       # 而不是部署时给一个含糊的 404。
       - uses: actions/configure-pages@v6
 
-      - name: 生成 index.html（build.py 读不到数字即报错退出）
-        run: python3 site/build.py . _site
+      - name: 构建（gen.mjs 先生成机器事实页，解析失败即退出）
+        working-directory: site
+        run: |
+          npm ci --no-audit --no-fund
+          npm run docs:build
 
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: _site
+          path: site/docs/.vuepress/dist
 
   deploy:
     name: 部署 GitHub Pages

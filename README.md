@@ -12,7 +12,7 @@
 > - **[docs/USAGE.md](docs/USAGE.md) = 怎么接、接错了会怎样** ← 宿主开发者从这儿开始
 > - **[docs/AI-GUIDE.md](docs/AI-GUIDE.md) = 怎么改、会被哪条门禁拦** ← 要动这个仓的 AI 代理从这儿开始
 > - [AGENTS.md](AGENTS.md) = 在本仓干活的工作纪律
-> - **[项目主页](https://yi-nology.github.io/agent-harness/)** = 介绍页（面向访客的精简视图）
+> - **[文档站](https://yi-nology.github.io/agent-harness/)** = 介绍 / 设计初衷 / 怎么用 / 能力 / 参考（VuePress，源码在 `site/`）
 
 > **全部文档一览**（`docs/` 下标着**历史快照**的那些记录当时的判断与踩坑，
 > 不是当前事实；当前事实一律以本文 + 门禁 + 源码为准）：
@@ -554,29 +554,34 @@ goroutine 怎么起、回调怎么声明、errors 怎么包），没有一条查
 3. **测试夹具用合成数据。** 夹具是契约示例，示例带领域味等于把契约钉死在
    某个领域上。
 
-## 项目主页（GitHub Pages）
+## 文档站（GitHub Pages · VuePress）
 
 **[yi-nology.github.io/agent-harness](https://yi-nology.github.io/agent-harness/)**
 
-面向访客的精简介绍页：定位、边界、特性、门禁、包清单、快速开始。
+**VuePress 文档站**：介绍、设计初衷、怎么用（接入路线图 + 最小示例）、能力详解（九组）、
+门禁体系、坑速查、包清单与机器事实。
 
-**站点源码在本仓 [`site/`](site/)**（`build.py` + `template.html` + `style.css`），
+**站点源码在本仓 [`site/`](site/)**（`docs/` 内容 + `gen.mjs` + `.vuepress/config.js`），
 发布走 [`.github/workflows/pages.yml`](.github/workflows/pages.yml)（`build_type: workflow`）：
-push 到 main 且 `site/`、`README.md`、`go.mod`、`go.sum` 有变更时，CI 自动生成并部署。
+push 到 main 且站点内容或其**事实输入**（`README.md` / `go.mod` / `Makefile` /
+`architecture-policy.yaml` / `docs/USAGE.md`）有变更时，CI 自动构建并部署。
 
-**站点上的每个数字都从本 README 与 `go.mod` 生成，不手抄。** 本地生成：
+本地构建：
 
 ```bash
-make site    # = python3 site/build.py . _site
+make site     # = cd site && npm ci && npm run docs:build（开发预览：npm run docs:dev）
 ```
 
-理由与本仓其它纪律同源：**手抄一遍就等于多一份会静默失真的真相**。包清单、生产行数、
-第一方依赖版本都从 README 与 `go.mod` 读，读不到就报错退出（不静默填默认值）。
-CI 在每次相关变更后重跑生成，故线上站点不会因 README 改了而失真。
+**站点上的每个数字都不手抄。** 生成器 `site/gen.mjs` 在每次构建前把 README（包表 /
+工程底座）、`go.mod`（依赖版本）、`architecture-policy.yaml`（规则清单）、`Makefile`
+（覆盖率门槛）、`docs/USAGE.md`（坑速查表）抽成站点页——**解析不到即构建失败**，
+不静默填默认值。生成页不入库（入库就会没人重新生成，等于把「自动」改回「手抄」）。
+理由与本仓其它纪律同源：**手抄一遍就等于多一份会静默失真的真相**。
 
 > **迁移记录（2026-11-11）**：站点原先住在 `gh-pages` 独立分支（`build_type: legacy`），
-> 生成器与源码不在 main 里——恰好违反本仓「单一真相」的纪律。现迁回 `site/`，
-> `gh-pages` 分支**冻结为历史归档**（迁走前的最后一版，只作对照，不再接收产物）。
+> 生成器与源码不在 main 里——恰好违反本仓「单一真相」的纪律。当日迁回 `site/`
+> 并升级为 VuePress 文档站；`gh-pages` 分支**冻结为历史归档**（迁走前的最后一版，
+> 只作对照，不再接收产物）。
 
 ## 快速开始
 
