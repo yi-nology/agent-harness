@@ -17,6 +17,9 @@ export default defineUserConfig({
     editLink: false,
     lastUpdated: false,
     contributors: false,
+    // 纯深色（旧站风格），不提供明暗切换
+    colorMode: 'dark',
+    colorModeSwitch: false,
     navbar: [
       { text: '介绍', link: '/guide/introduction.html' },
       { text: '设计初衷', link: '/guide/philosophy.html' },

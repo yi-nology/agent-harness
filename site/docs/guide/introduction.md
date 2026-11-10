@@ -56,11 +56,25 @@ title: 介绍
 ## 在依赖链上的位置
 
 ```
-oekit（基础库：errors / logx / concurrency / shellx …）
-  └─→ oagentkit（agent 原语：invoke / guardx / toolgate / procx …）
-        └─→ agent-harness（编排内核：本仓）
-              └─→ 宿主产品（业务、领域、拓扑、文案）
+oekit（基础库）→ oagentkit（agent 原语）→ agent-harness（编排内核：本仓）→ 宿主产品
 ```
+
+两个上游都是公开的 Go 模块矩阵，各有文档站，值得一并了解：
+
+**[oekit](https://oekit.github.io/) — Open Easy Kit**（开源 · 易用 · 工具集合）
+一套按「框架耦合分层」组织的 Go 模块矩阵：37 个独立发版单元（微工具库、日志/追踪/
+指标门面、注册发现、HTTP/Kitex 框架生态、应用引导），依赖严格自底向上，每仓独立
+SemVer + 独立 CI。本仓站在它上面的是三块基础件：`oekit/pkg`（errors / stringx /
+encoding 等微工具）、`oekit/concurrency`（GoSafe 等并发原语）、`oekit/logx`（日志门面）。
+
+**[oagentkit](https://oagentkit.github.io/) — Open Agent Kit**（Agent / LLM 编排工具链
+模块矩阵）13 个独立发版的 Go 模块：模型客户端、MCP 工具池、技能库、知识检索、
+Agent 编排、运行时基础设施；与 oekit 是姊妹项目（依赖其 pkg / concurrency / logx），
+同为「框架耦合分层」组织。本仓的判定语义核心多落在它上面——派发守卫核心在
+`oagentkit/agent/dispatch`、判定环与沙箱在 `oagentkit/guardx`（invoke / sandbox /
+injectband）、审计门在 `oagentkit/toolgate`、进程原语在 `oagentkit/runtime/procx`；
+本仓的门面包（`dispatch` / `policy` / `reminder` / `toolfail` / `sandbox`）只做
+调用面转发，核心实现在上游——**跨宿主必须一致的判定语义不放两份实现**。
 
 - **独立发版、版本化引入、零 replace**：`go.mod` 含 replace 即门禁红（公开 module，
   replace 会让下游 `go get` 整体失败）。本地多仓并行开发走 `make devlink` 的 workspace。

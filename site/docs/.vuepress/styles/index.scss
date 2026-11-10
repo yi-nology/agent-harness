@@ -1,0 +1,108 @@
+/* ── 视觉回退：深色 GitHub 风（布局不变，只换颜色与风格）────────────────
+ * 取色板逐值来自迁站前的旧站 style.css：#0d1117 底 / #58a6ff 蓝 /
+ * #a371f7 紫渐变 / 毛玻璃顶栏 / 径向光晕 hero。默认主题的调色板全部走
+ * --vp-c-* 变量，这里整体压成旧站的深色一套；明暗开关关掉（旧站是纯深色）。
+ */
+
+:root,
+[data-theme='dark'] {
+  /* 品牌与强调 */
+  --vp-c-accent: #58a6ff;
+  --vp-c-accent-bg: #58a6ff;
+  --vp-c-accent-hover: #79b8ff;
+  --vp-c-accent-text: #06121f;
+  --vp-c-accent-soft: rgb(88 166 255 / 14%);
+
+  /* 背景三层：底 / 交替 / 浮层 */
+  --vp-c-bg: #0d1117;
+  --vp-c-bg-alt: #11161f;
+  --vp-c-bg-elv: #161b26;
+
+  /* 文字三级 */
+  --vp-c-text: #e6edf3;
+  --vp-c-text-mute: #9aa7b8;
+  --vp-c-text-subtle: #6b7787;
+
+  /* 描边 */
+  --vp-c-divider: #1f2634;
+  --vp-c-border: #262e3d;
+  --vp-c-border-hard: #303b4d;
+  --vp-c-shadow: rgb(0 0 0 / 40%);
+
+  /* 控件底 */
+  --vp-c-control: rgb(88 166 255 / 8%);
+  --vp-c-control-hover: rgb(88 166 255 / 16%);
+  --vp-c-control-disabled: #1c2330;
+
+  /* 顶栏/侧栏底 */
+  --vp-navbar-c-bg: rgb(13 17 23 / 82%);
+  --vp-sidebar-c-bg: #11161f;
+
+  --font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+}
+
+/* 顶栏：毛玻璃 + 细底线（旧站 topbar 同款） */
+.vp-nav,
+.vp-navbar {
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+/* 首页 hero：径向光晕 + 标题渐变字（旧站 hero/.grad 同款） */
+.vp-hero {
+  background:
+    radial-gradient(1100px 460px at 18% -12%, rgb(88 166 255 / 16%), transparent 62%),
+    radial-gradient(900px 420px at 88% -6%, rgb(163 113 247 / 13%), transparent 60%);
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+#main-title {
+  background: linear-gradient(96deg, #58a6ff, #a371f7 78%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* 特性卡：浮层面 + 描边 + 圆角（旧站 card 同款） */
+.vp-feature {
+  background: var(--vp-c-bg-elv);
+  border: 1px solid var(--vp-c-border);
+  border-radius: 12px;
+  padding: 22px 24px;
+}
+
+/* 按钮：主按钮蓝底深字，次按钮描边（旧站 .btn/.btn-ghost 同款） */
+.vp-hero-action-button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-weight: 600;
+}
+.vp-hero-action-button.primary {
+  background: #58a6ff;
+  color: #06121f;
+}
+.vp-hero-action-button.secondary {
+  background: transparent;
+  border-color: var(--vp-c-border);
+  color: var(--vp-c-text);
+}
+
+/* 正文容器里的卡片/容器面同色系 */
+.custom-block.tip,
+.custom-block.warning,
+.custom-block.danger,
+.custom-block.info,
+.custom-block.note {
+  border-radius: 10px;
+}
+
+/* 表格奇偶与描边走深色一套 */
+.vp-doc table {
+  border-color: var(--vp-c-border);
+}
+.vp-doc tr:nth-child(2n) {
+  background-color: var(--vp-c-bg-alt);
+}
