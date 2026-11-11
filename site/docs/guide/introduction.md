@@ -4,6 +4,8 @@ title: 介绍
 
 # 介绍：这是什么
 
+> 🤖 本页要点已收录进 [llms.txt](https://yi-nology.github.io/agent-harness/llms.txt)——AI 代理可直接读取。
+
 **agent-harness 是多智能体编排的通用内核。** 一句话定位：**编排是代码，LLM 只做单环节**——
 它只提供确定性编排的**机制面**，**不认识任何领域概念**。
 
@@ -17,18 +19,50 @@ title: 介绍
 - **上下文预算**（`budget` / `spill` / `offload`）：有限的上下文窗口怎么不被撑爆；
 - **执行沙箱**（`ptc` / `sandbox`）：模型写程序、沙箱执行、原始数据不过模型面。
 
-## 什么不属于本仓
+## 机制 vs 资产：什么不属于本仓
 
-| ✓ 有（机制，与领域无关） | ✗ 没有（资产，属于宿主） |
-|---|---|
-| 报告契约 + 容错解析 + 白名单校验 + 渲染 | 专家包 / 专家清单 / 技能 |
-| 编排运行契约（宿主状态的唯一边界） | 诊断链 / 编排图（拓扑内容） |
-| 环节状态机、续跑契约、终态独占提交闸 | 运维词表、目标类型、领域字段语义 |
-| 工具披露、守卫合成、失败分类、派发守卫 | 审批风险分级与处置动作 |
-| 上下文计量、溢出、外置 | 摘要生成的具体实现（走 `Summarizer` 接口） |
-| 出站 SSRF 守卫、个人信息脱敏 | IM 通道 / 通知模板 / 品牌文案 |
-| 程序化工具编排沙箱、命令级判据 | 工具实现（MCP server）、工具描述文案 |
-| 副作用至多一次、重试决策 | 幂等键的存储实现（Redis / PG / etcd） |
+<div class="diagram">
+<svg viewBox="0 0 720 356" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <text x="30" y="24" font-size="12.5" fill="#3fb950">✓ 有（机制，与领域无关）</text>
+  <text x="392" y="24" font-size="12.5" fill="#f85149">✗ 没有（资产，属于宿主）</text>
+  <g font-size="10.5" fill="#e6edf3">
+    <rect x="30" y="38" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="180" y="57" text-anchor="middle">报告协议：容错解析 · 白名单校验 · 渲染</text>
+    <rect x="30" y="74" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="180" y="93" text-anchor="middle">编排运行契约（宿主状态的唯一边界）</text>
+    <rect x="30" y="110" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="180" y="129" text-anchor="middle">环节状态机 · 续跑契约 · 终态独占闸</text>
+    <rect x="30" y="146" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="180" y="165" text-anchor="middle">工具披露 · 守卫合成 · 失败分类 · 派发守卫</text>
+    <rect x="30" y="182" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="180" y="201" text-anchor="middle">上下文计量 · 溢出 · 大对象外置</text>
+    <rect x="30" y="218" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="180" y="237" text-anchor="middle">出站 SSRF 守卫 · 个人信息脱敏</text>
+    <rect x="30" y="254" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="180" y="273" text-anchor="middle">程序化编排沙箱 · 命令级判据</text>
+    <rect x="30" y="290" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="180" y="309" text-anchor="middle">副作用至多一次 · 重试处置决策</text>
+    <rect x="392" y="38" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="542" y="57" text-anchor="middle">专家包 · 专家清单 · 技能</text>
+    <rect x="392" y="74" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="542" y="93" text-anchor="middle">诊断链 · 编排图（拓扑内容）</text>
+    <rect x="392" y="110" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="542" y="129" text-anchor="middle">运维词表 · 目标类型 · 领域字段语义</text>
+    <rect x="392" y="146" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="542" y="165" text-anchor="middle">审批风险分级与处置动作</text>
+    <rect x="392" y="182" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="542" y="201" text-anchor="middle">摘要生成的具体实现（走 Summarizer 接口）</text>
+    <rect x="392" y="218" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="542" y="237" text-anchor="middle">IM 通道 · 通知模板 · 品牌文案</text>
+    <rect x="392" y="254" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="542" y="273" text-anchor="middle">工具实现（MCP server）· 工具描述文案</text>
+    <rect x="392" y="290" width="300" height="30" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="542" y="309" text-anchor="middle">幂等键的存储实现（Redis / PG / etcd）</text>
+  </g>
+  <text x="30" y="344" font-size="10.5" fill="#9aa7b8">判定口诀：「这个包需要知道自己在给谁干活吗？」需要 → 属于宿主。</text>
+</svg>
+</div>
+<p class="diagram-cap">左列全部「与领域无关」，右列全部「换宿主就变」——这条线由门禁守，不由 review 守。</p>
 
 判定口诀：**「这个包需要知道自己在给谁干活吗？」需要 → 属于宿主。**
 
