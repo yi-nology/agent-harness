@@ -1,6 +1,45 @@
-# agent-harness CHANGELOG
+# goagent-kernel CHANGELOG
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
+> （v0.31.0 起项目由 `agent-harness` 更名 `goagent-kernel`；历史条目保留旧名不改写。）
+
+## [v0.31.0] — 2026-11-11
+
+### BREAKING：项目整体更名 `agent-harness` → `goagent-kernel`
+
+旧名在语境里三头撞车（实测搜索前排全是本仓明确不做的东西）：① agent harness =
+模型外面的运行时外壳（Codex/DeepSeek harness 语义）；② harness = 评测工具
+（lm-evaluation-harness 语义）；③ harness.io 占着词。名字把读者引向错误预期，
+故整体更名：
+
+* **GitHub 仓**：`yi-nology/agent-harness` → `yi-nology/goagent-kernel`（旧 URL /
+  旧 remote 自动 301）；
+* **Go module path**：`github.com/yi-nology/agent-harness` → `…/goagent-kernel`——
+  编译期身份，下游 import 机械替换 + `go mod tidy`（迁移指引见 README
+  「下游升级须知」v0.31.0 行）；**API 逐字不变**，调用面零改动；
+* **文档站**：`yi-nology.github.io/agent-harness/` → `yi-nology.github.io/goagent-kernel/`
+  （vuepress base 与站内绝对链接同步换；旧站 URL 不重定向）；
+* 仓内 94 个文件全局替换（import / 活文档 / 站点 / llms.txt 生成器）。
+  **历史不改写**：本 CHANGELOG 的历史条目与 docs/ 历史快照保留旧名；
+  门禁规则 ID（`harness-*`）为内部标识符，不在更名范围。
+
+另含两笔站点打磨（纯文档，无 API 影响）：介绍 / 设计初衷 / 怎么用三页
+图解化（六张手绘 SVG，「先看图再看字」），首页视觉升级（网格光晕 hero、
+流光渐变标题、编号特性卡、渐变描边横幅）。
+
+**安全地板抬升**：`go` 指令 1.27.3 → **1.27.4**——Go 官方 2026-11-10
+安全发布（1.27.4 / 1.26.11，修复标准库 CVE-2026-97033…97054）后，
+govulncheck 当天即报本仓命中其中 1 条，按家规**抬 `go` 指令**（依赖模块的
+`toolchain` 指令会被忽略，只有 go 指令顶得动下游工具链）。对下游是隐式
+breaking：`go mod tidy` 后 GOTOOLCHAIN 自动对齐。
+
+全量 `make check` 绿
+（更名批的字符串长度变化曾震碎 gofmt 对齐块，fmt-check 当场抓出）。
+
+* fix(security)!: go 指令 1.27.3 → 1.27.4——安全地板随 Go 2026-11-10 安全发布抬升（CVE-2026-97033…97054）
+* refactor!: 项目更名 agent-harness → goagent-kernel（BREAKING）
+* docs(site): 首页视觉再升级——网格光晕 hero + 流光标题 + 编号卡 + 渐变横幅
+* docs(site): 介绍/设计初衷/怎么用 三页图解化——用图代替文字降认知负担
 
 ## [v0.30.0] — 2026-11-11
 
