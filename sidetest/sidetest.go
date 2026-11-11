@@ -59,6 +59,30 @@
 //  20. release_keeps_intent           只放闸不撤销意图 ⇒ 仍不得重新执行
 //  21. abandon_requires_owner         放弃只认本次尝试的令牌
 //
+// 「持有者身份」一族三场景在 **holder.go**（v0.33.0 新增，判三项联查里
+// 令牌盖不住的那两项）：
+//
+//  22. holder_minted_by_store         持有者身份由存储铸造（非空、不重合）
+//  23. non_holder_rejected            偷到令牌的组件冒充持有者被拒（ErrNotHolder）
+//  24. resource_mismatch_rejected     A 资源的租约用于 B 资源被拒（ErrResourceMismatch）
+//
+// 「标记失败」一族一场景在 **markfail.go**（v0.33.0 新增，套件内置故障
+// 注入装饰器模拟存储侧不可用）：
+//
+//  25. mark_failure_blocks_acquire    标记写失败后同 Key 不得被授予执行权
+//     （意图必须还在挡着）
+//
+// 「重试安全三档」一族两场景在 **unsafe.go**（v0.33.0 新增，判 Unsafe 与
+// Unknown 在裁决后的分道）：
+//
+//  26. unsafe_resolve_stays_blocked   Unsafe 裁决「未生效」仍阻塞（ErrUnsafeNotRetryable）
+//  27. unsafe_force_retryable_explicit 显式决策（ForceRetryable）才放行
+//
+// 「对账占用」一族两场景在 **reconcile.go**（v0.33.0 新增，判对账权认领）：
+//
+//  28. reconcile_taken_while_active   占用未过期时第二个对账者被拒；裁决清除占用
+//  29. reconcile_reentrant_after_expiry 占用过期可重新认领；过期 ≠ 放行
+//
 // # 时钟
 //
 // 租约过期需要可控时钟，否则只能靠 sleep（慢且 flaky）。
@@ -119,7 +143,7 @@ type ClockedStore interface {
 // 实现的后台资源由 factory 经 t.Cleanup 清理。
 type Factory func(t *testing.T, clock *FakeClock) ClockedStore
 
-// Run 跑完整契约场景（8 个子测试，任何一个失败即实现违反契约）。
+// Run 跑完整契约场景（29 个子测试，任何一个失败即实现违反契约）。
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
 
@@ -145,6 +169,14 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("abandon_allows_retry", func(t *testing.T) { runAbandonAllowsRetry(t, factory) })
 	t.Run("release_keeps_intent", func(t *testing.T) { runReleaseKeepsIntent(t, factory) })
 	t.Run("abandon_requires_owner", func(t *testing.T) { runAbandonRequiresOwner(t, factory) })
+	t.Run("holder_minted_by_store", func(t *testing.T) { runHolderMintedByStore(t, factory) })
+	t.Run("non_holder_rejected", func(t *testing.T) { runNonHolderRejected(t, factory) })
+	t.Run("resource_mismatch_rejected", func(t *testing.T) { runResourceMismatchRejected(t, factory) })
+	t.Run("mark_failure_blocks_acquire", func(t *testing.T) { runMarkFailureBlocksAcquire(t, factory) })
+	t.Run("unsafe_resolve_stays_blocked", func(t *testing.T) { runUnsafeResolveStaysBlocked(t, factory) })
+	t.Run("unsafe_force_retryable_explicit", func(t *testing.T) { runUnsafeForceRetryableExplicit(t, factory) })
+	t.Run("reconcile_taken_while_active", func(t *testing.T) { runReconcileTakenWhileActive(t, factory) })
+	t.Run("reconcile_reentrant_after_expiry", func(t *testing.T) { runReconcileReentrantAfterExpiry(t, factory) })
 }
 
 // newStore 构造被测实现并注入假时钟。

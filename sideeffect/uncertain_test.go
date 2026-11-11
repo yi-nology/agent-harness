@@ -163,8 +163,10 @@ func TestReconcileAppliedRecordsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("对账不该失败: %v", err)
 	}
-	if outcome != OutcomeApplied {
-		t.Fatalf("裁决「已生效」应返回 applied，实得 %v", outcome)
+	// v0.33.0 起裁决「已生效」的返回值钉为 replayed + 既有结果——
+	// 此刻就是「取回既有结果」，与之后的 Acquire 同一口径（契约第 1 条）。
+	if outcome != OutcomeReplayed {
+		t.Fatalf("裁决「已生效」应返回 replayed，实得 %v", outcome)
 	}
 
 	// 之后同一 Key ⇒ 重放既有结果，动作体不再执行。

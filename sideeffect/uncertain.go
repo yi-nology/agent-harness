@@ -1,6 +1,8 @@
 package sideeffect
 
 import (
+	"time"
+
 	"github.com/oekit/pkg/errors"
 )
 
@@ -31,6 +33,32 @@ var ErrOutcomeUnknown = errors.New("副作用结果未知：需对账裁决后�
 // 与「裁决过程本身出了问题」——两者的处置完全不同。
 var ErrNotUncertain = errors.New("该 Key 不处于结果未知态")
 
+// ErrUnsafeNotRetryable 对 RetrySafetyUnsafe 的动作，「未生效」的裁决
+// **不足以**重新打开施加的门（v0.33.0 起）。
+//
+// # 为什么 Unknown 与 Unsafe 必须在判据上分开，而不只是注释里分开
+//
+// 三档重试安全性里，Unknown（未声明）与 Unsafe（明确不可重试）此前在
+// **行为上完全相同**：都走未知态、都靠对账、对账说「未生效」就都放行。
+// 「不可重试」只是注释里的一句意图——判据上它不存在。
+//
+// 但这两档的含义天差地别：Unknown 是「我不知道下游去不去重」——对账
+// 查明「没生效」后重试，风险可接受；Unsafe 是「我明确知道它不幂等」——
+// 「没生效」的结论来自宿主的一次**查询**，查询本身可能出错（查错对象、
+// 读到旧值、并发窗口），查错的代价就是重复施加。对后者，放行必须是
+// **显式决策**（Resolution.ForceRetryable），不能是「对账流程跑完了」
+// 的自然结果。
+//
+// 遇到它怎么办：要么承认这次查询不可信、重新对账；要么确认「未生效」
+// 结论可靠并接受风险后，带着 ForceRetryable=true 重新裁决。
+var ErrUnsafeNotRetryable = errors.New("动作声明为不可重试：未生效的裁决不解除阻塞，需显式决策")
+
+// ErrReconcileTaken 该 Key 已有未过期的对账占用（别人正在对账）。
+//
+// 同一时刻至多一个对账者。等占用过期后可重新认领（BeginReconcile 可重入）
+// ——对账者死亡不永久占住这个 Key。
+var ErrReconcileTaken = errors.New("该 Key 已有对账占用：同一时刻至多一个对账者")
+
 // RetrySafety 动作在**施加失败**后的重试安全性声明。
 //
 // # 为什么它必须是宿主声明而不是内核推断
@@ -60,9 +88,13 @@ const (
 
 	// RetrySafetyUnsafe 该动作在施加失败后**不可重试**：重试会重复施加。
 	//
-	// 与 RetrySafetyUnknown 行为相同（都走未知态 + 对账），区别只在**意图**
-	// 与审计口径：前者是「我明确知道不幂等」，后者是「我没说」。
-	// 两者都不放行重试——这条纪律不因声明与否而松动。
+	// v0.33.0 起它与 RetrySafetyUnknown 在**判据上**分开（此前只是注释里
+	// 的意图差别）：施加失败后的路径相同（都转未知态、都需对账），但
+	// **裁决后分道**——Unknown 裁决「未生效」即重新可执行；Unsafe 的
+	// 「未生效」裁决**不解除阻塞**（ErrUnsafeNotRetryable），必须
+	// Resolution.ForceRetryable 的显式决策才放行。理由见该哨兵的注释：
+	// 「不可重试」若只是注释，改一行分支就能让它静默变回「可重试」——
+	// 而没有任何用例变红。
 	RetrySafetyUnsafe
 )
 
@@ -91,10 +123,33 @@ type Resolution struct {
 	// true  → 闸把该 Key 记为已完成并留存 Result：后续同一 Key 的 Acquire
 	//         返回 OutcomeReplayed + 该结果（重放而不是重做）。
 	// false → 确认动作**未生效**：清除未知标记，该 Key 重新可被执行。
+	//         RetrySafetyUnsafe 的动作例外——未生效不解除阻塞，见
+	//         ForceRetryable 与 ErrUnsafeNotRetryable。
 	Applied bool
 	// Result 已生效时的动作结果（Applied=false 时忽略）。
 	Result Result
 	// Reason 裁决依据（留痕）。事后复盘时，「凭什么判定已生效」比
 	// 「判定结果是什么」更有价值——前者能定位判据的薄弱处。
 	Reason string
+	// ForceRetryable 对 RetrySafetyUnsafe 的动作，**显式决策**「接受
+	// 「未生效」结论、重新允许施加」。
+	//
+	// 只有 Applied == false 且动作声明为 Unsafe 时它才有意义：没有它，
+	// 裁决被拒（ErrUnsafeNotRetryable），Key 保持阻塞。它是宿主在确认
+	// 「对账结论可靠、重试风险已评估」后的**签字**，不是内核的默认放行。
+	// 对 Unknown / Safe 动作本字段被忽略（它们本来就不阻塞）。
+	ForceRetryable bool
+}
+
+// Reconcile 一次对账认领（Store.BeginReconcile 的产出）。
+//
+// 它回答的是「这个 Key 的对账权归谁、到什么时候」——对账是跨进程查下游的
+// 慢动作，查询期间别人不得重复查；认领过期后可被重新认领，对账者死亡
+// 不永久占住这个 Key。与 Lease 不是一回事：Lease 管施加侧的资源独占，
+// Reconcile 管裁决侧的对账独占。
+type Reconcile struct {
+	// Holder 认领者身份（存储侧铸造，语义同 Lease.Holder）。
+	Holder string
+	// ExpiresAt 认领到期时刻（存储时钟口径）。到期后占用失效，可被重新认领。
+	ExpiresAt time.Time
 }
