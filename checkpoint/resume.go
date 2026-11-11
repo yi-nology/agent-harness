@@ -85,12 +85,17 @@ type Plan struct {
 
 // Blocked 该计划是否含内核**拒绝自动决定**的异常。
 //
-// 唯一一种：快照说这次运行已终结，图里却还有未完成步骤。
-// 内核不会擅自重开一个已终结的运行——是否重开是宿主的决定。
+// 两种：
+//
+//   - AnomalyCompleteWithPending：快照说这次运行已终结，图里却还有未完成步骤。
+//     内核不会擅自重开一个已终结的运行——是否重开是宿主的决定。
+//   - AnomalySideEffectConflict（v0.33.0，issue #90）：快照说某步已完成，
+//     闸侧却说该步的副作用未结算——快照不可信，先对账再重建（Reconcile）。
+//
 // 其余异常都不阻断：内核已按最保守解释给出可执行计划。
 func (p Plan) Blocked() bool {
 	for _, a := range p.Anomalies {
-		if a.Kind == AnomalyCompleteWithPending {
+		if a.Kind == AnomalyCompleteWithPending || a.Kind == AnomalySideEffectConflict {
 			return true
 		}
 	}

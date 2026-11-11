@@ -23,6 +23,22 @@ func (p *Projector) apply(ev eventbus.Event) {
 		p.openTool(ev)
 	case eventbus.EventToolResult:
 		p.closeTool(ev)
+	case eventbus.EventSideEffectGranted:
+		openSideEffect(p, ev)
+	case eventbus.EventSideEffectCompleted:
+		settleSideEffect(p, ev, SideEffectCompleted)
+	case eventbus.EventSideEffectAbandoned:
+		settleSideEffect(p, ev, SideEffectAbandoned)
+	case eventbus.EventSideEffectUncertain:
+		uncertainSideEffect(p, ev)
+	case eventbus.EventSideEffectResolved:
+		resolveSideEffect(p, ev)
+	case eventbus.EventSideEffectReplayed:
+		pointSideEffect(p, ev, SideEffectReplayed)
+	case eventbus.EventSideEffectContended:
+		pointSideEffect(p, ev, SideEffectContended)
+	case eventbus.EventCheckpointCommitted:
+		checkpointCommitted(p, ev)
 	default:
 		// 其余事件类型不构成轨迹行（它们是过程的旁证，不是过程段本身）——
 		// 不是缺口，不记。
