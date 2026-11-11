@@ -121,6 +121,13 @@ func (s Spec) Validate() error {
 	return nil
 }
 
+// errEnvCannotEnforce 「禁网」这一档无法用环境变量兑现。
+//
+// 单独一个哨兵（而不是内联报错文案）：调用方需要区分「这个档位根本不能靠
+// 环境变量兑现」（是声明写错了，还是执行环境缺能力）与「变量没下对」
+// （拼装问题）——两者的处置完全不同。
+var errEnvCannotEnforce = errors.New("egress: 禁网无法从环境变量验证（必须由带能力声明的后端强制）")
+
 // proxyVars 是代理类环境变量的完整清单（大小写各一份：不同运行时的读法不同）。
 var proxyVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"}
 
@@ -163,25 +170,20 @@ func (s Spec) Env(base []string) ([]string, error) {
 // 这是本包存在的理由——**声明与实际的对照**。env 由调用方在真正 spawn 之前取到，
 // 判不过即不执行（而不是执行完再补一句「好像没生效」）。
 //
+// # 兑现强度看 VerifyVerdict
+//
+// 本函数只给「成立/不成立」。「以什么强度成立」（建议型 vs 强制型）看
+// VerifyVerdict——环境变量兑现出来的**永远是建议型**，这一点不该只写在
+// 注释里，而该出现在判据返回值上。
+//
 // 两项判据（绕过名单 / 代理变量）各只有一个实现、各覆盖全部大小写变体——
 // 「同一机制两份实现必然漂移」的教训就来自这里：绕过名单曾按 Bypass 空不空
 // 走两份只有大小写口径不同的实现，小写 no_proxy=* 从只查大写的那份底下绕过
 // （issue #63）；代理变量曾判「六个里命中一个就算兑现」，只配了 HTTP_PROXY
 // 的环境验成 enforced 而 HTTPS 裸奔（issue #62）。
 func (s Spec) Verify(env map[string]string) error {
-	if err := s.Validate(); err != nil {
-		return err
-	}
-	switch s.Mode {
-	case ModeUnrestricted:
-		return nil
-	case ModeDenied:
-		return errors.New("egress: 禁网无法从环境变量验证（必须由带能力声明的后端强制）")
-	}
-	if err := s.verifyBypass(env); err != nil {
-		return err
-	}
-	return s.verifyProxyVars(env)
+	_, err := s.VerifyVerdict(env)
+	return err
 }
 
 // bypassVars 绕过名单变量的两个大小写变体：客户端读哪个不可知（issue #42 起
@@ -276,20 +278,12 @@ func isProxyVar(kv string) bool {
 //
 // 未实现 Enforcer 的后端一律判**不满足**：它没有做出任何声明，
 // 而「没声明」不等于「不受限」——在安全判据里，沉默必须按最弱处理。
+//
+// # 兑现强度看 SatisfiedVerdict
+//
+// 本函数只给「成立/不成立」；「以什么强度成立」（后端强制 vs 仅环境变量建议）
+// 看 SatisfiedVerdict——判据同一份，差别只在返回值多带了强度。
 func (s Spec) SatisfiedBy(provider any) error {
-	if err := s.Validate(); err != nil {
-		return err
-	}
-	if s.Mode == ModeUnrestricted {
-		return nil
-	}
-	enf, ok := provider.(Enforcer)
-	if !ok {
-		return errors.Errorf("egress: 后端未声明出口能力，无法兑现 %s（沉默按最弱处理）", s.Mode)
-	}
-	got := enf.Egress()
-	if !got.Satisfies(s.Mode) {
-		return errors.Errorf("egress: 后端只能兑现 %s，低于要求的 %s", got, s.Mode)
-	}
-	return nil
+	_, err := s.SatisfiedVerdict(provider)
+	return err
 }
