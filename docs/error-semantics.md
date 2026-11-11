@@ -151,6 +151,10 @@
 | `ErrFenceStale` | 栅栏令牌过期，或本次尝试已被存储侧转入未知态——这把钥匙不再有效 | 下游拒收迟到写入是对的；持有者停止使用旧租约，重新走接管/重试流程（对账） |
 | `ErrOutcomeUnknown` | 该 Key 处于「结果未知」态 | **对账**：先裁决（确认已生效/未生效）才能再动这个 Key；默认挑「没生效」＝默认重复施加 |
 | `ErrNotUncertain` | 对不处于未知态的 Key 发起裁决 | 按裁决对象的实际状态处置：可能已正常完成，也可能压根没失败过；排查调用时序 |
+| `ErrNotHolder` | 持有者身份不匹配——出示的凭据不是本次授予铸造的那份（令牌经下游流转后被人冒用） | 放弃本次操作并排查凭据流转链；与 `ErrFenceStale` 的分工：那个是「这一代已过去」，这个是「代或许还在，出示者不对」 |
+| `ErrResourceMismatch` | 租约与动作的资源不一致（A 资源的租约被拿去做 B 资源的操作） | 修声明：Complete/Renew/MarkUncertain 的 act 与 lease 必须同资源，两个真相等于没有真相 |
+| `ErrReconcileTaken` | 该 Key 已有未过期的对账占用（同一时刻至多一个对账者） | 等待或放弃：占用过期后可重新认领（BeginReconcile 可重入）；不要并发抢对账 |
+| `ErrUnsafeNotRetryable` | 动作声明为不可重试（Unsafe）——对账判「未生效」也不解除阻塞 | 二选一：承认查询不可信重新对账；或确认结论可靠并接受风险后，带 `ForceRetryable=true` **显式**重新裁决 |
 
 ### spill
 
