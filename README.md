@@ -359,6 +359,21 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 > `make check` 需要 `golangci-lint`（CI 钉 v2.14.0）；未安装时该目标**明确报错退出**，
 > 不静默跳过——没人跑的门禁等于没有门禁。
 
+### 提交与合并
+
+`main` 有分支保护：**必须走 PR**，且必须通过两条检查——
+
+- `fmt + vet + lint + test + cover-gate(全局+逐包) + vuln + race + crossbuild + archcheck + repo 卫生`（Linux 综合门禁）
+- `windows (真跑测试)`（Windows 上真执行，不是只编译）
+
+两条都是 strict（需与 `main` 同步）。管理员保留 bypass 通道（应急直推），
+但**门禁本体全在 `make check` 里**——本地能过，CI 就该过；CI 红了先看日志分清
+「真违规」与「基建抖动」，不要绕过。
+
+> 这条保护是 2026-11-11 开的（issue #77）。此前 `main` 完全无保护，直推即合，
+> CI 通过与否与能不能合无关——于是「CI 是绿的」不再等于「能合」，
+> 门禁的失败形态又变回了「变绿」。
+
 ## 本地多仓并行开发
 
 本仓处在 `oagentkit` / `oekit` 矩阵里，改本仓时经常要同时改上游仓（如 guardx）。
