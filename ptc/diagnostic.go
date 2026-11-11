@@ -31,8 +31,10 @@
 package ptc
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/dop251/goja"
 	"github.com/oekit/pkg/errors"
@@ -198,10 +200,112 @@ func suggestionsFor(kind string) []string {
 	}
 }
 
-// describePosition 渲染位置，供人读的错误串用。
-func describePosition(p Position) string {
+// Describe 位置的模型可读渲染：「第 N 行第 M 列」（1-based）。
+// 位置不可得（零值）时返回空串——调用方据此省略位置段，而不是渲染出
+// 「第 0 行」这种假位置（见本文件头：假位置比没有位置更坏）。
+func (p Position) Describe() string {
 	if !p.Valid() {
 		return ""
 	}
-	return "（第 " + strconv.Itoa(p.Line) + " 行第 " + strconv.Itoa(p.Column) + " 列）"
+	return "第 " + strconv.Itoa(p.Line) + " 行第 " + strconv.Itoa(p.Column) + " 列"
+}
+
+// describePosition 渲染位置，供人读的错误串用（括注形态：「（第 N 行第 M 列）」）。
+func describePosition(p Position) string {
+	if d := p.Describe(); d != "" {
+		return "（" + d + "）"
+	}
+	return ""
+}
+
+// Describe 把结果渲染为**模型可读**的诊断文本（宿主回喂面）。
+//
+// 本包的调用方是模型：失败只回一个 ErrorKind 类别串，模型不知道改哪、怎么改。
+// 本方法把 Result 的诊断面折成一段纯文本，供宿主在「程序修复回喂环」里原样
+// 塞回下一轮程序合成（诊断措辞与 harness 的分类口径单源，宿主不再自写渲染——
+// argus internal/qa 的 describePtcFailure 是首笔收编）。
+//
+// 各段：
+//   - 失败：类别、错误原文、位置（可得时才有此行，见 Position）、修复建议、
+//     调用链摘要（哪些绑定调用失败——归因「程序的问题还是工具的问题」的账面）；
+//   - 成功但 Value=="null"：点破「没有 return 值」（undefined 折算为 null 是
+//     本包契约）——「忘写 return」是模型侧高频缺陷，不点破它会把白跑当完成；
+//   - 其余成功：一行摘要。
+//
+// 建议优先取 Result.Suggestions（Run 已按 ErrorKind 填好，宿主可增补自己的
+// 上下文建议）；为空时按 ErrorKind 补查建议表——手工构造的 Result 也能渲染出
+// 完整建议，两个来源同一张表，措辞不会漂移。
+//
+// 文本面向模型，不面向运维：预算余量、耗时等沙盘事实不在其中（Result 字段
+// 本身就是审计面）。本方法不携带宿主策略（是否重试、是否回退），那是调用方
+// 的裁决。
+func (r Result) Describe() string {
+	var b strings.Builder
+	if r.OK {
+		if r.Value == "null" {
+			b.WriteString("程序执行成功但没有 return 值（undefined 折算为 null）——若非有意，请补 return 语句。\n")
+			r.describeCallChain(&b)
+		} else {
+			fmt.Fprintf(&b, "程序执行成功：return 值 %d 字节，绑定调用 %d 次。\n", len(r.Value), r.Calls)
+		}
+		return b.String()
+	}
+	fmt.Fprintf(&b, "错误类别: %s\n", r.ErrorKind)
+	fmt.Fprintf(&b, "错误: %s\n", r.Error)
+	if r.Location.Valid() {
+		fmt.Fprintf(&b, "位置: %s\n", r.Location.Describe())
+	}
+	sugg := r.Suggestions
+	if len(sugg) == 0 {
+		sugg = suggestionsFor(r.ErrorKind)
+	}
+	if len(sugg) > 0 {
+		b.WriteString("修复建议:\n")
+		for _, s := range sugg {
+			b.WriteString("- " + s + "\n")
+		}
+	}
+	r.describeCallChain(&b)
+	return b.String()
+}
+
+// maxChainListed 调用链摘要最多展开的失败明细条数。
+//
+// CallLog 上限即 MaxCalls（缺省 50），全量展开会把诊断文本膨胀成账单；且对
+// 「程序哪一步出了问题」有增量信息的是**失败**的调用——成功的调用一条不列。
+const maxChainListed = 5
+
+// describeCallChain 把 CallLog 折成归因链摘要，追加到诊断文本。
+//
+// 摘要行始终给调用总数：「0 次」=程序没碰工具就挂了（纯程序问题）；「打满
+// MaxCalls」=采集方案太重（该合并调用或缩小范围）——这两个数本身就是归因
+// 线索。明细只列失败的调用（Status 非 ok：error/denied/panic），最多
+// maxChainListed 条；失败调用连错误原文一并给出，模型据此判断该改程序还是
+// 该换工具。无调用记录（语法错误等程序面前置失败）整段省略。
+func (r Result) describeCallChain(b *strings.Builder) {
+	failed := 0
+	for _, rec := range r.CallLog {
+		if rec.Status != StatusOK {
+			failed++
+		}
+	}
+	if r.Calls == 0 && failed == 0 {
+		return
+	}
+	fmt.Fprintf(b, "调用链: 共 %d 次绑定调用，失败 %d 次。\n", r.Calls, failed)
+	shown := 0
+	for _, rec := range r.CallLog {
+		if rec.Status == StatusOK {
+			continue
+		}
+		if shown == maxChainListed {
+			break
+		}
+		shown++
+		if rec.Error != "" {
+			fmt.Fprintf(b, "- %s（%s）: %s\n", rec.Name, rec.Status, rec.Error)
+		} else {
+			fmt.Fprintf(b, "- %s（%s）\n", rec.Name, rec.Status)
+		}
+	}
 }
