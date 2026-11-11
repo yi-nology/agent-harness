@@ -19,7 +19,7 @@ func TestExecuteAppliesOnce(t *testing.T) {
 	a := act("k1", "res-a")
 
 	calls := 0
-	fn := func(context.Context) (Result, error) {
+	fn := func(context.Context, Lease) (Result, error) {
 		calls++
 		return Result{Payload: []byte("done")}, nil
 	}
@@ -49,7 +49,7 @@ func TestRetryWithSameKeyReplays(t *testing.T) {
 	a := act("k1", "res-a")
 
 	calls := 0
-	fn := func(context.Context) (Result, error) {
+	fn := func(context.Context, Lease) (Result, error) {
 		calls++
 		return Result{Payload: []byte("first")}, nil
 	}
@@ -59,7 +59,7 @@ func TestRetryWithSameKeyReplays(t *testing.T) {
 	}
 
 	// 重试：同一 Key，同一动作体（这次若被执行即说明幂等失效）。
-	outcome, res, err := r.Execute(ctx, a, func(context.Context) (Result, error) {
+	outcome, res, err := r.Execute(ctx, a, func(context.Context, Lease) (Result, error) {
 		calls++
 		return Result{Payload: []byte("second")}, nil
 	})
@@ -97,7 +97,7 @@ func TestContendedIsRetryableNotFailure(t *testing.T) {
 	st.mu.Unlock()
 
 	calls := 0
-	outcome, res, err := r.Execute(ctx, a, func(context.Context) (Result, error) {
+	outcome, res, err := r.Execute(ctx, a, func(context.Context, Lease) (Result, error) {
 		calls++
 		return Result{Payload: []byte("x")}, nil
 	})
@@ -135,7 +135,7 @@ func TestContendedThenFreeThenApplies(t *testing.T) {
 	st.mu.Unlock()
 
 	calls := 0
-	fn := func(context.Context) (Result, error) {
+	fn := func(context.Context, Lease) (Result, error) {
 		calls++
 		return Result{Payload: []byte("x")}, nil
 	}
@@ -177,7 +177,7 @@ func TestRunReturnsReplayedResult(t *testing.T) {
 	ctx := context.Background()
 	a := act("k1", "res-a")
 
-	fn := func(context.Context) (Result, error) {
+	fn := func(context.Context, Lease) (Result, error) {
 		return Result{Payload: []byte("v")}, nil
 	}
 	if _, err := r.Run(ctx, a, fn); err != nil {
@@ -207,7 +207,7 @@ func TestRunRejectsContended(t *testing.T) {
 	}
 	st.mu.Unlock()
 
-	_, err := r.Run(ctx, a, func(context.Context) (Result, error) {
+	_, err := r.Run(ctx, a, func(context.Context, Lease) (Result, error) {
 		return Result{Payload: []byte("x")}, nil
 	})
 	if err == nil {

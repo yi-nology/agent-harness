@@ -26,7 +26,7 @@ func TestPrepareFailureAppliesNothing(t *testing.T) {
 			prepareCalls++
 			return nil, errors.New("准备失败")
 		},
-		Apply: func(context.Context, any) (Result, error) {
+		Apply: func(context.Context, any, Lease) (Result, error) {
 			applyCalls++
 			return Result{}, nil
 		},
@@ -57,7 +57,7 @@ func TestPrepareFailureKeepsActionRetryable(t *testing.T) {
 
 	if _, _, err := r.ExecuteWith(ctx, a, Effect{
 		Prepare: func(context.Context) (any, error) { return nil, errors.New("准备失败") },
-		Apply:   func(context.Context, any) (Result, error) { return Result{}, nil },
+		Apply:   func(context.Context, any, Lease) (Result, error) { return Result{}, nil },
 	}); err == nil {
 		t.Fatal("准备失败应报错")
 	}
@@ -66,7 +66,7 @@ func TestPrepareFailureKeepsActionRetryable(t *testing.T) {
 	applyCalls := 0
 	outcome, res, err := r.ExecuteWith(ctx, a, Effect{
 		Prepare: func(context.Context) (any, error) { return "prepared", nil },
-		Apply: func(context.Context, any) (Result, error) {
+		Apply: func(context.Context, any, Lease) (Result, error) {
 			applyCalls++
 			return Result{Payload: []byte("v")}, nil
 		},
@@ -101,7 +101,7 @@ func TestPreparedValuePassedToApply(t *testing.T) {
 
 	_, _, err := r.ExecuteWith(ctx, a, Effect{
 		Prepare: func(context.Context) (any, error) { return want, nil },
-		Apply: func(_ context.Context, p any) (Result, error) {
+		Apply: func(_ context.Context, p any, _ Lease) (Result, error) {
 			got = p
 			return Result{}, nil
 		},
@@ -141,7 +141,7 @@ func TestApplySkippedWhenLeaseLost(t *testing.T) {
 			}
 			return "prepared", nil
 		},
-		Apply: func(context.Context, any) (Result, error) {
+		Apply: func(context.Context, any, Lease) (Result, error) {
 			applyCalls++
 			return Result{Payload: []byte("v")}, nil
 		},
@@ -182,7 +182,7 @@ func TestLeaseLostIsRetryableNotPermanent(t *testing.T) {
 			_, _, _, _ = st.Acquire(ctx, a, time.Minute)
 			return "p", nil
 		},
-		Apply: func(context.Context, any) (Result, error) { return Result{}, nil },
+		Apply: func(context.Context, any, Lease) (Result, error) { return Result{}, nil },
 	})
 	if !errors.Is(err, ErrLeaseLost) {
 		t.Fatalf("应报 ErrLeaseLost，实得 %v", err)
@@ -196,7 +196,7 @@ func TestLeaseLostIsRetryableNotPermanent(t *testing.T) {
 	applyCalls := 0
 	outcome, _, err := r.ExecuteWith(ctx, a, Effect{
 		Prepare: func(context.Context) (any, error) { return "p", nil },
-		Apply: func(context.Context, any) (Result, error) {
+		Apply: func(context.Context, any, Lease) (Result, error) {
 			applyCalls++
 			return Result{Payload: []byte("v")}, nil
 		},
@@ -223,7 +223,7 @@ func TestExecuteAlsoChecksLease(t *testing.T) {
 	a := act("k1", "res-a")
 
 	applyCalls := 0
-	_, _, err := r.Execute(ctx, a, func(context.Context) (Result, error) {
+	_, _, err := r.Execute(ctx, a, func(context.Context, Lease) (Result, error) {
 		applyCalls++
 		return Result{}, nil
 	})
@@ -328,7 +328,7 @@ func TestRenewFailurePropagates(t *testing.T) {
 	// 换一个 Renew 会失败的存储包装。
 	r2 := NewRunner(renewFailStore{Store: st, err: boom}, time.Minute)
 	_, _, err := r2.ExecuteWith(ctx, a, Effect{
-		Apply: func(context.Context, any) (Result, error) { return Result{}, nil },
+		Apply: func(context.Context, any, Lease) (Result, error) { return Result{}, nil },
 	})
 	if !errors.Is(err, boom) {
 		t.Fatalf("续期的存储故障应原样透出，实得 %v", err)

@@ -39,6 +39,15 @@
 //  9. renew_extends_lease             Renew 延长有效期且不换令牌
 //  10. renew_after_takeover_rejected   闸已易主后 Renew 被拒（假续期的封口）
 //
+// 「结果未知」一族五场景在 **uncertain.go**（v0.32.0 新增，判失败路径上的
+// 「至多一次」是否真的成立）：
+//
+//  11. uncertain_blocks_execution      结果未知的 Key 不得再被授予执行权
+//  12. resolve_not_applied_allows_retry 裁决「未生效」后该 Key 重新可执行
+//  13. resolve_applied_records_result  裁决「已生效」后该 Key 重放既有结果
+//  14. resolve_first_wins              同一 Key 的多次裁决先到者为准
+//  15. stale_fence_cannot_mark         过期持有者不得标记未知态
+//
 // # 时钟
 //
 // 租约过期需要可控时钟，否则只能靠 sleep（慢且 flaky）。
@@ -116,6 +125,11 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("release_does_not_done", func(t *testing.T) { runReleaseDoesNotDone(t, factory) })
 	t.Run("renew_extends_lease", func(t *testing.T) { runRenewExtendsLease(t, factory) })
 	t.Run("renew_after_takeover_rejected", func(t *testing.T) { runRenewAfterTakeoverRejected(t, factory) })
+	t.Run("uncertain_blocks_execution", func(t *testing.T) { runUncertainBlocksExecution(t, factory) })
+	t.Run("resolve_not_applied_allows_retry", func(t *testing.T) { runResolveNotAppliedAllowsRetry(t, factory) })
+	t.Run("resolve_applied_records_result", func(t *testing.T) { runResolveAppliedRecordsResult(t, factory) })
+	t.Run("resolve_first_wins", func(t *testing.T) { runResolveFirstWins(t, factory) })
+	t.Run("stale_fence_cannot_mark", func(t *testing.T) { runStaleFenceCannotMarkUncertain(t, factory) })
 }
 
 // newStore 构造被测实现并注入假时钟。

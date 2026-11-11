@@ -23,6 +23,8 @@ type fakeStore struct {
 
 	// done 已完成的 Key → 结果。
 	done map[Key]Result
+	// uncertain 结果未知的 Key → 原因（标记后该 Key 不得再被执行）。
+	uncertain map[Key]string
 	// holders Resource → 当前持有。
 	holders map[string]fakeHold
 	// maxFence Resource → 已见过的最大令牌。
@@ -34,14 +36,18 @@ type fakeStore struct {
 	nowFn func() time.Time
 
 	// 故障注入。
-	acquireErr  error
-	completeErr error
-	releaseErr  error
+	acquireErr       error
+	completeErr      error
+	releaseErr       error
+	markUncertainErr error
+	resolveErr       error
 
 	// 计数。
-	acquireCalls  int
-	completeCalls int
-	releaseCalls  int
+	acquireCalls       int
+	completeCalls      int
+	releaseCalls       int
+	markUncertainCalls int
+	resolveCalls       int
 }
 
 // fakeHold 一次持有（含到期时刻）。
@@ -52,10 +58,11 @@ type fakeHold struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		done:     map[Key]Result{},
-		holders:  map[string]fakeHold{},
-		maxFence: map[string]Fence{},
-		now:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		done:      map[Key]Result{},
+		uncertain: map[Key]string{},
+		holders:   map[string]fakeHold{},
+		maxFence:  map[string]Fence{},
+		now:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -93,6 +100,11 @@ func (s *fakeStore) Acquire(_ context.Context, act Action, ttl time.Duration) (O
 	// 判据一：已完成 → 取回既有结果（优先于占用）。
 	if res, ok := s.done[act.Key]; ok {
 		return OutcomeReplayed, Lease{}, res, nil
+	}
+
+	// 判据二：结果未知 → 拒绝执行，要求先对账（优先于占用）。
+	if _, ok := s.uncertain[act.Key]; ok {
+		return OutcomeUncertain, Lease{}, Result{}, nil
 	}
 
 	now := s.clockLocked()
@@ -144,6 +156,45 @@ func (s *fakeStore) Release(_ context.Context, act Action, lease Lease) error {
 	}
 	delete(s.holders, act.Resource)
 	return nil
+}
+
+func (s *fakeStore) MarkUncertain(_ context.Context, act Action, lease Lease, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.markUncertainCalls++
+	if s.markUncertainErr != nil {
+		return s.markUncertainErr
+	}
+	// 令牌校验：只有当前最新代才允许标记（过期持有者不得改写新持有者的状态）。
+	cur, ok := s.holders[act.Resource]
+	if !ok || cur.lease.Fence != lease.Fence {
+		return errors.Wrap(ErrFenceStale, "栅栏令牌已不是最新代", "resource", act.Resource)
+	}
+	s.uncertain[act.Key] = reason
+	return nil
+}
+
+func (s *fakeStore) ResolveUncertain(_ context.Context, act Action, res Resolution) (Outcome, Result, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resolveCalls++
+	if s.resolveErr != nil {
+		return OutcomeContended, Result{}, s.resolveErr
+	}
+	// 已完成 → 幂等重放。
+	if prior, ok := s.done[act.Key]; ok {
+		return OutcomeReplayed, prior, nil
+	}
+	if _, ok := s.uncertain[act.Key]; !ok {
+		return OutcomeContended, Result{}, ErrNotUncertain
+	}
+	if res.Applied {
+		s.done[act.Key] = res.Result
+		delete(s.uncertain, act.Key)
+		return OutcomeApplied, res.Result, nil
+	}
+	delete(s.uncertain, act.Key)
+	return OutcomeContended, Result{}, nil
 }
 
 func (s *fakeStore) Renew(_ context.Context, act Action, lease Lease, ttl time.Duration) (Lease, error) {

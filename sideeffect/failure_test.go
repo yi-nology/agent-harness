@@ -23,10 +23,17 @@ func TestFailedExecutionIsNotRecorded(t *testing.T) {
 	a := act("k1", "res-a")
 
 	boom := errors.New("boom")
-	if _, _, err := r.Execute(ctx, a, func(context.Context) (Result, error) {
+	outcome, _, err := r.Execute(ctx, a, func(context.Context, Lease) (Result, error) {
 		return Result{}, boom
-	}); !errors.Is(err, boom) {
-		t.Fatalf("执行失败应原样透出，实得 %v", err)
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("执行失败应原样透出（错误链里要能判到原始原因），实得 %v", err)
+	}
+	if outcome != OutcomeUncertain {
+		t.Fatalf("未声明可安全重试时，失败应判为 uncertain（结果未知），实得 %v", outcome)
+	}
+	if !errors.Is(err, ErrOutcomeUnknown) {
+		t.Fatalf("结果未知必须可判（errors.Is(err, ErrOutcomeUnknown)），实得 %v", err)
 	}
 
 	// 关键断言：失败**没有**被记账（completeCalls == 0）。
@@ -40,24 +47,8 @@ func TestFailedExecutionIsNotRecorded(t *testing.T) {
 		t.Fatalf("执行失败应释放闸 1 次，实得 %d", st.releaseCalls)
 	}
 
-	// 于是后续重试仍能真正执行（动作没被丢掉）。
-	calls := 0
-	outcome, res, err := r.Execute(ctx, a, func(context.Context) (Result, error) {
-		calls++
-		return Result{Payload: []byte("ok")}, nil
-	})
-	if err != nil {
-		t.Fatalf("重试不该失败: %v", err)
-	}
-	if outcome != OutcomeApplied {
-		t.Fatalf("失败后重试应判为 applied，实得 %v", outcome)
-	}
-	if calls != 1 {
-		t.Fatalf("重试应执行 1 次，实得 %d", calls)
-	}
-	if string(res.Payload) != "ok" {
-		t.Fatalf("结果应为 ok，实得 %q", res.Payload)
-	}
+	// 后续重试被**拒**（结果未知，禁止盲目重试）——这条的完整断言
+	// 与反向验证在 uncertain_test.go。
 }
 
 // TestFenceIsMonotonicPerResource 钉住栅栏令牌单调递增且不回退。
@@ -67,7 +58,7 @@ func TestFailedExecutionIsNotRecorded(t *testing.T) {
 
 func TestNoStoreFailsLoudly(t *testing.T) {
 	r := NewRunner(nil, time.Second)
-	_, _, err := r.Execute(context.Background(), act("k1", "res-a"), func(context.Context) (Result, error) {
+	_, _, err := r.Execute(context.Background(), act("k1", "res-a"), func(context.Context, Lease) (Result, error) {
 		return Result{}, nil
 	})
 	if !errors.Is(err, ErrNoStore) {
@@ -80,7 +71,7 @@ func TestNoStoreFailsLoudly(t *testing.T) {
 func TestInvalidActionRejected(t *testing.T) {
 	r := NewRunner(newFakeStore(), time.Second)
 	ctx := context.Background()
-	fn := func(context.Context) (Result, error) { return Result{}, nil }
+	fn := func(context.Context, Lease) (Result, error) { return Result{}, nil }
 
 	for _, a := range []Action{
 		{Key: "", Resource: "res-a"},
@@ -104,7 +95,7 @@ func TestUnknownOutcomeFailsLoudly(t *testing.T) {
 	// 用一个返回未知结论的存储包装 fakeStore。
 	weird := weirdStore{Store: st}
 	r := NewRunner(weird, time.Second)
-	_, _, err := r.Execute(context.Background(), act("k1", "res-a"), func(context.Context) (Result, error) {
+	_, _, err := r.Execute(context.Background(), act("k1", "res-a"), func(context.Context, Lease) (Result, error) {
 		return Result{}, nil
 	})
 	if !errors.Is(err, ErrUnknownOutcome) {
@@ -124,7 +115,7 @@ func TestStoreFailurePropagates(t *testing.T) {
 	st.acquireErr = boom
 	r := NewRunner(st, time.Second)
 
-	_, _, err := r.Execute(context.Background(), act("k1", "res-a"), func(context.Context) (Result, error) {
+	_, _, err := r.Execute(context.Background(), act("k1", "res-a"), func(context.Context, Lease) (Result, error) {
 		t.Fatal("存储故障时不该执行动作")
 		return Result{}, nil
 	})
@@ -147,7 +138,7 @@ func TestCompleteFailureIsReported(t *testing.T) {
 	ctx := context.Background()
 
 	calls := 0
-	_, _, err := r.Execute(ctx, act("k1", "res-a"), func(context.Context) (Result, error) {
+	_, _, err := r.Execute(ctx, act("k1", "res-a"), func(context.Context, Lease) (Result, error) {
 		calls++
 		return Result{Payload: []byte("v")}, nil
 	})
@@ -168,7 +159,7 @@ func TestCompleteFailureIsReported(t *testing.T) {
 
 func TestNilRunnerFailsLoudly(t *testing.T) {
 	var r *Runner
-	_, _, err := r.Execute(context.Background(), act("k1", "res-a"), func(context.Context) (Result, error) {
+	_, _, err := r.Execute(context.Background(), act("k1", "res-a"), func(context.Context, Lease) (Result, error) {
 		return Result{}, nil
 	})
 	if !errors.Is(err, ErrNoStore) {
