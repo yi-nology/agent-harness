@@ -153,10 +153,22 @@ func run() error {
 		problems = append(problems, diffBaseline(claim, actual)...)
 	}
 
+	// ── USAGE.md 的机器口径块（包数 / policy 登记数 / 安装行版本）──
+	//
+	// USAGE 里的数字此前无人判，漂了几个月（27/24 → 实际 41/43）。
+	// 判据只管**仓库事实**那类数字（包表行数、policy 登记数、安装行版本）；
+	// 「本文覆盖哪几个包」是文档取舍，机器判不了，不硬判。
+	usageProblems, usageChecked, err := checkUsage(len(rows))
+	if err != nil {
+		return err
+	}
+	problems = append(problems, usageProblems...)
+
 	if len(problems) > 0 {
 		return fmt.Errorf("README 与仓库实际状态不一致（%d 项）：\n  - %s\n"+
 			"修法：包表按各包 *.go（不含 _test.go）重算行数与外部依赖；"+
-			"工程底座表按报错里给的三条命令重算，改 README。\n"+
+			"工程底座表按报错里给的三条命令重算，改 README；"+
+			"USAGE.md 的机器口径块按报错里给的三个数改（包数 / policy 登记数 / 安装行版本）。\n"+
 			"两套口径别混：包表行数按 %.0f%% 相对容差判（容差内的逐行涨落不报），"+
 			"工程底座的三项是确定性量，**判相等**。\n"+
 			"本门禁不自动改文档——改表是要人判断的动作。",
@@ -165,12 +177,24 @@ func run() error {
 
 	if present {
 		actual, _ := measureBaseline()
-		fmt.Printf("README 与仓库一致（%d 个包；工程底座 %d 行 / %d 文件 / %d 个测试文件）✓\n",
-			len(rows), actual.prodLines, actual.prodFiles, actual.testFiles)
+		fmt.Printf("README 与仓库一致（%d 个包；工程底座 %d 行 / %d 文件 / %d 个测试文件）%s✓\n",
+			len(rows), actual.prodLines, actual.prodFiles, actual.testFiles, usageNote(usageChecked))
 		return nil
 	}
-	fmt.Printf("README 包表与仓库一致（%d 个包；无工程底座表）✓\n", len(rows))
+	fmt.Printf("README 包表与仓库一致（%d 个包；无工程底座表）%s✓\n", len(rows), usageNote(usageChecked))
 	return nil
+}
+
+// usageNote 说明 USAGE 口径校验是否参与本次判定。
+//
+// 为什么要在成功输出里也说明：判据被跳过（合成仓没有 USAGE.md）是合法状态，
+// 但**静默跳过**与「判过了」在日志里长得一样——一旦判据面被误删，
+// 看到「✓」的人不会想到「其实那段没判」。故跳过时显式说出来。
+func usageNote(checked bool) string {
+	if checked {
+		return "；USAGE 口径已判"
+	}
+	return "；USAGE 口径未判（本仓无 docs/USAGE.md）"
 }
 
 // locTolerance README 行数与实际值的相对偏差容忍上限。

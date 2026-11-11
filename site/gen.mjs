@@ -8,7 +8,7 @@
 //
 // 用法：node gen.mjs（npm run docs:dev / docs:build 会自动先跑它）。
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -207,10 +207,108 @@ const relMd = [
   ''
 ].join('\n')
 
+// ── ADR 决策记录页：从仓内 docs/adr/ 投影（仓内是唯一真相，站点不手抄）──
+//
+// 为什么 ADR 要进站点：README 收敛后，设计推导下沉到 docs/adr/——
+// 若站点不投影，读者只看得到「收敛后的结论」，看不到「为什么这样取舍」，
+// 而后者正是 ADR 存在的意义。
+//
+// 投影而非复制：仓内 docs/adr/ 是唯一真相，站点页由本脚本生成；
+// 手抄第二份就等于多一份会静默失真的真相（与包表 / 坑表 / 版本表同一口径）。
+const ghRepo = 'https://github.com/yi-nology/goagent-kernel'
+
+function loadAdrs() {
+  const dir = join(repo, 'docs', 'adr')
+  let names
+  try {
+    names = readdirSync(dir).filter((n) => /^ADR-\d{4}-.*\.md$/.test(n)).sort()
+  } catch (e) {
+    fail('读不到 docs/adr/ 目录：' + e.message)
+  }
+  if (!names.length) fail('docs/adr/ 下没有 ADR-*.md——ADR 目录被清空了？')
+  return names.map((name) => {
+    const raw = readFileSync(join(dir, name), 'utf8')
+    const id = (name.match(/^ADR-(\d{4})-/) || [])[1]
+    if (!id) fail(name + '：文件名不含 ADR-NNNN 编号')
+    const h1 = raw.split('\n').find((l) => l.startsWith('# ADR-'))
+    if (!h1) fail(name + '：找不到一级标题（# ADR-NNNN · 标题）')
+    const title = h1.replace(/^#\s*ADR-\d{4}\s*·\s*/, '').trim()
+    const sum = (raw.match(/^> \*\*一句话结论\*\*：(.+)$/m) || [])[1]
+    if (!sum) fail(name + '：找不到「一句话结论」——索引与站点摘要都要用它')
+    const st = (raw.match(/^\| \*\*状态\*\* \| (.+) \|$/m) || [])[1]
+    if (!st) fail(name + '：找不到「状态」行')
+    return { id: 'ADR-' + id, title, summary: sum.trim(), status: st.trim(), file: name, raw }
+  })
+}
+
+// rewriteAdrLinks 把 ADR 正文里的仓内相对链接改写成站点可点的绝对链接。
+//
+// 为什么要改：ADR 正文里的 ../../AGENTS.md 之类是**仓内**路径，站点上无处可指；
+// 逐个改成 GitHub 链接又等于在仓内文件里写死站点形态——那是第二份真相。
+// 故规则只写在生成器里：仓内保持仓内路径，站点侧在生成时翻译。
+//
+// 同目录的 ADR 之间互链保持原样（VuePress 自己把 .md 解析成 .html）。
+function rewriteAdrLinks(text) {
+  return text.replace(/\]\(([^)\s]+)\)/g, (m, target) => {
+    if (/^(https?:|mailto:|#)/.test(target)) return m
+    if (target.startsWith('ADR-')) return m
+    const up = target.match(/^((?:\.\.\/)+)(.*)$/)
+    if (!up) return m
+    const depth = up[1].length / 3
+    const rest = up[2]
+    if (depth === 1) return '](' + ghRepo + '/blob/main/docs/' + rest + ')'
+    if (depth === 2) return '](' + ghRepo + '/blob/main/' + rest + ')'
+    fail('ADR 正文里的相对路径层级超出预期：' + target)
+  })
+}
+
+const adrs = loadAdrs()
+mkdirSync(join(siteDir, 'docs', 'adr'), { recursive: true })
+for (const a of adrs) {
+  const body = a.raw.split('\n').slice(1).join('\n') // 去掉一级标题（frontmatter 已给标题）
+  const page = [
+    '---',
+    'title: ' + a.id + ' · ' + a.title,
+    'description: ' + a.summary,
+    '---',
+    '',
+    escAngles(rewriteAdrLinks(body)),
+    ''
+  ].join('\n')
+  writeFileSync(join(siteDir, 'docs', 'adr', a.file), page)
+}
+
+// ADR 索引页（站点侧栏与导航都从这里出，不手写文件清单）。
+const adrIndexMd = [
+  '---',
+  'title: 决策记录（ADR）',
+  '---',
+  '',
+  '# 决策记录（ADR）',
+  '',
+  '::: warning 本页由 ' + bt + 'site/gen.mjs' + bt + ' 从仓内 ' + bt + 'docs/adr/' + bt + ' 生成，勿手改',
+  '决策记录是**设计推导与取舍**的真相源；README 只留结论，推导一律在仓内 ADR。',
+  ':::',
+  '',
+  '| 编号 | 决策 | 一句话结论 | 状态 |',
+  '|---|---|---|---|',
+  ...adrs.map((a) => '| [' + a.id + '](../adr/' + a.file + ') | ' + cell(a.title) + ' | ' + cell(escAngles(a.summary)) + ' | ' + cell(a.status) + ' |'),
+  '',
+  '> 仓内索引：' + ghRepo + '/blob/main/docs/adr/README.md（新增 ADR 的流程写在那里）。',
+  ''
+].join('\n')
+
+// 侧栏清单交给 VuePress 配置去读：配置是仓内手写的，页数会变——
+// 清单必须由生成物给出，否则每加一篇 ADR 都要手改一次配置（而手改的那次没人会记得）。
+const adrManifest = adrs.map((a) => ({ file: a.file, id: a.id, title: a.title }))
+mkdirSync(join(siteDir, 'docs', '.vuepress'), { recursive: true })
+writeFileSync(join(siteDir, 'docs', '.vuepress', 'adr-manifest.json'), JSON.stringify(adrManifest, null, 2) + '\n')
+
 mkdirSync(join(siteDir, 'docs', 'reference'), { recursive: true })
 writeFileSync(join(siteDir, 'docs', 'reference', 'packages.md'), md)
 writeFileSync(join(siteDir, 'docs', 'reference', 'pitfalls.md'), pitMd)
 writeFileSync(join(siteDir, 'docs', 'reference', 'releases.md'), relMd)
+writeFileSync(join(siteDir, 'docs', 'reference', 'adr.md'), adrIndexMd)
 
 // ── AI 直读入口：llms.txt（同样生成，数字不手抄）──────────────────────
 // 与 oekit / oagentkit 的 llms.txt 同一形态：给 AI 代理的紧凑事实页。
@@ -250,6 +348,7 @@ const llms = [
   '- 坑速查（症状→真因）: ' + site + '/reference/pitfalls.html',
   '- 包清单与机器事实: ' + site + '/reference/packages.html',
   '- 门禁体系: ' + site + '/reference/gates.html',
+  '- 决策记录（ADR，设计推导与取舍）: ' + site + '/reference/adr.html',
   '- 完整接入指南（逐包：职责→片段→符号→坑）: ' + gh + '/blob/main/docs/USAGE.md',
   '- README（边界纪律/下游升级须知）: ' + gh + '#readme',
   '',
@@ -266,4 +365,4 @@ const llms = [
 ].join('\n')
 mkdirSync(join(siteDir, 'docs', '.vuepress', 'public'), { recursive: true })
 writeFileSync(join(siteDir, 'docs', '.vuepress', 'public', 'llms.txt'), llms)
-console.log('gen.mjs: packages.md + pitfalls.md + releases.md + llms.txt 生成完毕（' + pkgs.length + ' 包 / ' + deps.length + ' 依赖 / ' + rules.length + ' 规则 / ' + pitfalls.length + ' 坑表行 / ' + releases.length + ' 版本）')
+console.log('gen.mjs: packages.md + pitfalls.md + releases.md + adr.md + ' + adrs.length + ' 篇 ADR 页 + llms.txt 生成完毕（' + pkgs.length + ' 包 / ' + deps.length + ' 依赖 / ' + rules.length + ' 规则 / ' + pitfalls.length + ' 坑表行 / ' + releases.length + ' 版本）')

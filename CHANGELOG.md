@@ -3,6 +3,110 @@
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 > （v0.31.0 起项目由 `agent-harness` 更名 `goagent-kernel`；历史条目保留旧名不改写。）
 
+## [v0.32.0] — 2026-11-11
+
+### BREAKING：副作用闸引入「结果未知」一等状态（sideeffect）
+
+此前 `sideeffect.Runner` 的失败出口只有一条：释放闸 → 允许重试。于是
+「远端已生效但响应丢了」这一形态会被下一次重试变成**重复施加**——
+而调用方全程只拿到一个普通错误，没有任何信号说「这个动作可能已经做过了」。
+本包存在的理由（同一逻辑动作只施加一次）被绕过，且失效是**静默**的。
+
+本版把「不知道」变成一等状态与一条对账路径：
+
+* **`OutcomeUncertain`**（新枚举值）：该 Key 上一次尝试的结果未知，
+  **禁止再执行**，必须先对账。闸在 `Acquire` 时按「已完成 > 结果未知 >
+  资源被占 > 授予执行权」的优先级判；
+* **`Store` 接口新增两个方法**（**BREAKING**，所有宿主都要改）：
+  `MarkUncertain(ctx, act, lease, reason)` 把 Key 转入未知态、
+  `ResolveUncertain(ctx, act, res)` 由宿主对账后裁决（已生效 → 记为完成；
+  未生效 → 清除未知标记、允许重试）。裁决**先到者为准**（幂等）、
+  **不校验栅栏**（它的依据是下游事实，不是持有权）；
+* **`Action.RetrySafety`**（新字段）：声明该动作在施加失败后能否安全重试。
+  零值（未声明）按**最弱**处理 ⇒ 结果未知 + 对账；只有显式声明
+  `RetrySafetySafe`（断言下游按幂等键去重）才允许直接重试；
+* **执行器拿得到栅栏令牌**（**BREAKING**：`Effect.Apply` 与 `Runner.Execute`
+  的执行体签名新增 `lease Lease` 参数），下游才能拒收过期持有者的迟到写；
+* **记账失败也归入未知态**：动作已生效但没记上账时，放行重试就是重复施加。
+
+「至多一次」的承诺口径同步收紧：**承诺**的是「同一 Key 同一时刻至多一个持有者」
++「已完成的动作被重放而不是重做」；**不承诺**「远端至多被施加一次」——
+那需要下游参与（幂等键传到远端，或下游按栅栏拒收迟到写）。
+共享契约套件 `sidetest` 同步扩到 **15 条场景**（新增「结果未知」一族五条），
+宿主实现跑一遍即知是否合规。
+
+* feat(sideeffect)!: Store 接口强制「未知结果」语义 + Fence 传入 Apply + 对账路径（#72）
+
+### BREAKING：PTC 缺省即拒绝（无判定环 ⇒ 不执行）
+
+此前 `ptc.Options.Stages` / `Provider.Stages` 允许为 nil，此时程序里的
+`host.<tool>(...)` 直达宿主工具，**披露门、审计门、权限门一个都不经过**，
+而没有任何信号——本包恰是对外推荐的批量调用路径，于是**看起来更安全的路径
+反而最不安全**。
+
+* **缺省即拒绝**（fail-closed）：装配了工具绑定却没装判定环 ⇒ 拒绝执行，
+  `ErrorKind=unmanaged`；
+* 两个例外：**不装配任何绑定**（纯计算程序）不需要判定环（风险在**能力**，
+  不在程序）；确需裸执行时显式声明 `Options.AllowUnmanaged`；
+* **逃逸口有门禁盯着**：新增 `harness-ptc-unmanaged-escape` 规则，
+  生产代码里出现 `ptc.Options/Provider/SubprocessOptions` 的 `AllowUnmanaged`
+  字段即报违规（按**字段出现**判，配置驱动的写法也逃不掉）；
+* 判定面覆盖三条执行路径：裸入口、登记簿路径、子进程后端（子进程形态尤其
+  不能放过：判定在父侧做，父侧不判就等于没人判）。
+
+* feat(ptc)!: 安全默认装配——无判定环即拒，Unsafe 必须显式 + 门禁（#73）
+
+### egress：声明强度与实际强度对齐（兑现强度落到判据面）
+
+`egress.ModeProxy` 的兑现面是**环境变量**，而环境变量拦不住静态链接二进制、
+UDP 与原始 socket——「代理档已兑现」不等于「出站已被强制隔离」。判据此前只给
+「成立/不成立」，调用方拿不到「以什么强度成立」。
+
+* 新增 `VerifyVerdict` / `SatisfiedVerdict`：返回 `Verdict{Mode, Strength, Detail}`，
+  `Strength` 三档（`not_required` / `advisory` / `enforced`）——
+  **环境变量兑现出来的永远是建议型**，只有后端 `Enforcer` 能力声明才是强制型；
+* `Verify` / `SatisfiedBy` 保留为薄封装（同一份实现，结论不会打架）。
+
+* feat(egress): 声明强度与实际强度对齐——兑现强度落到判据面（#74）
+
+### 新增：参考运行时示例（examples/reference-runtime）
+
+机制之间的事务边界、事件落库、Worker 认领与恢复循环此前都得宿主自己拼装，
+外部使用者无法验证整套能力。新增一个**端到端可跑**的参考实现：
+创建任务 → 多步骤执行 → 中断 → 恢复续跑 → 并发认领 → 副作用对账。
+
+* **纯 stdlib 内存存储，零新依赖**——本仓「依赖面窄」是既有优势，不为示例牺牲；
+  真实 SQLite/PostgreSQL 的接入形态写成契约（README + `sidetest` 套件）；
+* 演示的是**接线**不是新能力：机制面仍在 checkpoint/commitgate/sideeffect/
+  taskboard 里；
+* 存储实现跑通 `sidetest`（15 条）与 `taskboard/boardtest`（并发认领）两套共享契约。
+
+* feat(examples): Reference Runtime——端到端可创建/中断/恢复的参考实现（#75）
+
+### docs：README 收敛 + ADR 归档 + 文档数字纳入机器校验
+
+README 曾 106KB / 747 行，AGENTS.md 88KB，USAGE.md 118KB，且 USAGE 的包数
+口径漂了几个月（写着「27 个能力包」「modules 段登记 24 个」，实际 41 / 44）
+——**没人判**。
+
+* **README 收敛**为「是什么 / 边界 / 包清单 / 特性 / 工程底座 / 怎么用 / 怎么改」，
+  大段设计推导下沉到 `docs/adr/`（6 篇 ADR + 索引）；
+* **USAGE 事实修正**：包数口径三个数各说一件事（文档取舍 / 仓库事实 / policy 登记），
+  安装行改为 `@latest`；`sideeffect` 与 `ptc` 的章节同步到 v0.32.0 的新语义；
+* **数字要有主**：`make docsync` 新增 USAGE 判据——包数、policy 登记数、安装行版本
+  三处机器判（漂了即红）；「本文覆盖哪几个包」是文档取舍，机器判不了，不硬判。
+
+* docs: 文档体系重构——README 收敛 + ADR 归档 + USAGE 事实修正 + docsync 机器校验（#76）
+
+### 工程门禁：分支保护
+
+`main` 此前**完全无保护**（`protected: false`，无 ruleset），CI 通过与否与
+能不能直接推 main 无关。现已开启：合并必须走 PR，且必须通过
+Linux 综合质量门禁与 Windows 真跑测试两条检查（strict：需与 main 同步）；
+管理员保留 bypass（直推 main 的应急通道）。
+
+* ci: 启用分支保护（必须 PR + 必过检查，管理员可 bypass）（#77）
+
 ## [v0.31.0] — 2026-11-11
 
 ### BREAKING：项目整体更名 `agent-harness` → `goagent-kernel`
