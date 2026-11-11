@@ -198,3 +198,158 @@ func TestSuggestionsAreIndependentSlices(t *testing.T) {
 		t.Fatal("建议切片被共享：一次调用污染了另一次")
 	}
 }
+
+// ── Result.Describe：宿主回喂面的渲染契约 ─────────────────────────────
+
+// TestResultDescribeRendering Describe 的渲染形态逐形态钉死（table-driven）。
+//
+// 这是宿主回喂环消费的文本契约：宿主不再自写渲染（argus describePtcFailure
+// 已收编），措辞或段落一旦漂移，下游的回喂 prompt 就跟着漂。每形态断言
+// 「该有的段在、不该有的段不在」，不钉全文——错误原文等来自 goja 的文案
+// 会随版本变，钉全文会把门禁变成 FragileTest。
+func TestResultDescribeRendering(t *testing.T) {
+	deniedStage := []invoke.Stage{invoke.StageFunc{StageName: "审计门", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+		return invoke.Verdict{Allow: false, Reason: "变更须走方案审批"}, nil
+	}}}
+
+	cases := []struct {
+		name    string
+		res     Result
+		want    []string // 必须出现的段
+		notWant []string // 必须不出现的段
+	}{
+		{
+			name: "失败_带位置与建议",
+			res:  Run(context.Background(), "let a = 1;\nlet b = (;", nil, Options{}),
+			want: []string{
+				"错误类别: syntax",
+				"错误: ",
+				"位置: 第 2 行第 ", // 位置复用 Position.Describe，程序内行号
+				"修复建议:",
+				"- 检查括号、引号、模板字符串是否配对",
+			},
+			notWant: []string{"调用链:"}, // 程序面前置失败，零调用整段省略
+		},
+		{
+			name: "失败_无位置不编位置",
+			res:  Run(context.Background(), "const y = null; return y.x.y;", nil, Options{}),
+			want: []string{"错误类别: runtime", "修复建议:"},
+			// rejection 路径拿不到程序栈（见诊断面文件头）——省略位置段，
+			// 不能渲染出「第 0 行」
+			notWant: []string{"位置:", "第 0 行"},
+		},
+		{
+			name: "失败_带归因链摘要",
+			res: Run(context.Background(), `host.t("x")`,
+				[]Binding{{Name: "t", Call: func(context.Context, string) (string, error) { return "x", nil }}},
+				Options{Stages: deniedStage}),
+			want: []string{
+				"错误类别: stage_denied",
+				"调用链: 共 1 次绑定调用，失败 1 次。",
+				"调用链: 共 1 次绑定调用，失败 1 次。",
+				"- t（denied）: ", // 明细：被拒调用带判定环的拒绝原文
+				"变更须走方案审批",
+			},
+		},
+		{
+			name: "失败_手工构造_Result_补查建议表",
+			res:  Result{Error: "boom", ErrorKind: "deadline", Calls: 3},
+			// Suggestions 为空：按 ErrorKind 从建议表补——手工构造的 Result
+			// 也能渲染出完整建议（两个来源同一张表）
+			want:    []string{"错误类别: deadline", "调用链: 共 3 次绑定调用，失败 0 次。", "- "},
+			notWant: []string{},
+		},
+		{
+			name:    "失败_未知类别_无建议段",
+			res:     Result{Error: "boom", ErrorKind: "some_kind_we_never_defined"},
+			want:    []string{"错误类别: some_kind_we_never_defined", "错误: boom"},
+			notWant: []string{"修复建议:", "调用链:"},
+		},
+		{
+			name: "成功_有 return 值",
+			res:  Run(context.Background(), `return 1`, nil, Options{}),
+			want: []string{"程序执行成功：return 值 ", "绑定调用 0 次。"},
+			notWant: []string{
+				"错误类别:", "修复建议:", "位置:", "调用链:", // 成功是摘要形态，诊断段全不出
+				"没有 return 值",
+			},
+		},
+		{
+			name: "成功_忘写_return_点破",
+			res:  Result{OK: true, Value: "null", Calls: 2},
+			want: []string{
+				"程序执行成功但没有 return 值",
+				"undefined 折算为 null",
+				"调用链: 共 2 次绑定调用，失败 0 次。",
+			},
+			notWant: []string{"错误类别:"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.res.Describe()
+			if got == "" {
+				t.Fatal("Describe() 不得返回空串")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Fatalf("渲染缺段 %q，全文：\n%s", w, got)
+				}
+			}
+			for _, nw := range tc.notWant {
+				if strings.Contains(got, nw) {
+					t.Fatalf("渲染多出段 %q，全文：\n%s", nw, got)
+				}
+			}
+		})
+	}
+}
+
+// TestResultDescribeChainBounded 归因链明细有界：失败调用再多最多列
+// maxChainListed 条——诊断文本不能膨胀成账单（CallLog 上限即 MaxCalls）。
+func TestResultDescribeChainBounded(t *testing.T) {
+	res := Result{
+		Error: "墙钟超时", ErrorKind: "deadline",
+		Calls: 40, CallLog: make([]CallRecord, 0, 40),
+	}
+	for i := 0; i < 40; i++ {
+		res.CallLog = append(res.CallLog, CallRecord{Name: "t", Status: StatusError, Error: "后端慢"})
+	}
+	got := res.Describe()
+	if n := strings.Count(got, "- t（error）"); n != maxChainListed {
+		t.Fatalf("失败明细应封顶 %d 条，实得 %d 条，全文：\n%s", maxChainListed, n, got)
+	}
+	if !strings.Contains(got, "共 40 次绑定调用，失败 40 次。") {
+		t.Fatalf("摘要行应给全量计数（明细可截、总数不可截），全文：\n%s", got)
+	}
+}
+
+// TestResultDescribeSuggestionsNotDropped 宿主增补的建议不得被建议表覆盖。
+//
+// Render 优先取 Result.Suggestions：宿主在 Run 之后往里补了自己的上下文
+// 建议（如「本仓该走审批流」），Describe 按 ErrorKind 查表替换等于丢信息。
+func TestResultDescribeSuggestionsNotDropped(t *testing.T) {
+	res := Result{Error: "x", ErrorKind: "deadline", Suggestions: []string{"宿主上下文建议"}}
+	got := res.Describe()
+	if !strings.Contains(got, "- 宿主上下文建议") {
+		t.Fatalf("宿主增补的建议必须原样出现，全文：\n%s", got)
+	}
+	if strings.Contains(got, "墙钟超时：把长耗时操作拆成多次调用") {
+		t.Fatalf("Suggestions 非空时不得再查表叠加，全文：\n%s", got)
+	}
+}
+
+// TestPositionDescribe Position.Describe：不可得返回空串（调用方据此省略段），
+// 可得时给 1-based 行列。
+func TestPositionDescribe(t *testing.T) {
+	if got := (Position{}).Describe(); got != "" {
+		t.Fatalf("零值位置应渲染空串，实得 %q", got)
+	}
+	if got := (Position{Line: -1, Column: 1}).Describe(); got != "" {
+		t.Fatalf("非法行号应渲染空串，实得 %q", got)
+	}
+	if got, want := (Position{Line: 2, Column: 5}).Describe(), "第 2 行第 5 列"; got != want {
+		t.Fatalf("位置渲染应逐字为 %q，实得 %q", want, got)
+	}
+}
