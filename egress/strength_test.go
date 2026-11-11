@@ -60,16 +60,61 @@ func TestVerifyVerdictReportsAdvisoryForProxy(t *testing.T) {
 	}
 }
 
-// TestSatisfiedVerdictReportsEnforcedForBackend 钉住另一半：后端做出能力声明
-// ⇒ 强制型。
-func TestSatisfiedVerdictReportsEnforcedForBackend(t *testing.T) {
+// fakeVerifier 一个**能实测**出站隔离的后端（测试替身）。
+type fakeVerifier struct {
+	mode Mode
+}
+
+func (f fakeVerifier) VerifyEgress() (Mode, error) { return f.mode, nil }
+
+// TestSatisfiedVerdictReportsDeclaredForSelfDeclaration 钉住「自报 ≠ 实测」：
+// 后端只是**声明**能力（Enforcer）⇒ 强度是 declared，**不是** enforced。
+//
+// 这是本轮改动的全部意义：声明强度与实际强度之间必须有信号，
+// 否则「代理档已兑现」会被读成「出站已被强制隔离」——而后端自报
+// 恰恰是最容易被读成事实的那种声明。
+func TestSatisfiedVerdictReportsDeclaredForSelfDeclaration(t *testing.T) {
 	spec := Spec{Mode: ModeProxy, Proxy: "http://127.0.0.1:3128"}
 	v, err := spec.SatisfiedVerdict(fakeEnforcer{mode: ModeProxy})
 	if err != nil {
 		t.Fatalf("后端已声明能力，不该判不满足: %v", err)
 	}
+	if v.Strength != StrengthDeclared {
+		t.Fatalf("后端能力声明的兑现强度应为 declared（自报≠实测），实得 %v", v.Strength)
+	}
+}
+
+// TestSatisfiedVerdictReportsEnforcedForMeasuredBackend 钉住另一半：
+// 后端能**实测**（EgressVerifier）⇒ 强制型。
+func TestSatisfiedVerdictReportsEnforcedForMeasuredBackend(t *testing.T) {
+	spec := Spec{Mode: ModeProxy, Proxy: "http://127.0.0.1:3128"}
+	v, err := spec.SatisfiedVerdict(fakeVerifier{mode: ModeProxy})
+	if err != nil {
+		t.Fatalf("后端已实测通过，不该判不满足: %v", err)
+	}
 	if v.Strength != StrengthEnforced {
-		t.Fatalf("后端能力声明的兑现强度应为 enforced，实得 %v", v.Strength)
+		t.Fatalf("实测通过的兑现强度应为 enforced，实得 %v", v.Strength)
+	}
+}
+
+// TestSatisfiedVerdictNeverReportsEnforcedWithoutEvidence 负对照：
+// 只声明能力的后端**永远**不该被判成 enforced。
+//
+// 失效形态（此前真实存在）：自报即 enforced ⇒ 只看 Strength 的读者
+// 会把「后端自称」读成「已经强制」。这条断言是那道门的钉子。
+func TestSatisfiedVerdictNeverReportsEnforcedWithoutEvidence(t *testing.T) {
+	spec := Spec{Mode: ModeProxy, Proxy: "http://127.0.0.1:3128"}
+	for _, provider := range []any{
+		fakeEnforcer{mode: ModeProxy},
+		fakeEnforcer{mode: ModeDenied},
+	} {
+		v, err := spec.SatisfiedVerdict(provider)
+		if err != nil {
+			t.Fatalf("后端已声明能力，不该判不满足: %v", err)
+		}
+		if v.Strength == StrengthEnforced {
+			t.Fatalf("只有自报、没有实测证据的后端不得被判成 enforced（自报≠实测）")
+		}
 	}
 }
 
