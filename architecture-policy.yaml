@@ -244,7 +244,7 @@ modules:
 
   - id: sidetest
     roots: [sidetest]
-    requires: [sideeffect, "ext:github.com/oekit/pkg"]
+    requires: [sideeffect, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -598,8 +598,8 @@ modules:
   # commitgate / sideeffect / taskboard）就没人管了。
   #
   # 为什么它零新依赖：存储用**纯 stdlib 内存实现**。本仓「依赖面窄」是既有优势，
-  # 不为示例牺牲——真实 SQLite/PostgreSQL 的接入形态写成契约（README + sidetest），
-  # 而不是拖一个驱动进内核的依赖图。
+  # 不为示例牺牲——真实 PostgreSQL 的接入形态由下面的 pgrefstore 模块承担
+  # （v0.33.0 起，issue #94）。
   - id: reference-runtime
     roots: [examples/reference-runtime]
     requires: [checkpoint, commitgate, contract, sideeffect, taskboard, "ext:github.com/oekit/pkg"]
@@ -609,6 +609,35 @@ modules:
       参考运行时示例：创建任务 → 多步骤执行 → 中断 → 恢复续跑 → 并发认领 →
       副作用对账。它是**示例**不是能力包：机制面仍在 checkpoint/commitgate/
       sideeffect/taskboard 里，本目录只演示它们怎么接线。
+
+  # PostgreSQL 参考存储（v0.33.0 新增，issue #84 #94 #95 #105）：把 sideeffect /
+  # taskboard / checkpoint 的跨进程判据落到真实数据库的原子操作上。
+  #
+  # 为什么它是**独立示例子包**而不是内核子包：issue #94 的边界声明——它是
+  # **参考实现**，不是内核依赖。内核依旧只给契约与判据；把驱动拖进内核的
+  # 依赖图，等于让「内核不实现存储」名存实亡。放 examples/ 下，宿主抄它、
+  # 不 import 它（参考 examples/reference-runtime 的分工：内存版证判据、
+  # 这一份证跨进程）。
+  #
+  # 为什么 pgx/v5 可以进依赖面：只进**这个示例子包**的依赖图（内核各包
+  # requires 均不含它），且驱动是纯 Go（CGO_ENABLED=0 交叉构建不受影响）。
+  # 「依赖面窄」的判据是内核的依赖图窄，不是仓库一个驱动都不许见。
+  #
+  # 为什么它必须登记成模块：未登记的包目录对依赖方向门禁隐形。它的判据
+  # 面来自共享契约套件（sidetest / boardtest / RunSinkContract，测试侧 import），
+  # 生产侧只允许依赖 checkpoint / sideeffect / taskboard 与 pgx、oekit/pkg
+  # ——多引一个机制包就红。
+  - id: pgrefstore
+    roots: [examples/pgstore, examples/pgstore/cmd/pgsmoke]
+    requires: [checkpoint, sideeffect, taskboard, "ext:github.com/jackc/pgx/v5", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      sideeffect.Store / sideeffect.FencedSink / taskboard.Board（含 RenewingBoard）/
+      checkpoint.StoreCAS 的 PostgreSQL 参考实现 + SIGKILL 故障恢复 e2e + 部署冒烟
+      （cmd/pgsmoke）+ docker compose 集成环境。Acquire 三判合一在一个事务里
+      （SELECT … FOR UPDATE 行锁），栅栏预占是一条带条件的 upsert，写入体走
+      同一事务（不得部分写）。契约判定在共享契约套件（与内存版同一段判据）。
 
   - id: archcheck
     roots: [archcheck]
@@ -1043,6 +1072,11 @@ dependency_direction:
   ext_prefixes:
     - github.com/oagentkit
     - github.com/oekit
+    # PostgreSQL 驱动（v0.33.0 起，issue #94）：只被 examples/pgstore 的
+    # requires 引用（PG 参考实现）。它进不了内核任何包的依赖图——
+    # 登记在这里是让「谁在用 pgx」可判：内核包若 import 它，依赖方向门禁
+    # 当场红（内核不实现存储，判据面不拖驱动）。
+    - github.com/jackc
 
 # ── 执行沙箱后端的档位登记 ──
 #
@@ -1263,7 +1297,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

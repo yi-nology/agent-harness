@@ -221,3 +221,11 @@ packages:
     level: Experimental
     since: v0.33.0
     reason: 参考实现（package main）。示例演示契约怎么满足，不构成任何兼容承诺。
+  - pkg: examples/pgstore
+    level: Experimental
+    since: v0.33.0
+    reason: PostgreSQL 参考实现（issue #94 #84 #95）。参考实现不是内核依赖，随契约套件与参考部署演进，不构成任何兼容承诺。
+  - pkg: examples/pgstore/cmd/pgsmoke
+    level: Experimental
+    since: v0.33.0
+    reason: 部署冒烟入口（issue #105）。它的验收是 compose 冒烟 / make integration 真跑，不是稳定 API 面。

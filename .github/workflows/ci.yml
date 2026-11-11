@@ -89,3 +89,39 @@ jobs:
       # 静默跳过——这正是要的形态。
       - name: make check
         run: make check
+
+  # PG 参考实现的 integration 层（issue #94 #95）：共享契约套件
+  # （sidetest / boardtest / 栅栏套件）+ SIGKILL 故障恢复 e2e 在真实
+  # PostgreSQL 上跑。为什么是独立 job 而不是塞进 make check：check 必须在
+  # 任何机器上一条命令可跑（不依赖 docker），而这里的判据要真的连数据库。
+  # 判据强度不变——套件场景级硬失败不静默跳过；service container 保证
+  # CI 每次推送都真跑（本地等价入口：make integration / compose verify profile）。
+  integration-pg:
+    name: PG 契约套件 + SIGKILL e2e（postgres service）
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gakref
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gakref"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: PG 契约套件 + 故障恢复 e2e（硬失败，无环境开洞）
+        env:
+          GAK_PGREF_DSN: postgres://postgres:postgres@localhost:5432/gakref?sslmode=disable
+        run: |
+          CGO_ENABLED=0 go test ./examples/pgstore/ -count=1 -timeout 15m -v
