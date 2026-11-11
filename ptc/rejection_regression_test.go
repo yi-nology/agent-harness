@@ -54,7 +54,7 @@ func TestPlainBindingErrorStaysRuntime(t *testing.T) {
 	res := Run(context.Background(), `host.bad()`,
 		[]Binding{{Name: "bad", Call: func(context.Context, string) (string, error) {
 			return "", context.DeadlineExceeded
-		}}}, Options{})
+		}}}, Options{Stages: allowStages()})
 	// context.DeadlineExceeded 无 Kind() 接口 ⇒ 无分类 ⇒ runtime（非 deadline）
 	if res.ErrorKind != "runtime" {
 		t.Fatalf("无分类的绑定失败保持 runtime, got %q", res.ErrorKind)
@@ -81,7 +81,7 @@ func TestToolfailFailureClassified(t *testing.T) {
 		res := Run(context.Background(), `await host.t()`,
 			[]Binding{{Name: "t", Call: func(context.Context, string) (string, error) {
 				return "", toolfail.New(c.class, "", "宿主拒绝")
-			}}}, Options{})
+			}}}, Options{Stages: allowStages()})
 		if res.ErrorKind != string(c.class) {
 			t.Fatalf("%s: ErrorKind 应为规范分类 %q, got %q (Error=%q)",
 				c.name, c.class, res.ErrorKind, res.Error)
@@ -95,7 +95,7 @@ func TestToolfailFailureClassSurvivesWrap(t *testing.T) {
 	res := Run(context.Background(), `await host.t()`,
 		[]Binding{{Name: "t", Call: func(context.Context, string) (string, error) {
 			return "", fmt.Errorf("工具装饰链: %w", toolfail.New(toolfail.ClassPermissionDenied, "", "宿主拒绝"))
-		}}}, Options{})
+		}}}, Options{Stages: allowStages()})
 	if res.ErrorKind != "permission_denied" {
 		t.Fatalf("包装后的规范分类不得丢, got %q (Error=%q)", res.ErrorKind, res.Error)
 	}
@@ -117,7 +117,7 @@ func TestCustomKindErrorNotStagePrefixed(t *testing.T) {
 	res := Run(context.Background(), `await host.t()`,
 		[]Binding{{Name: "t", Call: func(context.Context, string) (string, error) {
 			return "", &customKindError{msg: "自定义宿主拒绝：策略不允许", kind: "permission_denied"}
-		}}}, Options{})
+		}}}, Options{Stages: allowStages()})
 	if res.ErrorKind != "permission_denied" {
 		t.Fatalf("ErrorKind 仍是该 kind, got %q", res.ErrorKind)
 	}
@@ -133,7 +133,7 @@ func TestToolfailFailureNotStagePrefixed(t *testing.T) {
 	res := Run(context.Background(), `await host.t()`,
 		[]Binding{{Name: "t", Call: func(context.Context, string) (string, error) {
 			return "", toolfail.New(toolfail.ClassPermissionDenied, "", "宿主拒绝")
-		}}}, Options{})
+		}}}, Options{Stages: allowStages()})
 	if res.ErrorKind != "permission_denied" || strings.Contains(res.Error, "判定环") {
 		t.Fatalf("规范失败应走 else 分支（无前缀、分类原样）, got kind=%q Error=%q",
 			res.ErrorKind, res.Error)
@@ -235,7 +235,7 @@ func TestStageFailureStillPrefixed(t *testing.T) {
 func TestRejectedRenderInterruptClassifiedAsDeadline(t *testing.T) {
 	res := Run(context.Background(),
 		`throw {toString: function(){ while (true) {} }}`,
-		nil, Options{Timeout: 60 * time.Millisecond})
+		nil, Options{Stages: allowStages(), Timeout: 60 * time.Millisecond})
 	if res.ErrorKind != "deadline" {
 		t.Fatalf("渲染窗口被墙钟打断必须归因 deadline（不是 host_panic），got %q（Error=%q）",
 			res.ErrorKind, res.Error)
@@ -274,7 +274,7 @@ func TestRejectedCarrierWithPoisonedToStringStillClassified(t *testing.T) {
 func TestRejectedHostileRenderFallsBackSafely(t *testing.T) {
 	res := Run(context.Background(),
 		`throw {toString: function(){ throw new Error("炸渲染") }}`,
-		nil, Options{Timeout: 5 * time.Second})
+		nil, Options{Stages: allowStages(), Timeout: 5 * time.Second})
 	if res.OK {
 		t.Fatal("被拒程序不得成功")
 	}
@@ -290,7 +290,7 @@ func TestRejectedHostileRenderFallsBackSafely(t *testing.T) {
 // TestDeadlineDuringProgramBodyStaysDeadline 对照组：墙钟打断的是**程序本体**
 // （非收口窗口）——该路径一直归因 deadline，修 #67 不得让它回归。
 func TestDeadlineDuringProgramBodyStaysDeadline(t *testing.T) {
-	res := Run(context.Background(), `while (true) {}`, nil, Options{Timeout: 60 * time.Millisecond})
+	res := Run(context.Background(), `while (true) {}`, nil, Options{Stages: allowStages(), Timeout: 60 * time.Millisecond})
 	if res.ErrorKind != "deadline" {
 		t.Fatalf("程序本体被墙钟打断必须 deadline，got %q（Error=%q）", res.ErrorKind, res.Error)
 	}
@@ -303,7 +303,7 @@ func TestDeadlineDuringProgramBodyStaysDeadline(t *testing.T) {
 func TestFulfilledExportInterruptNotHostPanic(t *testing.T) {
 	res := Run(context.Background(),
 		`return { get x(){ while (true) {} } }`,
-		nil, Options{Timeout: 60 * time.Millisecond})
+		nil, Options{Stages: allowStages(), Timeout: 60 * time.Millisecond})
 	if res.ErrorKind != "deadline" {
 		t.Fatalf("fulfilled 值导出被墙钟打断必须归因 deadline（不是 host_panic），got %q（Error=%q）",
 			res.ErrorKind, res.Error)

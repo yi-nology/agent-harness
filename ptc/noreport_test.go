@@ -106,7 +106,7 @@ func TestSubprocessDoesNotHangWhenChildNeverReports(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{Stages: allowStages(),
 		ExePath: bin,
 		Program: "return 1;",
 		Timeout: 30 * time.Second,
@@ -153,7 +153,7 @@ func TestSubprocessHonorsCtxCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{Stages: allowStages(),
 		ExePath: bin,
 		Program: "return 1;",
 		Timeout: 30 * time.Second,
@@ -200,7 +200,7 @@ func TestSubprocessTimesOutWithoutCtxDeadline(t *testing.T) {
 	// ctx **不带** deadline ⇒ 只能靠墙钟预算收场。
 	ctx := context.Background()
 
-	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{Stages: allowStages(),
 		ExePath: bin,
 		Program: "return 1;",
 		// 墙钟预算压到 2s（真实默认是 DefaultTimeout，太长不适合测试）。

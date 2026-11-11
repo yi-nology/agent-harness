@@ -31,7 +31,7 @@ func TestOptionalParamOmitted(t *testing.T) {
 	var got string
 	bind := []Binding{optBind("get_logs", "get_logs(host, count?)", `ok`, &got)}
 
-	r := Run(context.Background(), `return host.get_logs("h1")`, bind, Options{})
+	r := Run(context.Background(), `return host.get_logs("h1")`, bind, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("少传可选形参应成功，实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -48,7 +48,7 @@ func TestOptionalParamProvided(t *testing.T) {
 	var got string
 	bind := []Binding{optBind("get_logs", "get_logs(host, count?)", `ok`, &got)}
 
-	r := Run(context.Background(), `return host.get_logs("h1", 3600)`, bind, Options{})
+	r := Run(context.Background(), `return host.get_logs("h1", 3600)`, bind, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -65,7 +65,7 @@ func TestExplicitUndefinedTreatedAsAbsent(t *testing.T) {
 	var got string
 	bind := []Binding{optBind("get_logs", "get_logs(host, count?)", `ok`, &got)}
 
-	r := Run(context.Background(), `return host.get_logs("h1", undefined)`, bind, Options{})
+	r := Run(context.Background(), `return host.get_logs("h1", undefined)`, bind, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -81,7 +81,7 @@ func TestOptionalStillArityBounded(t *testing.T) {
 		Name: "get_logs", Signature: "get_logs(host, count?)",
 		Call: func(context.Context, string) (string, error) { hits++; return "x", nil },
 	}}
-	r := Run(context.Background(), `return host.get_logs()`, bind, Options{})
+	r := Run(context.Background(), `return host.get_logs()`, bind, Options{Stages: allowStages()})
 	if r.OK {
 		t.Fatal("必填形参缺失应被拒")
 	}
@@ -101,7 +101,7 @@ func TestFirstOptionalParamOmitted(t *testing.T) {
 	for _, prog := range []string{`return host.t()`, `return host.t(undefined)`} {
 		var got string
 		bind := []Binding{optBind("t", "t(a?)", `ok`, &got)}
-		r := Run(context.Background(), prog, bind, Options{})
+		r := Run(context.Background(), prog, bind, Options{Stages: allowStages()})
 		if !r.OK {
 			t.Fatalf("%s: 实得 %q / %q", prog, r.ErrorKind, r.Error)
 		}
@@ -115,7 +115,7 @@ func TestFirstOptionalParamOmitted(t *testing.T) {
 func TestFirstOptionalParamProvided(t *testing.T) {
 	var got string
 	bind := []Binding{optBind("t", "t(a?)", `ok`, &got)}
-	r := Run(context.Background(), `return host.t("x")`, bind, Options{})
+	r := Run(context.Background(), `return host.t("x")`, bind, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -132,7 +132,7 @@ func TestFirstOptionalParamProvided(t *testing.T) {
 func TestFirstRequiredUndefinedStaysOmitted(t *testing.T) {
 	var got string
 	bind := []Binding{optBind("t", "t(a, b)", `ok`, &got)}
-	r := Run(context.Background(), `return host.t(undefined, "y")`, bind, Options{})
+	r := Run(context.Background(), `return host.t(undefined, "y")`, bind, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -152,7 +152,7 @@ func TestOptionalOutOfOrderRejected(t *testing.T) {
 	r := Run(context.Background(), `return 1`, []Binding{{
 		Name: "t", Signature: "t(a?, b)",
 		Call: func(context.Context, string) (string, error) { return "x", nil },
-	}}, Options{})
+	}}, Options{Stages: allowStages()})
 	if r.OK || r.ErrorKind != "binding_signature" {
 		t.Fatalf("可选形参排在必填之前应被拒，实得 OK=%v kind=%q", r.OK, r.ErrorKind)
 	}
@@ -169,7 +169,7 @@ func TestAllRequiredKeepsStrictArity(t *testing.T) {
 		Call: func(context.Context, string) (string, error) { hits++; return "x", nil },
 	}}
 	const prog = `try { host.t("x") } catch (e) { return "caught" } return "未拦截"`
-	r := Run(context.Background(), prog, bind, Options{})
+	r := Run(context.Background(), prog, bind, Options{Stages: allowStages()})
 
 	if !r.OK {
 		t.Fatalf("try/catch 后应成功，实得 %q / %q", r.ErrorKind, r.Error)
@@ -189,7 +189,7 @@ func TestArityMessageOmitsDegenerateRange(t *testing.T) {
 		Call: func(context.Context, string) (string, error) { return "x", nil },
 	}}
 	const prog = `try { host.t("x") } catch (e) { return e.message } return "未拦截"`
-	r := Run(context.Background(), prog, bind, Options{})
+	r := Run(context.Background(), prog, bind, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("实得 %q / %q", r.ErrorKind, r.Error)
 	}

@@ -17,7 +17,7 @@ import (
 // 而差一行的行号比没有行号更坏——模型会照着去改一行根本没问题的代码。
 func TestSyntaxErrorLocationPointsIntoUserProgram(t *testing.T) {
 	const prog = "let a = 1;\nlet b = 2;\nlet c = (;"
-	r := Run(context.Background(), prog, nil, Options{})
+	r := Run(context.Background(), prog, nil, Options{Stages: allowStages()})
 
 	if r.OK || r.ErrorKind != "syntax" {
 		t.Fatalf("应有语法错误，实得 OK=%v kind=%q", r.OK, r.ErrorKind)
@@ -33,7 +33,7 @@ func TestSyntaxErrorLocationPointsIntoUserProgram(t *testing.T) {
 
 // TestSyntaxErrorOnFirstLine 第一行出错时折算不能把行号推到 0。
 func TestSyntaxErrorOnFirstLine(t *testing.T) {
-	r := Run(context.Background(), `let x = (;`, nil, Options{})
+	r := Run(context.Background(), `let x = (;`, nil, Options{Stages: allowStages()})
 	if r.Location.Line != 1 {
 		t.Fatalf("首行语法错误应报第 1 行，实得第 %d 行（折算把首行减没了？）", r.Location.Line)
 	}
@@ -49,7 +49,7 @@ func TestSyntaxErrorOnFirstLine(t *testing.T) {
 // 问题的代码，比没有位置更坏。
 func TestRuntimeRejectionDoesNotFabricatePosition(t *testing.T) {
 	const prog = "const x = 1;\nconst y = null;\nreturn x.missing.deep;"
-	r := Run(context.Background(), prog, nil, Options{})
+	r := Run(context.Background(), prog, nil, Options{Stages: allowStages()})
 
 	if r.OK || r.ErrorKind != "runtime" {
 		t.Fatalf("应产生 runtime 错误，实得 OK=%v kind=%q Error=%q", r.OK, r.ErrorKind, r.Error)
@@ -114,7 +114,7 @@ func TestLocationOfExceptionOnNonJSError(t *testing.T) {
 // TestErrorStringCarriesPosition 错误串本身也要带位置——只读 Error 字段的调用方
 // （不看结构化字段的那类）才是多数。
 func TestErrorStringCarriesPosition(t *testing.T) {
-	r := Run(context.Background(), "let a = 1;\nlet b = (;", nil, Options{})
+	r := Run(context.Background(), "let a = 1;\nlet b = (;", nil, Options{Stages: allowStages()})
 	if !strings.Contains(r.Error, "第 2 行") {
 		t.Fatalf("错误串应含行号位置，实得 %q", r.Error)
 	}
@@ -125,14 +125,14 @@ func TestErrorStringCarriesPosition(t *testing.T) {
 // 「建议表」容易腐化的方式不是整条丢失，而是某个类别忘了加——所以这里逐类点。
 func TestSuggestionsPresentForEveryFailureKind(t *testing.T) {
 	cases := map[string]Result{
-		"deadline":          Run(context.Background(), "while(true){}", nil, Options{Timeout: 30_000_000}),
-		"budget_calls":      Run(context.Background(), "for(let i=0;i<99;i++) host.echo(String(i));", []Binding{okBind("echo", "x")}, Options{MaxCalls: 2}),
-		"budget_bytes":      Run(context.Background(), "return host.big();", []Binding{{Name: "big", Call: func(context.Context, string) (string, error) { return strings.Repeat("x", 64), nil }}}, Options{MaxBytes: 8}),
-		"pending":           Run(context.Background(), "await new Promise(function(){}); return 1;", nil, Options{}),
-		"bad_result":        Run(context.Background(), "return function(){}", nil, Options{}),
-		"syntax":            Run(context.Background(), "let c = (;", nil, Options{}),
-		"binding_collision": Run(context.Background(), "return 1", []Binding{okBind("a-b", "1"), okBind("a_b", "2")}, Options{}),
-		"runtime":           Run(context.Background(), "const y = null; return y.x.y;", nil, Options{}),
+		"deadline":          Run(context.Background(), "while(true){}", nil, Options{Stages: allowStages(), Timeout: 30_000_000}),
+		"budget_calls":      Run(context.Background(), "for(let i=0;i<99;i++) host.echo(String(i));", []Binding{okBind("echo", "x")}, Options{Stages: allowStages(), MaxCalls: 2}),
+		"budget_bytes":      Run(context.Background(), "return host.big();", []Binding{{Name: "big", Call: func(context.Context, string) (string, error) { return strings.Repeat("x", 64), nil }}}, Options{Stages: allowStages(), MaxBytes: 8}),
+		"pending":           Run(context.Background(), "await new Promise(function(){}); return 1;", nil, Options{Stages: allowStages()}),
+		"bad_result":        Run(context.Background(), "return function(){}", nil, Options{Stages: allowStages()}),
+		"syntax":            Run(context.Background(), "let c = (;", nil, Options{Stages: allowStages()}),
+		"binding_collision": Run(context.Background(), "return 1", []Binding{okBind("a-b", "1"), okBind("a_b", "2")}, Options{Stages: allowStages()}),
+		"runtime":           Run(context.Background(), "const y = null; return y.x.y;", nil, Options{Stages: allowStages()}),
 		"stage_denied": Run(context.Background(), `host.t("x")`,
 			[]Binding{{Name: "t", Call: func(context.Context, string) (string, error) { return "x", nil }}},
 			Options{Stages: []invoke.Stage{invoke.StageFunc{StageName: "审计门", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
@@ -168,7 +168,7 @@ func TestSuggestionsPresentForEveryFailureKind(t *testing.T) {
 // TestSuccessHasNoSuggestions 成功不该带任何建议——诊断是失败面，成功时出现它
 // 说明有分支漏判。
 func TestSuccessHasNoSuggestions(t *testing.T) {
-	r := Run(context.Background(), `return 1`, nil, Options{})
+	r := Run(context.Background(), `return 1`, nil, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("应成功，实得 %q", r.Error)
 	}
@@ -220,7 +220,7 @@ func TestResultDescribeRendering(t *testing.T) {
 	}{
 		{
 			name: "失败_带位置与建议",
-			res:  Run(context.Background(), "let a = 1;\nlet b = (;", nil, Options{}),
+			res:  Run(context.Background(), "let a = 1;\nlet b = (;", nil, Options{Stages: allowStages()}),
 			want: []string{
 				"错误类别: syntax",
 				"错误: ",
@@ -232,7 +232,7 @@ func TestResultDescribeRendering(t *testing.T) {
 		},
 		{
 			name: "失败_无位置不编位置",
-			res:  Run(context.Background(), "const y = null; return y.x.y;", nil, Options{}),
+			res:  Run(context.Background(), "const y = null; return y.x.y;", nil, Options{Stages: allowStages()}),
 			want: []string{"错误类别: runtime", "修复建议:"},
 			// rejection 路径拿不到程序栈（见诊断面文件头）——省略位置段，
 			// 不能渲染出「第 0 行」
@@ -267,7 +267,7 @@ func TestResultDescribeRendering(t *testing.T) {
 		},
 		{
 			name: "成功_有 return 值",
-			res:  Run(context.Background(), `return 1`, nil, Options{}),
+			res:  Run(context.Background(), `return 1`, nil, Options{Stages: allowStages()}),
 			want: []string{"程序执行成功：return 值 ", "绑定调用 0 次。"},
 			notWant: []string{
 				"错误类别:", "修复建议:", "位置:", "调用链:", // 成功是摘要形态，诊断段全不出

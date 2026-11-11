@@ -23,6 +23,20 @@ func allowStage(name string) invoke.Stage {
 	}}
 }
 
+// allowStages 一条恒放行的判定环（切片形态）。
+//
+// # 为什么测试要显式装一条放行环
+//
+// v0.32.0 起 PTC **缺省即拒绝**：装配了工具绑定却没装判定环 ⇒ 拒绝执行
+// （ErrorKindUnmanaged）。于是「本用例要验的是别的东西（签名、预算、诊断），
+// 判定环不是被验对象」这件事，必须**显式说出来**——装一条恒放行的环。
+//
+// 顺带的好处：这些用例从此走的是**受管路径**（判定环真的被调用了），
+// 而不是「压根没人判」的路径。测试与生产走同一条路，才叫覆盖。
+func allowStages() []invoke.Stage {
+	return []invoke.Stage{allowStage("测试放行")}
+}
+
 // TestStagesGateCodeModeCalls 判定环必须真正拦下程序里的工具调用。
 //
 // 这是本条改动的全部理由：此前 host.<tool>() 直达宿主工具，披露门、审计门、
@@ -179,7 +193,7 @@ func TestStagesFaultAndDenyGetDistinctKinds(t *testing.T) {
 	// 措辞会变，「建议是否指错了方向」这件事不会。
 	denied := Run(context.Background(), `host.t("x")`, []Binding{bind},
 		Options{Stages: []invoke.Stage{deny}})
-	runtimeCase := Run(context.Background(), `const y = null; return y.x.y;`, nil, Options{})
+	runtimeCase := Run(context.Background(), `const y = null; return y.x.y;`, nil, Options{Stages: allowStages()})
 	if runtimeCase.ErrorKind != "runtime" {
 		t.Fatalf("对照样本应是 runtime，实得 %q", runtimeCase.ErrorKind)
 	}
@@ -271,12 +285,25 @@ func TestStagesReceiveCallArgs(t *testing.T) {
 	}
 }
 
-// TestNoStagesKeepsLegacyBehaviour 未装配判定环时行为与引入前逐字一致。
+// TestNoStagesKeepsLegacyBehaviour 未装配判定环时的行为。
+//
+// # v0.32.0 起这条判据翻面了
+//
+// 此前：未装配判定环 ⇒ 照常执行（"行为与引入 Stages 之前逐字一致"）。
+// 现在：**装配了工具绑定却没装判定环 ⇒ 拒绝执行**（ErrorKindUnmanaged）。
+//
+// 翻面的理由：那条「逐字一致」把一条**没有门禁的路径**留在了默认位上，
+// 而它没有任何信号——调用方拿到的是一个正常的执行结果，而程序里的
+// host.<tool>(...) 已经直达宿主工具。本包是对外推荐的批量调用路径，
+// 默认位必须是安全那一侧。
+//
+// 完整的判据用例在 unmanaged_test.go；这里只钉住「判定环在时照常执行」
+// 这一半（免得有人把门禁接上后把正常路径也堵死）。
 func TestNoStagesKeepsLegacyBehaviour(t *testing.T) {
 	bind := Binding{Name: "t", Call: func(context.Context, string) (string, error) { return "x", nil }}
-	r := Run(context.Background(), `return host.t("x")`, []Binding{bind}, Options{})
+	r := Run(context.Background(), `return host.t("x")`, []Binding{bind}, Options{Stages: allowStages()})
 	if !r.OK {
-		t.Fatalf("未装配判定环应照常执行，实得 %q / %q", r.ErrorKind, r.Error)
+		t.Fatalf("装了放行判定环应照常执行，实得 %q / %q", r.ErrorKind, r.Error)
 	}
 	if len(r.CallLog) != 1 || r.CallLog[0].Status != StatusOK {
 		t.Fatalf("留痕状态应为 ok，实得 %+v", r.CallLog)

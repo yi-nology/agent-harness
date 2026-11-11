@@ -107,7 +107,7 @@ const childBinEnv = "AGENT_HARNESS_PTC_CHILD_BIN"
 func TestSubprocessExecutesProgram(t *testing.T) {
 	bin := buildChildProgram(t)
 	called := make(chan string, 1)
-	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{Stages: allowStages(),
 		ExePath: bin,
 		Program: `return await host.echo("hi");`,
 		Bindings: []ptc.Binding{{
@@ -157,7 +157,7 @@ func TestSubprocessMemoryLimitKillsChild(t *testing.T) {
 	bin := buildChildProgram(t)
 	// 上限给 256MB：足够跑起 Go 运行时与 goja，但程序申请 1GB 时必被杀。
 	const memLimit = 256 << 20
-	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{Stages: allowStages(),
 		ExePath:   bin,
 		MaxMemory: memLimit,
 		// 程序申请远超上限的内存：连分配都过不去。
@@ -239,7 +239,7 @@ func TestSubprocessStageOutcomeClassified(t *testing.T) {
 func TestSubprocessHonorsTighterRequestBudget(t *testing.T) {
 	bin := buildChildProgram(t)
 	calls := 0
-	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+	p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{Stages: allowStages(),
 		ExePath: bin,
 		Program: `await host.echo("1"); await host.echo("2"); await host.echo("3"); return "done";`,
 		Bindings: []ptc.Binding{{Name: "echo", Call: func(context.Context, string) (string, error) {

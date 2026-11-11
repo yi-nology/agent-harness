@@ -28,7 +28,7 @@ func TestSignatureBindingPacksNamedArgs(t *testing.T) {
 	var got string
 	bind := []Binding{sigBind("get_logs", "get_logs(host, count)", `ok`, &got)}
 
-	r := Run(context.Background(), `return host.get_logs("h1", 3600)`, bind, Options{})
+	r := Run(context.Background(), `return host.get_logs("h1", 3600)`, bind, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("应成功，实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -44,7 +44,7 @@ func TestSignatureBindingPacksNamedArgs(t *testing.T) {
 func TestSignatureZeroParamBinding(t *testing.T) {
 	var got string
 	bind := []Binding{sigBind("now", "now()", `"T0"`, &got)}
-	r := Run(context.Background(), `return host.now()`, bind, Options{})
+	r := Run(context.Background(), `return host.now()`, bind, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("无参形态应成功，实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -66,7 +66,7 @@ func TestSignatureArityMismatchIsCatchable(t *testing.T) {
 	}}
 	// try/catch 后程序应当正常完成——元数错是**调用点**的错，不该终止整个程序。
 	const prog = `try { host.get_logs("h1") } catch (e) { return "caught:" + e.message } return "未捕获"`
-	r := Run(context.Background(), prog, bind, Options{})
+	r := Run(context.Background(), prog, bind, Options{Stages: allowStages()})
 
 	if !r.OK {
 		t.Fatalf("try/catch 后应成功，实得 %q / %q", r.ErrorKind, r.Error)
@@ -101,7 +101,7 @@ func TestSignatureInvalidRejectedAtAssembly(t *testing.T) {
 				Name: "get_logs", Signature: sig,
 				Call: func(context.Context, string) (string, error) { hits++; return "x", nil },
 			}}
-			r := Run(context.Background(), `return 1`, bind, Options{})
+			r := Run(context.Background(), `return 1`, bind, Options{Stages: allowStages()})
 			if r.OK {
 				t.Fatal("非法形态应在装配期被拒")
 			}
@@ -123,7 +123,7 @@ func TestSignatureNameMismatchRejected(t *testing.T) {
 	r := Run(context.Background(), `return 1`, []Binding{{
 		Name: "get-logs", Signature: "getLogs(host)",
 		Call: func(context.Context, string) (string, error) { return "x", nil },
-	}}, Options{})
+	}}, Options{Stages: allowStages()})
 	if r.OK || r.ErrorKind != "binding_signature" {
 		t.Fatalf("形态名与绑定名不一致应被拒，实得 OK=%v kind=%q", r.OK, r.ErrorKind)
 	}
@@ -136,7 +136,7 @@ func TestMixedSignatureAndPlainBindings(t *testing.T) {
 		okBind("echo", "plain"),
 	}
 	const prog = `return host.get_logs("h1") + "/" + host.echo("raw-json")`
-	r := Run(context.Background(), prog, bind, Options{})
+	r := Run(context.Background(), prog, bind, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("混用应成功，实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -155,7 +155,7 @@ func TestSignatureStillCountsAgainstCallBudget(t *testing.T) {
 		Name: "loop", Signature: "loop(n)",
 		Call: func(context.Context, string) (string, error) { got++; return "ok", nil },
 	}}
-	r := Run(context.Background(), `for (let i=0;i<99;i++) host.loop(i); return 1`, bind, Options{MaxCalls: 3})
+	r := Run(context.Background(), `for (let i=0;i<99;i++) host.loop(i); return 1`, bind, Options{Stages: allowStages(), MaxCalls: 3})
 	if r.OK || r.ErrorKind != "budget_calls" {
 		t.Fatalf("结构化调用同样应受调用次数闸约束，实得 OK=%v kind=%q", r.OK, r.ErrorKind)
 	}
@@ -168,7 +168,7 @@ func TestSignatureStillCountsAgainstCallBudget(t *testing.T) {
 
 // TestDiscoverExposedToProgram 装配了 Discoverer 就该能在程序里查到工具。
 func TestDiscoverExposedToProgram(t *testing.T) {
-	opts := Options{Discover: func(q string) []Discovered {
+	opts := Options{Stages: allowStages(), Discover: func(q string) []Discovered {
 		if q == "重启" {
 			return []Discovered{
 				{Name: "restart_service", Signature: "restart_service(host)", Description: "重启服务"},
@@ -194,7 +194,7 @@ func TestDiscoverExposedToProgram(t *testing.T) {
 // 那是比「函数不存在」更坏的失败：前者给出错误结论，后者给出可纠正的 ReferenceError。
 func TestDiscoverNotMountedWhenUnconfigured(t *testing.T) {
 	const prog = `try { discover("x"); return "竟然存在" } catch (e) { return "不存在" }`
-	r := Run(context.Background(), prog, nil, Options{})
+	r := Run(context.Background(), prog, nil, Options{Stages: allowStages()})
 	if !r.OK || r.Value != `"不存在"` {
 		t.Fatalf("未装配时不应挂出该全局，实得 OK=%v value=%s err=%q", r.OK, r.Value, r.Error)
 	}
@@ -203,7 +203,7 @@ func TestDiscoverNotMountedWhenUnconfigured(t *testing.T) {
 // TestDiscoverReceivesQueryUnified 查询参数与绑定参数同一套归一（字符串或对象都行）。
 func TestDiscoverReceivesQueryUnified(t *testing.T) {
 	var saw string
-	opts := Options{Discover: func(q string) []Discovered {
+	opts := Options{Stages: allowStages(), Discover: func(q string) []Discovered {
 		saw = q
 		return nil
 	}}

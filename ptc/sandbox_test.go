@@ -23,7 +23,7 @@ import (
 func TestSandboxHasNoNetworkPrimitives(t *testing.T) {
 	// 正控：host 必须存在。否则本用例会因 VM 整体坏掉而「假绿」——
 	// 一个什么都没挂的沙箱当然没有 fetch。
-	hostType := Run(context.Background(), `return typeof host`, nil, Options{})
+	hostType := Run(context.Background(), `return typeof host`, nil, Options{Stages: allowStages()})
 	if !hostType.OK || strings.TrimSpace(hostType.Value) != `"object"` {
 		t.Fatalf("正控失效：host 应可用，实得 OK=%v value=%s err=%q", hostType.OK, hostType.Value, hostType.Error)
 	}
@@ -36,7 +36,7 @@ func TestSandboxHasNoNetworkPrimitives(t *testing.T) {
 		// 定时器（VM 无定时器是既有设计；出现即说明有人给 VM 加了异步能力）
 		"setTimeout", "setInterval", "queueMicrotask",
 	} {
-		r := Run(context.Background(), `return typeof `+id, nil, Options{})
+		r := Run(context.Background(), `return typeof `+id, nil, Options{Stages: allowStages()})
 		if !r.OK {
 			t.Fatalf("求值 typeof %q 本身失败: %q", id, r.Error)
 		}
@@ -61,7 +61,7 @@ func TestDiscoverIsTheOnlyExtraGlobal(t *testing.T) {
 	}
 
 	// 未装配时不挂。
-	r = Run(context.Background(), `return typeof discover`, nil, Options{})
+	r = Run(context.Background(), `return typeof discover`, nil, Options{Stages: allowStages()})
 	if strings.TrimSpace(r.Value) != `"undefined"` {
 		t.Fatalf("未装配时不应存在 discover，实得 %s", r.Value)
 	}
@@ -78,7 +78,7 @@ func TestSandboxCannotReachHostBindingInternals(t *testing.T) {
 		// 宿主侧回一个「不该被程序拿到」的东西：argsJSON 是文本，宿主自己造的 Go 值出不去。
 		return "ok", nil
 	}}
-	r := Run(context.Background(), `return typeof host.t`, []Binding{bind}, Options{})
+	r := Run(context.Background(), `return typeof host.t`, []Binding{bind}, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("实得 %q / %q", r.ErrorKind, r.Error)
 	}

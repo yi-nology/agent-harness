@@ -34,6 +34,7 @@ func TestByteBudgetCoversErrorPath(t *testing.T) {
 		return "done";
 	`
 	r := Run(context.Background(), prog, []Binding{heavy}, Options{
+		Stages:   allowStages(),
 		MaxCalls: 50,
 		MaxBytes: maxBytes,
 		Timeout:  0,
@@ -67,7 +68,7 @@ func TestByteBudgetStillRecordsErrorCalls(t *testing.T) {
 		}
 		return "done";
 	`
-	r := Run(context.Background(), prog, []Binding{heavy}, Options{MaxCalls: 50, MaxBytes: maxBytes})
+	r := Run(context.Background(), prog, []Binding{heavy}, Options{Stages: allowStages(), MaxCalls: 50, MaxBytes: maxBytes})
 
 	if len(r.CallLog) == 0 {
 		t.Fatalf("报错调用也必须留痕（CallLog 为空即回归）")

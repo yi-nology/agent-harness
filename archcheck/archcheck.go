@@ -54,7 +54,6 @@ package archcheck
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -181,6 +180,17 @@ func Run(root string, pol *Policy) (*Result, error) {
 		res.Violations = append(res.Violations, vs...)
 	}
 
+	// 未受管逃逸门禁：生产代码不得显式选择「无判定环执行」（unmanaged.go）。
+	//
+	// PTC 的安全默认是 fail-closed（有绑定无判定环 ⇒ 拒绝执行），
+	// 但那留了一个逃逸口。逃逸口若能在生产代码里随手写，它就从「显式声明」
+	// 退化成「默认路径」——而默认路径是没人会去看的地方。
+	vs, err := unmanagedEscapeViolations(root)
+	if err != nil {
+		return nil, err
+	}
+	res.Violations = append(res.Violations, vs...)
+
 	// 子进程出口门禁：每个 spawn 点都要登记出口档位，要求经代理的必须看得见兑现
 	// （egresspaths.go）。段缺省也算开启——「这个子进程在强制面内吗」必须有人问。
 	egPaths := EgressPaths{}
@@ -227,6 +237,9 @@ func Run(root string, pol *Policy) (*Result, error) {
 	if egPaths.on() {
 		sevOf[egressPathRuleID] = sevOrError(egPaths.Severity)
 	}
+	// 未受管逃逸门禁恒为 error：它是 PTC 安全默认（缺判定环即拒）的配套护栏——
+	// 逃逸口若能在生产代码里随手写，它就从「显式声明」退化成「默认路径」。
+	sevOf[unmanagedEscapeRuleID] = "error"
 	// 自校验恒为 error：policy 结构有问题时，门禁必须响亮失败，
 	// 而不是「其他规则都绿就当通过」——那正是它要防的那种静默失效。
 	sevOf[selfCheckRuleID] = "error"
@@ -302,6 +315,13 @@ func Run(root string, pol *Policy) (*Result, error) {
 			Severity: sevOf[egressPathRuleID],
 		})
 	}
+	// 未受管逃逸门禁恒开（无 policy 段）：它判的是本仓 API 的既定事实
+	// （PTC 缺判定环即拒），不是各仓可自选的策略。
+	res.Rules = append(res.Rules, RuleInfo{
+		ID:       unmanagedEscapeRuleID,
+		Desc:     "生产代码不得显式选择未受管执行（ptc 的 AllowUnmanaged 逃逸口）",
+		Severity: sevOf[unmanagedEscapeRuleID],
+	})
 	res.Rules = append(res.Rules, RuleInfo{
 		ID:       selfCheckRuleID,
 		Desc:     "policy 自身一致性：规则须有执行体、id 唯一、阈值判定面须覆盖全部登记包、例外须写 until 与拆除条件",
@@ -342,44 +362,3 @@ func Run(root string, pol *Policy) (*Result, error) {
 //
 // 单独暴露它，是因为它是**跨包契约**的门禁：别的仓接入本机制时通常先接这一条
 // （policy 里已经有 modules 段，只是没有执行体）。
-func CheckDependencyDirection(root string, pol *Policy) ([]Violation, error) {
-	if pol == nil {
-		return nil, fmt.Errorf("policy 为空")
-	}
-	if !pol.DepDir.on() {
-		return nil, nil
-	}
-	return dependencyViolations(root, pol.Modules, pol.DepDir)
-}
-
-// exceptionKey 是例外匹配键：rule + path + line 三元组。
-func exceptionKey(rule, path string, line int) string {
-	return fmt.Sprintf("%s|%s|%d", rule, path, line)
-}
-
-// sevOrError 规则级别缺省即 error：悬空的 warn 等于没有规则。
-func sevOrError(s string) string {
-	if s == "" {
-		return "error"
-	}
-	return s
-}
-
-// depDirDesc 取依赖方向规则的说明，policy 未写时用兜底文案。
-func depDirDesc(d DependencyDirection) string {
-	if d.Desc != "" {
-		return d.Desc
-	}
-	return "包间依赖必须先在 policy modules 段登记 requires"
-}
-
-// PolicyPath 归一 policy 文件路径（相对仓库根），供报告与自校验定位。
-func PolicyPath(root string, pol *Policy) string {
-	if pol == nil || pol.Path == "" {
-		return "architecture-policy.yaml"
-	}
-	if rel, err := filepath.Rel(root, pol.Path); err == nil && !strings.HasPrefix(rel, "..") {
-		return filepath.ToSlash(rel)
-	}
-	return pol.Path
-}
