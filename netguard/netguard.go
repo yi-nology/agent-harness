@@ -1,4 +1,8 @@
 // Package netguard 出站 URL 守卫（SSRF 防护）：凡是「服务端代发 HTTP」的出口都统一
+//
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
 // 过闸——scheme 白名单 + 目标地址解析后逐 IP 过策略
 // （IP 策略单源 oagentkit/guardx/egress：回环/未指定按 allowLoopback、RFC1918 私网按
 // allowPrivate 放行，链路本地（含云元数据）/组播/CGNAT/保留段一律拒绝——放行面

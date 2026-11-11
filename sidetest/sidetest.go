@@ -1,5 +1,10 @@
 // Package sidetest 副作用闸（sideeffect.Store）的**共享契约测试套件**。
 //
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+//
 // # 为什么需要它
 //
 // sideeffect.Store 的正确性无法靠「看起来对」保证：它要跨进程、靠一次原子

@@ -316,6 +316,39 @@ var / 短声明含取址与容器 / 函数参数与接收者；包级变量跨�
   宿主负责投递"边界不变**——发布接线归宿主（sideeffect 侧的事件化接线
   留给副作用车道收口）。
 
+### API 生命周期机制落地：分级 + 机器判据 + 错误语义总表（#113 #104）
+
+本版之前全仓**没有任何**稳定性标记，BREAKING 全靠单篇 CHANGELOG 承担迁移
+说明；错误语义散在各包注释里，没有总表。本版把两件事补成**机器可判的机制**
+（判定逻辑进 `make check` 的 `apilifecheck`，不挂 ci.yml 新 job——门禁本体
+在本仓，推送后才说话的门禁等于没有门禁）：
+
+* **`api-lifecycle.yaml` 清单 + 包注释标记**（#113）：全部 **44 个生产包**
+  定级完毕——Stable 26 / Experimental 18 / Deprecated 0。核心契约面
+  （sideeffect/taskboard/checkpoint/commitgate/contract/protocol）与五个
+  门面（dispatch/policy/reminder/toolfail/sandbox，注明「跟随上游」）标
+  Stable；仍在演进或无对外承诺的（ptc/budget/trajectory/egress/netguard、
+  2026-11-06 批次新包、archcheck/internal/示例）标 Experimental 并逐包写明
+  理由。分级判定规则（什么算 breaking：改签名 / 改语义 / 改默认值 /
+  删导出符号）成文于 `docs/api-compat.md`；
+* **`cmd/apilifecheck` 门禁**（挂在 `make check`，与 architecture-check/docsync
+  同级）：判四件事——清单 ↔ 包注释标记一致；清单覆盖**全部**生产包
+  （漏登记与幽灵登记都红）；Deprecated 条目的替代指向必须真实存在；
+  门面包 `follows_upstream` 的上游必须真的出现在 import 面里；
+* **`docs/error-semantics.md` 错误哨兵语义总表**（#104）：全仓 **57 个哨兵 +
+  5 个结构化错误类型**按包成表（哨兵 / 触发条件 / 调用方处置），同一门禁
+  双向判等——代码新增哨兵不登记即红，表里出现已删哨兵（幽灵条目）也红；
+  判定方式与三档处置口径（重试 / 对账 / 修声明）见该文档头注；
+* **兼容策略文档**（#104）：版本承诺（v0.y 阶段 patch 不 breaking、minor
+  breaking 必须走流程）、破坏性变更五步流程（先改声明 → Deprecated 过渡 →
+  同批落库 → CHANGELOG BREAKING 段 → minor 边界删除）、Experimental→Stable
+  晋级条件，全在 `docs/api-compat.md`；
+* 同步：README 文档一览、`docs/USAGE.md` 口径表（三个口径 → 四个口径，
+  新增「生命周期登记 44」机器校验行）、AI-GUIDE 任务 A 清单与门禁速查表。
+
+宿主升级本版**无需改任何调用面**——本节全部是声明面与门禁增量，
+不改变任何包的导出符号与行为。
+
 ## [v0.32.1] — 2026-11-11
 
 ### 修复：PTC 未受管逃逸口的豁免登记路径，此前是「照着指引做就红」

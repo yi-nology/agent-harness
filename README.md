@@ -25,6 +25,9 @@
 > | [AGENTS.md](AGENTS.md) | 在本仓干活的工作纪律（每条纪律的事故来源） | 活文档 |
 > | [architecture-policy.yaml](architecture-policy.yaml) | 门禁**声明面**：模块拓扑 / 规则 / 阈值 / 例外 | 活文档（机器判定）|
 > | [CHANGELOG.md](CHANGELOG.md) | 版本历史与破坏性变更 | 活文档（按 tag 切段生成）|
+> | [api-lifecycle.yaml](api-lifecycle.yaml) | **API 生命周期清单**：每个生产包的 Experimental/Stable/Deprecated 定级 + 理由（机器判定） | 活文档（机器判定）|
+> | [docs/api-compat.md](docs/api-compat.md) | API 兼容策略：分级判定规则（什么算 breaking）/ 破坏性变更流程 / 宿主升级须知 | 活文档 |
+> | [docs/error-semantics.md](docs/error-semantics.md) | 全仓错误哨兵语义总表：哪个包哪个哨兵、触发条件、调用方处置（机器判定） | 活文档（机器判定）|
 > | [docs/adr/README.md](docs/adr/README.md) | 决策记录（ADR）索引：每条设计取舍的编号 / 一句话结论 / 状态 | **决策记录**（ADR）｜设计推导与取舍的真相源 |
 > | [docs/OAGENTKIT-OVERLAP.md](docs/OAGENTKIT-OVERLAP.md) | 本仓与上游 `oagentkit` 的能力边界：哪些该做、哪些上游已有 | 活文档 |
 > | [docs/SANDBOX-DESIGN-20261021.md](docs/SANDBOX-DESIGN-20261021.md) | 执行沙箱的下一层：跨域执行与资源兜底（发现「内存无兜底」真缺陷 + 与上游 guardx 的分工）| 活文档 |
@@ -179,11 +182,11 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 32,104 行 / 174 文件（不含 `_test.go`）|
-| 测试 | 208 个测试文件 |
+| 生产代码 | 33,431 行 / 181 文件（不含 `_test.go`）|
+| 测试 | 215 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
-| 门禁 | 8 条规则（`rules` 段）+ 6 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸**）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 44 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** |
+| 门禁 | 8 条规则（`rules` 段）+ 6 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸**）+ **5 个门包**（`dispatch`/`policy`/`reminder`/`toolfail`/`sandbox`——核心归上游、只保调用面稳定）+ 44 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** |
 | 例外登记 | **0** |
 
 > **上表分两类：前两行有机器判定，其余仍是散文**（issue #31）。

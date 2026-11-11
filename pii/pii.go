@@ -1,4 +1,10 @@
 // Package pii PII 价值模式检测与打码（批次二百七十八，对标 octop-harness
+//
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+//
 // PIIMiddleware 的价值面检测）：在 logredact（agentkit，凭据类值模式：
 // key=xxx/Authorization/JWT/sk- 前缀等）之外补「个人信息价值面」——大陆手机号与
 // 18 位居民身份证。凭据脱敏按形态命中，个人信息没有键名可依（批266「logredact

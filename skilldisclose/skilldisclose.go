@@ -1,5 +1,9 @@
 // Package skilldisclose 技能披露：**确定性**挑出该给模型看的那几个技能。
 //
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // # 与 tooldisclose 的分工
 //
 // @@tooldisclose@ 解决的是「工具太多，一次给全量 schema 撑爆上下文」，它的检索

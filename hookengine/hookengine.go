@@ -1,5 +1,9 @@
 // Package hookengine Hooks 的**判定面**：什么时候该跑、跑了算不算拒绝。
 //
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // # 为什么只做判定面
 //
 // Codex 的 hooks 是「外部进程协议 + 规则文件」，DSH 的是「动态插件包」——

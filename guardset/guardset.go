@@ -1,5 +1,10 @@
 // Package guardset 守卫装配契约：一组**相互独立**的判定被一并求值，拒绝被合成一条。
 //
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+//
 // # 为什么需要它
 //
 // 本仓的守卫（tooldisclose 的披露门、netguard 的出站守卫、policy 的审计门、

@@ -1,4 +1,11 @@
 // Package policy 操作审计门薄转发：核心已沉淀 oagentkit/toolgate/policy（含
+//
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+// 本包是门面：调用面稳定，判据语义跟随上游 github.com/oagentkit/toolgate 演进。
+//
 // WithAuditGate 工具装饰器），此处以类型别名/函数转发维持既有调用点稳定。
 // _shared/operation_policy.yaml 路径约定固化在 LoadOverrides 转发层。
 package policy

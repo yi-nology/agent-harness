@@ -1,4 +1,10 @@
 // Package spill 溢出存档平面单源（批三百零一）：budgetTool 截断落盘（engine/runner）/
+//
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+//
 // read_spill 工具取回（engine/tools）/控制台取回面（biz/handler）/写侧清理共用同一套
 // 文件名净化、会话隔离与分页语义——LLM 面与控制台面各写一份必漂移（会话隔离三重守卫
 // 的判据只应存在一处）。纯 stdlib 叶子层（kbgroup 先例）。

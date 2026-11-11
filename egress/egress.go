@@ -1,5 +1,9 @@
 // Package egress 出口策略的**声明面与兑现判据**（机制面）。
 //
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // # 它补的是哪个洞
 //
 // 本仓的 netguard 判定挂在 Go 的 http.Client / Transport 上，覆盖面是

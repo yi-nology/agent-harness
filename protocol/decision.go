@@ -1,3 +1,10 @@
+// Package protocol 统一报告协议：Report 契约 + 五级容错解析 + 白名单校验 +
+// Markdown 渲染。类型即协议——环节产出跨宿主交换的唯一形态。
+//
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
 package protocol
 
 import (
