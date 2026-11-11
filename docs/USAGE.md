@@ -1102,6 +1102,10 @@ func (s *storeCAS) SaveIfNewer(ctx context.Context, snap checkpoint.Snapshot) er
 	return s.db.CASUpsert(snap.RunID, snap.Seq, snap)
 }
 
+// ⚠️ v0.33.0 起：**序号为 0 的快照一律拒收**（ErrStaleSeq，且不得写入）。
+// 它不是一次真实提交；放它落库等于给了它唯一能覆盖既有快照的写
+// （已有 Seq=10 时被 Seq=0 盖掉 ⇒ 恢复点静默回退）。
+
 func (s *storeCAS) Load(ctx context.Context, runID string) (checkpoint.Snapshot, error) {
 	snap, ok, err := s.db.Get(runID)
 	if !ok {
@@ -1723,6 +1727,30 @@ outcome, res, err := runner.ExecuteWith(ctx, act, sideeffect.Effect{
    `sideeffect.RetrySafetySafe`——那等于断言「重试不会重复施加」。**断言错了
    就是重复施加**，故它是显式选择，且不声明时按最弱处理（结果未知 + 对账）。
 
+5. **v0.33.0 起：闸会记住「本次尝试还在」（执行意图）**。
+
+   `Acquire` 在授予执行权时**顺手**把「这次尝试还没结论」原子地持久化在 Key 上。
+   此前这条信息只存在于**进程内存**里——于是「进程在施加成功之后、记账之前
+   直接死掉」这一形态在存储侧**不留任何痕迹**：既没有「完成」也没有「未知」，
+   下一次同一 Key 的 Acquire 把它当成「没做过」⇒ 重新授予执行权 ⇒
+   **同一动作被施加两次**，而调用方全程只拿到一个普通错误。
+
+   有了意图之后：
+
+   - 租约过期且**未裁决** ⇒ 同一 Key 转入**需对账态**（`OutcomeUncertain`），
+     **不**重新授予执行权（声明了 `RetrySafetySafe` 的除外——那种情况下
+     重做安全，因为下游按幂等键去重）；
+   - 两条出口因此必须**分开**（v0.33.0 新增 `Store.Abandon`）：
+
+     | 场景 | 存储操作 | 含义 |
+     |---|---|---|
+     | 确定没生效 / 下游会去重 | `Abandon`（撤销意图 + 放闸） | 该 Key 重新可执行 |
+     | 可能已生效 | `MarkUncertain`（转未知态）+ `Release`（**只**放闸） | 该 Key 继续被挡住 |
+
+   **在「可能已生效」那条路上误用 `Abandon` ⇒ 意图被撤 ⇒ 该 Key 重新变成
+   「可被执行」⇒ 重复施加的入口重新打开**，且失效是**静默**的。两条出口分开
+   就是为了让这个误用不再是「顺手就能写出来」的代码。
+
 **下游资源侧要拒收陈旧写入**：若你的目标系统能被并发写入，实现
 `FencedSink`——它钉了两件必须全局一致的事：比较口径（**小于**已见过的最大令牌
 才算陈旧，等于合法）与**原子性**（比较与写入须同一次原子操作）。
@@ -1740,8 +1768,9 @@ outcome, res, err := runner.ExecuteWith(ctx, act, sideeffect.Effect{
 #### 3.10.3 `sidetest`：给你的存储实现一份验收标准
 
 `Store` 的正确性无法靠「看起来对」保证，而**每家宿主都会自己写一遍存储实现**。
-`sidetest` 把「宿主实现必须满足什么」固化成 15 条可复跑的子测试
-（含 v0.32.0 新增的「结果未知」一族五条）：
+`sidetest` 把「宿主实现必须满足什么」固化成 **22 条**可复跑的子测试
+（v0.32.0 新增「结果未知」一族五条；v0.33.0 新增「执行意图」一族六条，
+外加「闸已释放后续期被拒」一条）：
 
 ```go
 import "github.com/yi-nology/goagent-kernel/sidetest"
@@ -2039,6 +2068,19 @@ prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
   却没有任何强制面的后端照样让流量自由出网。
 - `Spec.SatisfiedBy(provider)` 问后端「你能不能兑现这一档」。**后端不实现 `Enforcer` 就按最弱处理**，
   不是「没说不支持 = 支持」；否则一个从没实现过出口控制的后端会被选中，而声明与实际之间的落差没有信号。
+- **v0.33.0 起：兑现强度分「自报」与「实测」**。`SatisfiedVerdict` 返回的 `Strength` 现在有四档：
+
+  | 强度 | 含义 |
+  |---|---|
+  | `not_required` | 未要求限制 |
+  | `advisory` | 环境变量兑现（永远只是建议） |
+  | `declared` | 后端**自报**能力（`Enforcer`）——**未经实测** |
+  | `enforced` | **实测**通过（后端实现 `EgressVerifier` 并给出证据） |
+
+  后端只是「声明我能强制哪一档」时，强度是 `declared` 而**不是** `enforced`——
+  自报不是实测，把两者并进一档，只看 `Strength` 的读者就会把「后端自称」
+  读成「已经强制」。要断言真的被强制，后端得提供实测证据（`egress.EgressVerifier`：
+  `VerifyEgress() (Mode, error)`，实现方自己去探测，本包不代它发请求）。
   出口档位的词表与这个接口的**真相在上游** `guardx/sandbox`（`EgressMode` / `EgressEnforcer`），
   本仓的 `egress.Mode` / `egress.Enforcer` 是 type alias（编译期同一类型）。词表若留在本仓，
   上游后端要声明能力就得 import 本仓 ⇒ 成环 ⇒ 那条接口只可能由宿主实现，且编译期一声不响。
@@ -2135,13 +2177,26 @@ import (
 for _, p := range taskboard.Check(tasks) { /* 环 / 重复 id / 认领态与租约不一致… */ }
 
 // 3) 并发判据：成功者必须恰好 1 个（在你的 CI 里跑）
-winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID{"a", "b", "c"}, leaseFor)
+winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID{"a", "b", "c"}, time.Minute)
 ```
 
 **坑**
 
 - **不给存储实现**是刻意的：给一份参考实现你就会照着改它，最后两份真相并存（与 `checkpoint.StoreCAS` 同一分工）。
 - **释放 / 完成凭令牌不凭内容**：同名 agent 与「失败 → 释放 → 重试」都会让内容比对认错人。
+- **v0.33.0 起：令牌由存储铸造**。`Claim` 改收「要多长的租约」的 `ClaimRequest`，
+  令牌随返回的 `Task` 给出（`task.Lease.Token`）：
+
+  ```go
+  task, err := board.Claim(ctx, "t-1", "agent-a", taskboard.ClaimRequest{TTL: time.Minute})
+  // task.Lease.Token 由存储铸造 —— 调用方**不能**自带令牌
+  err = board.Release(ctx, "t-1", task.Lease.Token)
+  ```
+
+  此前 `Claim` 收的是调用方自带的 `Lease`（含 token）——契约写着「token 由存储铸造」，
+  实现却让调用方造 token，两者对不上时**实现赢**：调用方能造出任意 token，
+  于是「输家的迟到释放放掉赢家的闸」又回来了，而报告里一切正常。
+  另：到期时刻也归存储算（调用方的时钟与存储的时钟可能对不上）。
 - **`failed` 不是终态**。把它当终态会让补救路径静默失效——一次失败就把子任务永久钉死。
 - `ConcurrentClaim` 区分三种结果：`ErrTaken`（有输家，说明原子性成立）、`ErrBlocked`（压根没到争用）、
   其它 = **基础设施故障**。把后者当成「原子性没问题」是本判据最容易犯的误读。
