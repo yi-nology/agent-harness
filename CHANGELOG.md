@@ -2,6 +2,31 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.30.0] — 2026-11-11
+
+### 新增(ptc)：诊断渲染原语导出——Result.Describe/Position.Describe，宿主回喂面单源（#68）
+
+ptc.Result 的诊断渲染（`describePosition`/`suggestionsFor`）此前内部持有：宿主
+（argus `internal/qa`）只能手写 ~25 行同族渲染把 Result 翻成模型可读诊断文本，
+措辞与 harness 归因口径（#57-#59/#67 修复后的分类面）随时间漂移。本版把渲染面
+导出为公开 API，诊断措辞与分类口径单源。**纯新增，无行为变更**：
+
+* `Result.Describe()`：失败段（类别/错误原文/位置/修复建议/调用链归因摘要）+
+  OK 但 `Value=="null"` 点破「忘写 return」（undefined→null 是本包契约，模型侧
+  高频缺陷，不点破会把白跑当完成）+ 其余成功一行摘要；
+* `Position.Describe()`：位置可读渲染（「第 N 行第 M 列」），不可得返空串——
+  不造「第 0 行」假位置；内部 `describePosition` 的括注形态改由它拼装，单源不复制；
+* 建议优先取 `Result.Suggestions`（宿主增补不丢），为空按 `ErrorKind` 补查建议表
+  ——手工构造的 Result 也能渲染完整诊断，两个来源同一张表，措辞不漂移；
+* 调用链（归因链）摘要：只列失败明细（error/denied/panic，封顶 5 条——CallLog
+  上限即 MaxCalls，全量展开是账单不是诊断）+ 全量计数行（明细可截、总数不可截）。
+
+table-driven 用例钉渲染形态七组（带位置/无位置不编位置/归因链明细/有界截断/
+手工构造补查/宿主增补不被覆盖/未知类别无建议段/成功三形态）。下游 argus 已随
+v6.3.1 收编该 API，净删宿主手写渲染。
+
+* feat(ptc): 导出 Result.Describe()/Position.Describe() 诊断渲染原语——宿主回喂面单源（#68） (#71)
+
 ## [v0.29.0] — 2026-11-11
 
 ### 判据面补强：cmdpolicy 事实面收编上游 bashguard，闭合前缀判据三类绕过
