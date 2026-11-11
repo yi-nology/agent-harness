@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/yi-nology/agent-harness/sessionref"
+	"github.com/yi-nology/goagent-kernel/sessionref"
 )
 
 // 字节裁剪必须落在 rune 边界，且**仍然贴着预算**——退多了等于白扔上下文。

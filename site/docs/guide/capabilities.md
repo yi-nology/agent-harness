@@ -4,10 +4,10 @@ title: 能力详解
 
 # 能力详解：九组能力
 
-> 🤖 本页要点已收录进 [llms.txt](https://yi-nology.github.io/agent-harness/llms.txt)——AI 代理可直接读取。
+> 🤖 本页要点已收录进 [llms.txt](https://yi-nology.github.io/goagent-kernel/llms.txt)——AI 代理可直接读取。
 
 本章按「解决什么问题」分组，**先看图、再看字**。逐包的集成片段与坑在仓内
-[docs/USAGE.md](https://github.com/yi-nology/agent-harness/blob/main/docs/USAGE.md)，
+[docs/USAGE.md](https://github.com/yi-nology/goagent-kernel/blob/main/docs/USAGE.md)，
 包级事实（行数、依赖）在[包清单与机器事实](../reference/packages.md)。
 
 <div class="diagram">

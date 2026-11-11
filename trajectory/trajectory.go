@@ -37,7 +37,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yi-nology/agent-harness/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // Kind 轨迹行的类目。

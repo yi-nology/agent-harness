@@ -1,6 +1,6 @@
 # 与主流 Harness 的差距：逐项实测对齐（2026-10-21）
 
-> 这份文档回答：**今天的 agent-harness 与 Codex / DeepSeek Harness / Octop / Coze Studio
+> 这份文档回答：**今天的 goagent-kernel 与 Codex / DeepSeek Harness / Octop / Coze Studio
 > 相比，差在哪、哪些该补、哪些不该补。**
 >
 > **本文的每一条「现状」都带出处，且在 2026-10-21 实测过——不靠记忆**

@@ -8,7 +8,7 @@ import (
 	"github.com/oagentkit/guardx/sandbox"
 	"github.com/oagentkit/toolgate/policy"
 
-	"github.com/yi-nology/agent-harness/egress"
+	"github.com/yi-nology/goagent-kernel/egress"
 )
 
 // egressProvider 自报档位**与出口能力**的后端。

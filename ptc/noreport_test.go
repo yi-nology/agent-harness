@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/oagentkit/guardx/sandbox"
-	"github.com/yi-nology/agent-harness/ptc"
+	"github.com/yi-nology/goagent-kernel/ptc"
 )
 
 // 本文件钉住「子进程不回结果」这一档的**可诊断性**与**不挂死**。

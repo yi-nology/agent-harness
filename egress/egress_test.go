@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/agent-harness/egress"
+	"github.com/yi-nology/goagent-kernel/egress"
 )
 
 func TestModeOrdering(t *testing.T) {

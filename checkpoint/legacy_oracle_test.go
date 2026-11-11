@@ -12,7 +12,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/yi-nology/agent-harness/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // legacyPlan 旧口径的**参照实现**（oracle）：连续已完成前缀 + 单条不点名异常。

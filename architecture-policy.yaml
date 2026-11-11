@@ -1,4 +1,4 @@
-# agent-harness 架构治理策略
+# goagent-kernel 架构治理策略
 #
 # 双面设计：本文件既是「声明面」（模块清单 + 依赖方向 + owner，供人阅读与 AI 对齐），
 # 也是「可执行面」（rules 段由 archcheck 包逐条执行，`make architecture-check` 门禁；
@@ -752,13 +752,13 @@ rules:
     examples:
       - text: 'github.com/yi-nology/ekit/flow'
         want: hit
-      - text: 'github.com/yi-nology/agent-harness/protocol'
+      - text: 'github.com/yi-nology/goagent-kernel/protocol'
         want: miss
 
 
   # ── oekit 家规（矩阵一致性）──
   #
-  # agent-harness 与 oekit 同属一族：oekit=基础库、agentkit=agent 原语、
+  # goagent-kernel 与 oekit 同属一族：oekit=基础库、agentkit=agent 原语、
   # harness=编排内核，三者本该是同一套工程纪律下的产物。harness 曾是矩阵里唯一
   # 不守家规的孤岛——家规只写在别处的文档里，本仓既不执行也不自查。
   #

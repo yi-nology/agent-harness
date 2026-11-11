@@ -1,4 +1,4 @@
-module github.com/yi-nology/agent-harness
+module github.com/yi-nology/goagent-kernel
 
 // 最低工具链 1.27.3：不是风格选择，是安全地板。
 //
@@ -12,7 +12,7 @@ module github.com/yi-nology/agent-harness
 // 写成 toolchain 只会让本仓自己升，下游照样用旧版编出带洞的二进制。
 go 1.27.3
 
-// agent-harness：多智能体编排的通用运行时内核。
+// goagent-kernel：多智能体编排的通用运行时内核。
 //
 // 定位：**编排是代码，LLM 只做单环节**——本仓只提供确定性编排的机制面
 // （报告协议、环节状态机、事件总线、派发守卫、审计策略、溢出存档、PII 脱敏、

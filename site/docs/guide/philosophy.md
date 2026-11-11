@@ -4,7 +4,7 @@ title: 设计初衷
 
 # 设计初衷：为什么这么设计
 
-> 🤖 本页要点已收录进 [llms.txt](https://yi-nology.github.io/agent-harness/llms.txt)——AI 代理可直接读取。
+> 🤖 本页要点已收录进 [llms.txt](https://yi-nology.github.io/goagent-kernel/llms.txt)——AI 代理可直接读取。
 
 这个仓不是「先设计 API 再找场景」的产物，而是从一个真实宿主产品里**拆**出来的：
 多智能体编排里那些与领域无关、又必须跨宿主一致的判定语义，被一层层沉淀成机制。
@@ -220,5 +220,5 @@ title: 设计初衷
 | `netguard` 代次单一真相 | 两个独立计数器记录同一代次，非原子读改写下 64 次并发交换只推进 54 代——「换过没有」给不出答案 |
 
 想看完整的形态库，见仓内
-[AGENTS.md](https://github.com/yi-nology/agent-harness/blob/main/AGENTS.md) 与
+[AGENTS.md](https://github.com/yi-nology/goagent-kernel/blob/main/AGENTS.md) 与
 [docs/USAGE.md 的坑速查表](../reference/pitfalls.md)。

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/agent-harness/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // depGraph 造一张带依赖声明的图（复制一份，避免调用方后续改动影响用例）。

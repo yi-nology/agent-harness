@@ -156,7 +156,7 @@ const md = [
   '|---|---|',
   ...deps.map((d) => '| ' + bt + d.module + bt + ' | ' + bt + d.version + bt + ' |'),
   '',
-  '本仓处在 oekit（基础库）→ oagentkit（agent 原语）→ agent-harness（编排内核）→ 宿主的同一条依赖链上。',
+  '本仓处在 oekit（基础库）→ oagentkit（agent 原语）→ goagent-kernel（编排内核）→ 宿主的同一条依赖链上。',
   ''
 ].join('\n')
 
@@ -202,8 +202,8 @@ const relMd = [
   '|---|---|---|',
   ...releases.map((r) => '| ' + bt + r.version + bt + ' | ' + r.date + ' | ' + cell(escAngles(r.subject || '（见 CHANGELOG）')) + ' |'),
   '',
-  '> 完整变更：仓内 [CHANGELOG.md](https://github.com/yi-nology/agent-harness/blob/main/CHANGELOG.md)；',
-  '> 破坏性变更与迁移指引：仓内 [README「下游升级须知」](https://github.com/yi-nology/agent-harness/blob/main/README.md#下游升级须知破坏性变更)。',
+  '> 完整变更：仓内 [CHANGELOG.md](https://github.com/yi-nology/goagent-kernel/blob/main/CHANGELOG.md)；',
+  '> 破坏性变更与迁移指引：仓内 [README「下游升级须知」](https://github.com/yi-nology/goagent-kernel/blob/main/README.md#下游升级须知破坏性变更)。',
   ''
 ].join('\n')
 
@@ -214,14 +214,14 @@ writeFileSync(join(siteDir, 'docs', 'reference', 'releases.md'), relMd)
 
 // ── AI 直读入口：llms.txt（同样生成，数字不手抄）──────────────────────
 // 与 oekit / oagentkit 的 llms.txt 同一形态：给 AI 代理的紧凑事实页。
-const site = 'https://yi-nology.github.io/agent-harness'
-const gh = 'https://github.com/yi-nology/agent-harness'
+const site = 'https://yi-nology.github.io/goagent-kernel'
+const gh = 'https://github.com/yi-nology/goagent-kernel'
 const short = (s) => {
   const cut = s.split(/[；。]/)[0]
   return (cut.length > 60 ? cut.slice(0, 60) + '…' : cut).trim()
 }
 const llms = [
-  '# agent-harness',
+  '# goagent-kernel',
   '',
   '> 多智能体编排的通用内核（Go library）。**编排是代码，LLM 只做单环节**——',
   '> 只提供确定性编排的机制面（报告协议 / 工具判定环 / 续跑契约 / 上下文预算 / 执行沙箱），',
@@ -254,7 +254,7 @@ const llms = [
   '- README（边界纪律/下游升级须知）: ' + gh + '#readme',
   '',
   '## 事实快照',
-  '- 模块: ' + bt + 'github.com/yi-nology/agent-harness' + bt + ' · Go · MIT · 零 replace（go.mod 含 replace 即门禁红）',
+  '- 模块: ' + bt + 'github.com/yi-nology/goagent-kernel' + bt + ' · Go · MIT · 零 replace（go.mod 含 replace 即门禁红）',
   '- 能力包 ' + pkgs.length + ' 个；生产代码 ' + base.prodLines + ' 行 / ' + base.prodFiles + ' 文件；测试 ' + base.testFiles + ' 个文件',
   '- 覆盖率门槛: 全局 ' + th.cov + '% + 逐包下限 ' + th.pkgCov + '%',
   '- 门禁规则 ' + rules.length + ' 条 + go/ast 结构判定；依赖方向登记于 ' + bt + 'architecture-policy.yaml' + bt,

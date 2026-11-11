@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/agent-harness/egress"
+	"github.com/yi-nology/goagent-kernel/egress"
 )
 
 // fakeEgress 一个只会自报档位的兑现者（真实实现是宿主的强制代理）。

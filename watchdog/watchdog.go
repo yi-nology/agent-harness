@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yi-nology/agent-harness/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // Pub 告警发布（与调度器 pub 同一落库广播路径：repo.InsertEvent + Bus.Broadcast）。

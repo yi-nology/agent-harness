@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/agent-harness/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // epoch 合成时刻原点（夹具一律合成数据，不带任何领域词）。

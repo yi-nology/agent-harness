@@ -1,8 +1,8 @@
 {
-  "name": "agent-harness-site",
+  "name": "goagent-kernel-site",
   "private": true,
   "type": "module",
-  "description": "agent-harness 文档站（VuePress 2）。站点数字由 gen.mjs 从仓库事实生成，不手抄。",
+  "description": "goagent-kernel 文档站（VuePress 2）。站点数字由 gen.mjs 从仓库事实生成，不手抄。",
   "scripts": {
     "docs:dev": "node gen.mjs && vuepress dev docs",
     "docs:build": "node gen.mjs && vuepress build docs"

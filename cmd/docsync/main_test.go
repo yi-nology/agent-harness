@@ -41,8 +41,8 @@ func TestLooksLikeModulePathAcceptsModules(t *testing.T) {
 	isModule := []string{
 		"github.com/oekit/pkg",
 		"github.com/oekit/pkg/errors",
-		"github.com/yi-nology/agent-harness-fork/x", // 前缀近似自身，但不能当自身
-		"github.com/Azure/azure-sdk/v2",             // 含大写：Go 允许，漏判方向反了
+		"github.com/yi-nology/goagent-kernel-fork/x", // 前缀近似自身，但不能当自身
+		"github.com/Azure/azure-sdk/v2",              // 含大写：Go 允许，漏判方向反了
 		"gopkg.in/yaml.v3",
 		"mvdan.cc/sh/v3",
 	}
@@ -55,14 +55,14 @@ func TestLooksLikeModulePathAcceptsModules(t *testing.T) {
 
 // TestSelfModuleExclusionNeedsSlashBoundary 钉住「排除自身」必须有路径边界。
 //
-// 纯 strings.HasPrefix(path, selfModule) 会把 agent-harness-fork 这类**真实
+// 纯 strings.HasPrefix(path, selfModule) 会把 goagent-kernel-fork 这类**真实
 // 外部依赖**当成自身静默排除。这是漏判方向——与门禁职责正好相反，且无声。
 func TestSelfModuleExclusionNeedsSlashBoundary(t *testing.T) {
 	// 自身与其子包：排除
 	for _, p := range []string{
-		"github.com/yi-nology/agent-harness",
-		"github.com/yi-nology/agent-harness/contract",
-		"github.com/yi-nology/agent-harness/checkpoint",
+		"github.com/yi-nology/goagent-kernel",
+		"github.com/yi-nology/goagent-kernel/contract",
+		"github.com/yi-nology/goagent-kernel/checkpoint",
 	} {
 		if !isSelfPath(p) {
 			t.Errorf("%q 应判为自身并排除", p)
@@ -71,9 +71,9 @@ func TestSelfModuleExclusionNeedsSlashBoundary(t *testing.T) {
 
 	// 前缀相近但**不是**自身：必须当外部依赖
 	for _, p := range []string{
-		"github.com/yi-nology/agent-harness-fork/x",
-		"github.com/yi-nology/agent-harnessx",
-		"github.com/yi-nology/agent-harness2/tools",
+		"github.com/yi-nology/goagent-kernel-fork/x",
+		"github.com/yi-nology/goagent-kernelx",
+		"github.com/yi-nology/goagent-kernel2/tools",
 	} {
 		if isSelfPath(p) {
 			t.Errorf("%q 不是自身却被排除了——纯 HasPrefix 正是这个 bug", p)

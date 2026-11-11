@@ -13,7 +13,7 @@ import (
 
 	"github.com/oagentkit/guardx/invoke"
 	"github.com/oagentkit/guardx/sandbox"
-	"github.com/yi-nology/agent-harness/ptc"
+	"github.com/yi-nology/goagent-kernel/ptc"
 )
 
 // 本文件是子进程后端的**端到端**验证：真的起一个子进程，真的让它申请超限内存，
@@ -81,7 +81,7 @@ func buildChildProgramTB(tb testing.TB) string {
 	src := filepath.Join(dir, "main.go")
 	prog := `package main
 
-import "github.com/yi-nology/agent-harness/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 func main() {
 	ptc.MaybeRunChild()

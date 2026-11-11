@@ -29,7 +29,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/yi-nology/agent-harness/archcheck"
+	"github.com/yi-nology/goagent-kernel/archcheck"
 )
 
 func main() {

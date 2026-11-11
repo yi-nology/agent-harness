@@ -6,7 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/yi-nology/agent-harness/sessionref"
+	"github.com/yi-nology/goagent-kernel/sessionref"
 )
 
 var t0 = time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)

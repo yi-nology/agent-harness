@@ -19,7 +19,7 @@ import (
 const spawnSrc = "package app\n\nimport \"os/exec\"\n\nfunc Spawn() error { return exec.Command(\"sh\").Run() }\n"
 
 // plumbedSrc 两半都齐的启动点：先问后端能不能兑现，再把声明生成成 env。
-const plumbedSrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"github.com/yi-nology/agent-harness/egress\"\n)\n\n" +
+const plumbedSrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"github.com/yi-nology/goagent-kernel/egress\"\n)\n\n" +
 	"func Spawn(spec egress.Spec, backend egress.Enforcer) error {\n" +
 	"\tif err := spec.SatisfiedBy(backend); err != nil {\n\t\treturn err\n\t}\n" +
 	"\tcmd := exec.Command(\"sh\")\n\tenv, err := spec.Env(nil)\n" +
@@ -30,14 +30,14 @@ const plumbedSrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"github.com/yi-
 // 这一态是「声明→兑现」这条链最像完成的样子：环境变量真的生成了、真的挂到了
 // 子进程上，而报告里那一条看起来就是「已兑现」。可环境变量只是**建议**——
 // 一个能改 env 却没有任何强制面的后端照样让流量自由出网。旧判据对它静默放行。
-const envOnlySrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"github.com/yi-nology/agent-harness/egress\"\n)\n\n" +
+const envOnlySrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"github.com/yi-nology/goagent-kernel/egress\"\n)\n\n" +
 	"func Spawn(spec egress.Spec) error {\n\tcmd := exec.Command(\"sh\")\n\tenv, err := spec.Env(nil)\n" +
 	"\tif err != nil {\n\t\treturn err\n\t}\n\tcmd.Env = env\n\treturn cmd.Run()\n}\n"
 
 // fakeProbeSrc 有一个名叫 SatisfiedBy 的调用，但限定符**不是** egress：
 // 这是「按方法名认人」会把无关调用算成能力问询的形态。
 const fakeProbeSrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"example.com/pick\"\n" +
-	"\t\"github.com/yi-nology/agent-harness/egress\"\n)\n\n" +
+	"\t\"github.com/yi-nology/goagent-kernel/egress\"\n)\n\n" +
 	"func Spawn(spec egress.Spec) error {\n\tif err := pick.SatisfiedBy(nil); err != nil {\n\t\treturn err\n\t}\n" +
 	"\tcmd := exec.Command(\"sh\")\n\tenv, err := spec.Env(nil)\n" +
 	"\tif err != nil {\n\t\treturn err\n\t}\n\tcmd.Env = env\n\treturn cmd.Run()\n}\n"

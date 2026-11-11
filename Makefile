@@ -301,8 +301,8 @@ tidy:
 # ── 本地多仓并行开发（issue #1 的修法①）────────────────────────────
 # 为什么不能图省事在 go.mod 里写 `replace ... => $(GUARDX_WORK)`：
 # Go 的 replace 只在**主模块**生效。本仓自己是主模块 → 本地构建绿；
-# 但下游（bianque 等以 `replace => ../agent-harness` 引入本仓的宿主）里
-# agent-harness 是**依赖模块**，它的 replace 被静默忽略 → guardx 按 MVS
+# 但下游（bianque 等以 `replace => ../goagent-kernel` 引入本仓的宿主）里
+# goagent-kernel 是**依赖模块**，它的 replace 被静默忽略 → guardx 按 MVS
 # 回落到已发布的旧版本 → 报 `no required module provides package
 # github.com/oagentkit/guardx/injectband`，指向 guardx 而非真正原因。
 # 一行本地 replace，代价是断掉所有下游，且只在别人构建时才暴露。

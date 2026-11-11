@@ -1,7 +1,7 @@
 # 对标五家 Agent Harness：借鉴项与归属判定（2026-10-21）
 
 > 本文回答一个问题：**拿到「Codex / DSH / Octop / Yi-nology / Coze」五家对比后，
-> 本仓（agent-harness）该改什么、不该改什么。**
+> 本仓（goagent-kernel）该改什么、不该改什么。**
 >
 > 判定依据是本仓自己的边界纪律（见 [../AGENTS.md](../AGENTS.md)）：
 > **机制 → 本仓；资产 → 宿主仓。** 不因「别家有」就往本仓塞。

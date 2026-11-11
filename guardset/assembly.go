@@ -82,7 +82,7 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/yi-nology/agent-harness/internal/subhub"
+	"github.com/yi-nology/goagent-kernel/internal/subhub"
 )
 
 // assemblyState 装配面发布出去的当前状态：一份集合 + 它的代次。

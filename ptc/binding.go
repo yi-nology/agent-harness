@@ -14,7 +14,7 @@ import (
 	"github.com/dop251/goja"
 	"github.com/oagentkit/guardx/invoke"
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/agent-harness/toolname"
+	"github.com/yi-nology/goagent-kernel/toolname"
 )
 
 // bindingCaller 一次绑定调用的执行面。

@@ -66,7 +66,7 @@ import (
 	"github.com/oagentkit/guardx/sandbox"
 	"github.com/oagentkit/toolgate/policy"
 
-	"github.com/yi-nology/agent-harness/egress"
+	"github.com/yi-nology/goagent-kernel/egress"
 )
 
 // Outcome 联合判定的结论。

@@ -1,7 +1,7 @@
 package trajectory
 
 import (
-	"github.com/yi-nology/agent-harness/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // apply 投一条事件到投影器（调用方已持锁）。

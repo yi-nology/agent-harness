@@ -63,7 +63,7 @@ type (
 	// EgressEnforcer 可选能力面：后端声明它能**强制**哪一档出站。
 	//
 	// **不实现它即视为没有做出任何声明**——在安全判据里，沉默按最弱处理
-	// （见 agent-harness 的 egress.Spec.SatisfiedBy）。与 Capable 同一条方向：
+	// （见 goagent-kernel 的 egress.Spec.SatisfiedBy）。与 Capable 同一条方向：
 	// 漏声明得到的是「兜不住」，不是「兜得住」。
 	EgressEnforcer = upstream.EgressEnforcer
 )

@@ -6,7 +6,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/shellx"
-	"github.com/yi-nology/agent-harness/cmdpolicy"
+	"github.com/yi-nology/goagent-kernel/cmdpolicy"
 )
 
 // 本包分词已收编上游 oekit/pkg/shellx.Split。这组用例钉住两件事：

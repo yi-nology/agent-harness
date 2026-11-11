@@ -60,7 +60,7 @@ import (
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/stringx"
 
-	"github.com/yi-nology/agent-harness/reminder"
+	"github.com/yi-nology/goagent-kernel/reminder"
 )
 
 // Bounds 采集时的裁剪上限。

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/agent-harness/protocol"
+	"github.com/yi-nology/goagent-kernel/protocol"
 )
 
 func FuzzParseReport(f *testing.F) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/agent-harness/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // TestUntrustedReportDistinguishesPredState 失序报告要分清前驱「为什么没满足」。

@@ -94,7 +94,7 @@ func importPaths(path string) ([]string, error) {
 // isSelfPath 判断路径是否指向本仓自身（含其子包）。
 //
 // 必须带 / 边界：纯 strings.HasPrefix(path, selfModule) 会把
-// agent-harness-fork 这类**真实的外部依赖**当成自身而静默排除——
+// goagent-kernel-fork 这类**真实的外部依赖**当成自身而静默排除——
 // 那是漏判方向，与门禁职责正好相反，且无声无息。
 func isSelfPath(p string) bool {
 	return p == selfModule || strings.HasPrefix(p, selfModule+"/")

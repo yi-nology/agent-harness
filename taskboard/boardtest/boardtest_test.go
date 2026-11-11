@@ -13,7 +13,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/agent-harness/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // memBoard 一份最小的内存实现（仅供套件自证；生产实现归宿主）。

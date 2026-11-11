@@ -28,7 +28,7 @@ import (
 	"github.com/dop251/goja"
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/slicex"
-	"github.com/yi-nology/agent-harness/toolname"
+	"github.com/yi-nology/goagent-kernel/toolname"
 )
 
 // ErrInvalidSignature 形态串非法（装配期缺陷，非程序问题）。

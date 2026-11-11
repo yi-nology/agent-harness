@@ -46,7 +46,7 @@ import (
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/agent-harness/egress"
+	"github.com/yi-nology/goagent-kernel/egress"
 )
 
 // SubprocessProviderID 子进程后端的标识（登记在 policy 的 sandbox_providers 段）。

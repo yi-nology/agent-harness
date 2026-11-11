@@ -55,10 +55,10 @@ import (
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/slicex"
 
-	"github.com/yi-nology/agent-harness/egress"
-	"github.com/yi-nology/agent-harness/gatecheck"
-	"github.com/yi-nology/agent-harness/policy"
-	"github.com/yi-nology/agent-harness/sandbox"
+	"github.com/yi-nology/goagent-kernel/egress"
+	"github.com/yi-nology/goagent-kernel/gatecheck"
+	"github.com/yi-nology/goagent-kernel/policy"
+	"github.com/yi-nology/goagent-kernel/sandbox"
 )
 
 // Preset 一份具名权限预设。

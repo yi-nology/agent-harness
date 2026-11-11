@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/agent-harness/cmdpolicy"
+	"github.com/yi-nology/goagent-kernel/cmdpolicy"
 )
 
 func mustPolicy(t *testing.T, rules ...cmdpolicy.Rule) *cmdpolicy.Policy {

@@ -1,7 +1,7 @@
 # 与 oagentkit 的重叠面盘点（2026-10-18 盘点，2026-10-20 更新处置状态）
 
 > 背景：仓依赖已从旧门面仓 `agentkit` 迁移到 `github.com/oagentkit/*`
-> 矩阵。本文回答一个问题：**迁移之后，agent-harness 还该做什么、不该做什么。**
+> 矩阵。本文回答一个问题：**迁移之后，goagent-kernel 还该做什么、不该做什么。**
 >
 > 核对方式：从 goproxy 取 `agent v0.2.0` / `runtime v0.3.0` / `guardx v0.1.0` /
 > `toolgate v0.2.0` / `mcpkit v0.1.0` 的模块 zip 直接读源码（本地缓存解压被沙箱拒绝）。

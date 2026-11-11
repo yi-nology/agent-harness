@@ -27,9 +27,9 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/agent-harness/checkpoint"
-	"github.com/yi-nology/agent-harness/commitgate"
-	"github.com/yi-nology/agent-harness/sideeffect"
+	"github.com/yi-nology/goagent-kernel/checkpoint"
+	"github.com/yi-nology/goagent-kernel/commitgate"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // durable 一份「持久化」状态：宿主重启后仍然为真的全部事实。

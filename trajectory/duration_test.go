@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/agent-harness/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // TestMeasuredDurationNeverHoldsEstimate 实测与估算必须单源。

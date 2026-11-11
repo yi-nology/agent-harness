@@ -2,7 +2,7 @@
 
 > 一句话：**「执行沙箱」接下来做什么、不做什么。**
 >
-> 范围声明：本档是 **agent-harness 侧对上游 `guardx` 的需求与分工**。
+> 范围声明：本档是 **goagent-kernel 侧对上游 `guardx` 的需求与分工**。
 > 机制（档位语义、跨进程协议、预算面）落在 `oagentkit/guardx` 仓；
 > 本仓只保留**门面**与**执行后端**（与 `sandbox` / `toolfail` 本次下沉的分工同构，
 > 见 [OAGENTKIT-OVERLAP.md](OAGENTKIT-OVERLAP.md)）。
@@ -225,7 +225,7 @@ type Capable interface {
 > **✅ 已完成（2026-10-21）**：上游 [guardx#20](https://github.com/oagentkit/guardx/pull/20)
 > （wire 协议，v0.11.0）→ [#21](https://github.com/oagentkit/guardx/pull/21)（补 Start/Result 帧
 > 与「两条通道 × 四个角色」，v0.12.0）→ [#22](https://github.com/oagentkit/guardx/pull/22)
-> （wire 移到仓根，import 路径变更，v0.13.0）；本仓 [v0.8.1](https://github.com/yi-nology/agent-harness/releases/tag/v0.8.1)
+> （wire 移到仓根，import 路径变更，v0.13.0）；本仓 [v0.8.1](https://github.com/yi-nology/goagent-kernel/releases/tag/v0.8.1)
 > 落地子进程后端。真兜底用例已进仓并通过：子进程申请超限内存 ⇒ 被内核杀掉 ⇒
 > 父侧收到「执行域异常终止」，**宿主进程存活**。
 >

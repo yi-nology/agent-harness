@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/yi-nology/agent-harness/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 func graph(ids ...string) []StepDef {

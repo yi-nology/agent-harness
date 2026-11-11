@@ -44,7 +44,7 @@ import (
 	"github.com/oekit/logx"
 	"github.com/oekit/pkg/encoding"
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/agent-harness/toolname"
+	"github.com/yi-nology/goagent-kernel/toolname"
 )
 
 // 三预算缺省（conf ptc.* 覆盖；run_program 构造时注入）。

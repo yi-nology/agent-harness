@@ -1,6 +1,6 @@
 package checkpoint
 
-import "github.com/yi-nology/agent-harness/contract"
+import "github.com/yi-nology/goagent-kernel/contract"
 
 // StepDef 编排图中的一个步骤。
 //

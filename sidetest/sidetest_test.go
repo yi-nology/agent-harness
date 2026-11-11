@@ -8,8 +8,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/agent-harness/sideeffect"
-	"github.com/yi-nology/agent-harness/sidetest"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sidetest"
 )
 
 // memStore 是一份**按契约实现**的内存存储，用来检验 sidetest 套件本身。

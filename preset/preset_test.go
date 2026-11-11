@@ -6,10 +6,10 @@ import (
 
 	"github.com/oagentkit/toolgate/policy"
 
-	"github.com/yi-nology/agent-harness/egress"
-	"github.com/yi-nology/agent-harness/gatecheck"
-	"github.com/yi-nology/agent-harness/preset"
-	"github.com/yi-nology/agent-harness/sandbox"
+	"github.com/yi-nology/goagent-kernel/egress"
+	"github.com/yi-nology/goagent-kernel/gatecheck"
+	"github.com/yi-nology/goagent-kernel/preset"
+	"github.com/yi-nology/goagent-kernel/sandbox"
 )
 
 func strict() preset.Preset {

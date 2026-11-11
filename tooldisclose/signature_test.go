@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/agent-harness/toolname"
+	"github.com/yi-nology/goagent-kernel/toolname"
 )
 
 func toolWith(name string, required []string, props ...string) Tool {

@@ -1,4 +1,4 @@
-# AGENTS.md — AI 编码代理工作纪律（agent-harness）
+# AGENTS.md — AI 编码代理工作纪律（goagent-kernel）
 
 本仓是**内核**：只放编排机制，不放领域知识。这条边界靠纪律 + 门禁双保险，
 AI 代理在本仓干活时最容易犯的错是「顺手把宿主的需求写进来」。
@@ -25,7 +25,7 @@ AI 代理在本仓干活时最容易犯的错是「顺手把宿主的需求写�
 
 ## 与 oekit 家族的一致性（2026-10-17 确立）
 
-本仓不是孤岛：**oekit**（基础库）→ **agentkit**（agent 原语）→ **agent-harness**
+本仓不是孤岛：**oekit**（基础库）→ **agentkit**（agent 原语）→ **goagent-kernel**
 （编排内核）→ 上游宿主仓是同一条依赖链。harness 曾是矩阵里唯一不守
 家规的成员——家规只写在别处的文档里，本仓既不执行也不自查。现已把可机械判定的
 三条做成门禁（`architecture-policy.yaml` rules 四~六）：
@@ -1140,7 +1140,7 @@ v0.16.0 就发布了，有 CHANGELOG 条目、有 `TestBudget`/`TestShutdownBudg
 
 ## 发版纪律（2026-10-20 补齐）
 
-本仓是**按版本引入**的下游依赖（`go get github.com/yi-nology/agent-harness@vX.Y.Z`），
+本仓是**按版本引入**的下游依赖（`go get github.com/yi-nology/goagent-kernel@vX.Y.Z`），
 所以「发版」本身就是给下游的一份契约。三条纪律：
 
 1. **发版顺序：改代码并提交 → 生成 CHANGELOG 并提交 → 打 tag → 推 tag → 发 GitHub Release。**
@@ -1151,7 +1151,7 @@ v0.16.0 就发布了，有 CHANGELOG 条目、有 `TestBudget`/`TestShutdownBudg
 
    ```bash
    python3 <matrix-tools>/scripts/gen_changelogs.py \
-       --repo agent-harness --root /Users/zhangyi/my_project \
+       --repo goagent-kernel --root /Users/zhangyi/my_project \
        --next-version vX.Y.Z
    ```
 

@@ -39,7 +39,7 @@ import (
 	"strings"
 
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/agent-harness/toolname"
+	"github.com/yi-nology/goagent-kernel/toolname"
 )
 
 // ErrSchemaNotDerivable 该工具的 schema 派不出合法的调用形态。errors.Is 判定。

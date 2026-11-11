@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/agent-harness/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 func stepPtr(id uint64) *uint64 { return &id }

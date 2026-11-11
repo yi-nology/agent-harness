@@ -50,7 +50,7 @@ func (r report) ok() bool {
 // hasSuffix 按后缀匹配包路径。
 //
 // 后缀匹配而不是前缀：README 与 Makefile 里写 `cmd/docsync` 可读，而全路径前缀
-// （github.com/yi-nology/agent-harness）在每条豁免里都是噪音。边界必须对齐「/」
+// （github.com/yi-nology/goagent-kernel）在每条豁免里都是噪音。边界必须对齐「/」
 // 或整串相等——否则 `sync` 会匹配到 `cmd/docsync`，那是**放行方向**的漏判。
 func hasSuffix(pkg, suffix string) bool {
 	if suffix == "" {

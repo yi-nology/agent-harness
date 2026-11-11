@@ -33,7 +33,7 @@ func TestExecutionPathCatchesRawEntryCall(t *testing.T) {
 	root := t.TempDir()
 	execFixture(t, root, map[string]string{
 		"ptc/ptc.go": ptcPkg,
-		"app/app.go": "package app\n\nimport \"github.com/yi-nology/agent-harness/ptc\"\n\n" +
+		"app/app.go": "package app\n\nimport \"github.com/yi-nology/goagent-kernel/ptc\"\n\n" +
 			"func Run() string { return ptc.Run(\"prog\") }\n",
 	})
 	vs, err := executionPathViolations(root, ExecutionPaths{})
@@ -53,7 +53,7 @@ func TestExecutionPathIgnoresAlias(t *testing.T) {
 	root := t.TempDir()
 	execFixture(t, root, map[string]string{
 		"ptc/ptc.go": ptcPkg,
-		"app/app.go": "package app\n\nimport alias \"github.com/yi-nology/agent-harness/ptc\"\n\n" +
+		"app/app.go": "package app\n\nimport alias \"github.com/yi-nology/goagent-kernel/ptc\"\n\n" +
 			"func Run() string { return alias.Run(\"prog\") }\n",
 	})
 	vs, err := executionPathViolations(root, ExecutionPaths{})
@@ -91,7 +91,7 @@ func TestExecutionPathIgnoresOtherCalls(t *testing.T) {
 	root := t.TempDir()
 	execFixture(t, root, map[string]string{
 		"ptc/ptc.go": ptcPkg,
-		"app/app.go": "package app\n\nimport \"github.com/yi-nology/agent-harness/ptc\"\n\n" +
+		"app/app.go": "package app\n\nimport \"github.com/yi-nology/goagent-kernel/ptc\"\n\n" +
 			"func Other() string { return ptc.Helper() }\n",
 		"tools/tools.go": "package tools\n\nfunc Local() string { return \"x\" }\n",
 	})
@@ -118,7 +118,7 @@ func TestExecutionPathSkipsTestFiles(t *testing.T) {
 		// 生产文件（合规调用）：让这个目录**会**被扫到。
 		"app/app.go": "package app\n\nfunc Local() string { return \"x\" }\n",
 		// 测试文件（违规调用）：不该被扫。
-		"app/app_test.go": "package app\n\nimport \"github.com/yi-nology/agent-harness/ptc\"\n\n" +
+		"app/app_test.go": "package app\n\nimport \"github.com/yi-nology/goagent-kernel/ptc\"\n\n" +
 			"func TestRun() { _ = ptc.Run(\"prog\") }\n",
 	})
 	vs, err := executionPathViolations(root, ExecutionPaths{})
@@ -215,7 +215,7 @@ func TestExecutionPathRuleIsRegisteredForReport(t *testing.T) {
 	root := t.TempDir()
 	execFixture(t, root, map[string]string{
 		"ptc/ptc.go": ptcPkg,
-		"app/app.go": "package app\n\nimport \"github.com/yi-nology/agent-harness/ptc\"\n\n" +
+		"app/app.go": "package app\n\nimport \"github.com/yi-nology/goagent-kernel/ptc\"\n\n" +
 			"func Run() string { return ptc.Run(\"prog\") }\n",
 	})
 	pol := &Policy{ExecutionPaths: &ExecutionPaths{}}
@@ -251,7 +251,7 @@ func TestExecutionPathCatchesDotImport(t *testing.T) {
 	root := t.TempDir()
 	execFixture(t, root, map[string]string{
 		"ptc/ptc.go": ptcWithHelperPkg,
-		"app/app.go": "package app\n\nimport . \"github.com/yi-nology/agent-harness/ptc\"\n\n" +
+		"app/app.go": "package app\n\nimport . \"github.com/yi-nology/goagent-kernel/ptc\"\n\n" +
 			"func Use() string { return Run(\"prog\") }\n",
 	})
 	vs, err := executionPathViolations(root, ExecutionPaths{})
@@ -270,7 +270,7 @@ func TestExecutionPathDotImportOtherSymbolIsFine(t *testing.T) {
 	root := t.TempDir()
 	execFixture(t, root, map[string]string{
 		"ptc/ptc.go": ptcWithHelperPkg,
-		"app/app.go": "package app\n\nimport . \"github.com/yi-nology/agent-harness/ptc\"\n\n" +
+		"app/app.go": "package app\n\nimport . \"github.com/yi-nology/goagent-kernel/ptc\"\n\n" +
 			"func Use() string { return Helper(\"prog\") }\n",
 	})
 	vs, err := executionPathViolations(root, ExecutionPaths{})

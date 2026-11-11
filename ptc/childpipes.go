@@ -8,7 +8,7 @@ import (
 	"github.com/oagentkit/runtime/procx"
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/agent-harness/egress"
+	"github.com/yi-nology/goagent-kernel/egress"
 )
 
 // 本文件是「怎么把父子之间的管道接起来」——与 subprocess.go 里的

@@ -4,16 +4,16 @@ title: 怎么用
 
 # 怎么用：从零接入
 
-> 🤖 本页要点已收录进 [llms.txt](https://yi-nology.github.io/agent-harness/llms.txt)——AI 代理可直接读取。
+> 🤖 本页要点已收录进 [llms.txt](https://yi-nology.github.io/goagent-kernel/llms.txt)——AI 代理可直接读取。
 
 ## 安装
 
 ```bash
 # 按最新发布版引入（不钉数字——钉死的数字几轮发版后就是过期指引）
-go get github.com/yi-nology/agent-harness@latest
+go get github.com/yi-nology/goagent-kernel@latest
 
 # 要复现特定版本再显式钉
-go get github.com/yi-nology/agent-harness@vX.Y.Z
+go get github.com/yi-nology/goagent-kernel@vX.Y.Z
 ```
 
 - **零 `replace`**：本仓 go.mod 不含 replace（含 replace 的公开 module 会让下游
@@ -22,8 +22,8 @@ go get github.com/yi-nology/agent-harness@vX.Y.Z
   不必拖进 goja、jsonschema：
 
 ```go
-import "github.com/yi-nology/agent-harness/contract"
-import "github.com/yi-nology/agent-harness/statemachine"
+import "github.com/yi-nology/goagent-kernel/contract"
+import "github.com/yi-nology/goagent-kernel/statemachine"
 ```
 
 ## 三个必须先知道的约束
@@ -265,13 +265,13 @@ if err := g.Assert("caller", "callee", 0); err != nil {
 ## 升级须知
 
 破坏性变更逐版记在仓内
-[README「下游升级须知」](https://github.com/yi-nology/agent-harness/blob/main/README.md#下游升级须知破坏性变更)。
+[README「下游升级须知」](https://github.com/yi-nology/goagent-kernel/blob/main/README.md#下游升级须知破坏性变更)。
 升级前扫一眼那张表；判读口径变化（如解析行为）也会写明改判方式。
 
 ## 下一步
 
 - [能力详解](./capabilities.md)——九组能力的完整清单与选型；
 - [坑速查](../reference/pitfalls.md)——接完线自查一遍；
-- 仓内 [docs/USAGE.md](https://github.com/yi-nology/agent-harness/blob/main/docs/USAGE.md)
+- 仓内 [docs/USAGE.md](https://github.com/yi-nology/goagent-kernel/blob/main/docs/USAGE.md)
   ——逐包的「职责 → 集成片段 → 关键符号 → 坑」，包括 eventbus / delta / drain /
   netguard / pii / sideeffect 等本文没展开的组。

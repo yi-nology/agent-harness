@@ -15,7 +15,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/agent-harness/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // Run 跑整套契约判据。newBoard 每次返回一个**干净的**存储（每条例句独立）。

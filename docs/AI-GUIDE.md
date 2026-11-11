@@ -1,4 +1,4 @@
-# AI 改造指南（agent-harness）
+# AI 改造指南（goagent-kernel）
 
 > 这份文档写给**要动手改这个仓的 AI 编码代理**。
 >
@@ -103,7 +103,7 @@
 ### 2.2 先跑一遍，确认环境是绿的
 
 ```bash
-cd /Users/zhangyi/my_project/agent-harness
+cd /Users/zhangyi/my_project/goagent-kernel
 
 make test                 # 全量单测（当前 156 个测试文件）
 make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令输出；本仓当前全绿）
@@ -344,7 +344,7 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 ```bash
 python3 <matrix-tools>/scripts/gen_changelogs.py \
-    --repo agent-harness --root /Users/zhangyi/my_project \
+    --repo goagent-kernel --root /Users/zhangyi/my_project \
     --next-version vX.Y.Z
 ```
 
@@ -726,7 +726,7 @@ make devlink                          # 接入本地 workspace（不改 go.mod�
 make devunlink                        # 断开
 
 # ── 宿主侧复用本仓门禁（示例）─────────────
-# import "github.com/yi-nology/agent-harness/archcheck"
+# import "github.com/yi-nology/goagent-kernel/archcheck"
 # root, err := archcheck.FindRoot(".")                                  // 向上找 policy
 # pol, err := archcheck.Load(filepath.Join(root, "architecture-policy.yaml"))
 # res, err := archcheck.Run(root, pol)

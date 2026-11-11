@@ -24,7 +24,7 @@
 // 而只认本仓模块 id 的判据表达不了。故 requires 的条目有两种形态：
 //
 //	<模块 id>                    本仓内部模块，必须在 modules 段登记过
-//	ext:<import 路径前缀>        外部包面，如 ext:github.com/yi-nology/agent-harness/netguard
+//	ext:<import 路径前缀>        外部包面，如 ext:github.com/yi-nology/goagent-kernel/netguard
 //
 // 外部依赖分两层声明，与内部模块同构：
 //

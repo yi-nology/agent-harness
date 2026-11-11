@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/yi-nology/agent-harness/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // specSamples 覆盖全部属性的样本行（每个属性至少在一行里被写出）。

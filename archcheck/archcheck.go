@@ -32,7 +32,7 @@
 //  1. policy 的 modules 段要求每个 root 指向**真实存在**的包目录：陈旧的 root
 //     会被判成违反（「陈旧包根当天即红」），因为它让该模块对门禁隐形。
 //  2. 跨仓依赖用 `ext:<import 路径前缀>` 表达，如
-//     `ext:github.com/yi-nology/agent-harness/netguard`。
+//     `ext:github.com/yi-nology/goagent-kernel/netguard`。
 //  3. 报告用 WriteReport；是否阻断用 Result.HasBlocking。
 //
 // # 调用面禁令与路径白名单怎么表达

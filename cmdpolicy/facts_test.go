@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/agent-harness/cmdpolicy"
+	"github.com/yi-nology/goagent-kernel/cmdpolicy"
 )
 
 // ⭐ 前缀判据的三类典型绕过，由「全调用 AST 事实面」闭合（事实面收编上游

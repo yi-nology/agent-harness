@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/agent-harness/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // 配对面的用例单独成文件：本文件只关心「调用与结果按 call_id 配对」这一族，

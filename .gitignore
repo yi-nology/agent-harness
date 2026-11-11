@@ -1,4 +1,4 @@
-# agent-harness .gitignore
+# goagent-kernel .gitignore
 #
 # 本仓在拆分期长期没有 git，靠「作者记得手删残留」维持整洁——实测已积压 45 个
 # 死文件（编辑器 .!NNNN! 临时件 33 个、原子写残留 *.go.<digits> 5 个、
@@ -52,11 +52,11 @@
 
 # ── 本机覆盖配置 ──
 # 本仓是**公开 Go module**：go.mod 里一旦留下指向本机路径的 replace，
-# 外部 `go get github.com/yi-nology/agent-harness` 全部失败——依赖图解析不了
+# 外部 `go get github.com/yi-nology/goagent-kernel` 全部失败——依赖图解析不了
 # 别人机器上不存在的目录。注释写着「禁止提交」不构成约束，`git add .` 照样带走。
 # 真正的约束在 .github/workflows/ci.yml：go.mod 出现 replace 即判失败。
 #
-# 宿主（如 bianque）本地并行开发用 replace 指向 ../agent-harness 没问题，
+# 宿主（如 bianque）本地并行开发用 replace 指向 ../goagent-kernel 没问题，
 # 但那条 replace 属于**宿主**的 go.mod，不属于本仓。
 #
 # 本地多仓并行开发改用 workspace（make devlink）：`use` 跨仓生效、不碰 go.mod。

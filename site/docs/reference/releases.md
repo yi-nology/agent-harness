@@ -56,5 +56,5 @@ title: 版本记录
 | `v0.3.0` | 2026-10-19 | 新增(gates)：把 lint 接进 make check，CI 钉 runner 与 action 版本 |
 | `v0.2.0` | 2026-10-18 | 新增(protocol)：把五个引擎侧字段从 LLM 解码路径剥离出来 |
 
-> 完整变更：仓内 [CHANGELOG.md](https://github.com/yi-nology/agent-harness/blob/main/CHANGELOG.md)；
-> 破坏性变更与迁移指引：仓内 [README「下游升级须知」](https://github.com/yi-nology/agent-harness/blob/main/README.md#下游升级须知破坏性变更)。
+> 完整变更：仓内 [CHANGELOG.md](https://github.com/yi-nology/goagent-kernel/blob/main/CHANGELOG.md)；
+> 破坏性变更与迁移指引：仓内 [README「下游升级须知」](https://github.com/yi-nology/goagent-kernel/blob/main/README.md#下游升级须知破坏性变更)。

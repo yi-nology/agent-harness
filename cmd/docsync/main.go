@@ -16,7 +16,7 @@
 //
 //   - 生产行数：pkg/*.go 且不含 _test.go（表头已声明该口径）
 //   - 外部依赖：生产代码 import 的仓外模块，取 module 前两段归并
-//   - 本仓自身 import（github.com/yi-nology/agent-harness/...）不算外部依赖
+//   - 本仓自身 import（github.com/yi-nology/goagent-kernel/...）不算外部依赖
 //
 // 两张表用**两套口径**是刻意的：包表的行数是约数（25% 容差滤逐行涨落），
 // 工程底座的三个数是声明值（判相等）。混用一套口径，等于让「跨量级的误述」
@@ -48,7 +48,7 @@ var (
 	// 表头：| `pkg` | loc | deps | 职责 |
 	rowRe = regexp.MustCompile("^\\|\\s*`([a-z]+)`\\s*\\|\\s*([0-9]+)\\s*\\|\\s*([^|]*?)\\s*\\|\\s*(.*?)\\s*\\|$")
 	// 外部依赖判定：第二段起表示子路径；仓内自身的 module 不算外部。
-	selfModule = "github.com/yi-nology/agent-harness"
+	selfModule = "github.com/yi-nology/goagent-kernel"
 )
 
 func main() {

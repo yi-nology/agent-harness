@@ -11,7 +11,7 @@ import (
 	"github.com/oagentkit/guardx/toolfail"
 	"github.com/oagentkit/guardx/wire"
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/agent-harness/toolname"
+	"github.com/yi-nology/goagent-kernel/toolname"
 )
 
 // 本文件验证子进程后端的**纯契约**部分（不真的起进程——端到端在

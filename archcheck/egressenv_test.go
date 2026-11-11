@@ -35,7 +35,7 @@ const dottedInheritAllExceptSrc = "package app\n\nimport (\n\t. \"github.com/oag
 
 // allowlistedEnvSrc 好形态：白名单生成 + 出口声明叠加。
 const allowlistedEnvSrc = "package app\n\nimport (\n\t\"os/exec\"\n\n\t\"github.com/oagentkit/runtime/procx\"\n" +
-	"\t\"github.com/yi-nology/agent-harness/egress\"\n)\n\n" +
+	"\t\"github.com/yi-nology/goagent-kernel/egress\"\n)\n\n" +
 	"func Spawn(spec egress.Spec, backend egress.Enforcer) error {\n" +
 	"\tif err := spec.SatisfiedBy(backend); err != nil {\n\t\treturn err\n\t}\n" +
 	"\tenv, err := spec.Env(procx.ChildEnv([]string{\"MODE=1\"}))\n" +

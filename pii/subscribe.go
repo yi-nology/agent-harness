@@ -44,7 +44,7 @@ package pii
 import (
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/agent-harness/internal/subhub"
+	"github.com/yi-nology/goagent-kernel/internal/subhub"
 )
 
 // Subscription 订阅句柄，传给 Unsubscribe 注销。0 表示无效。

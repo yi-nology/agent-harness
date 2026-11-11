@@ -30,7 +30,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/yi-nology/agent-harness/ptc"
+	"github.com/yi-nology/goagent-kernel/ptc"
 )
 
 func main() {

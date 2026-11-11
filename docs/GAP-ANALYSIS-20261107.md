@@ -276,18 +276,18 @@ git -C ~/my_project/Codex ls-tree -d --name-only ddd1812 codex-rs/ | wc -l   # 1
 # 4. ★ 本轮最关键的两条核实：代理与兑现端到底有没有
 grep -rli 'socks5\|golang.org/x/net/proxy\|httpproxy' ~/oagentkit/*/ --include='*.go' | grep -v _test
 #   ↑ 空 ⇒ 家族里没有进程级代理
-grep -rn 'egress.Enforcer\|SatisfiedBy(' ~/my_project/agent-harness ~/oagentkit ~/my_project/bianque \
+grep -rn 'egress.Enforcer\|SatisfiedBy(' ~/my_project/goagent-kernel ~/oagentkit ~/my_project/bianque \
   --include='*.go' | grep -v _test | grep -v gomodcache
 #   ↑ 只有接口声明与文档，无实现、无调用点
 grep -rn 'func .*Egress()' ~/oagentkit/guardx/sandbox/*.go        # 空 ⇒ 沙箱后端不声明出口能力
 
 # 5. OTel 底座在哪（结论：底座有，映射无）
 ls ~/oekit/tracing/go.mod && grep -rln 'go.opentelemetry.io' ~/oekit/tracing/*.go | head -3
-grep -rn 'go.opentelemetry.io' ~/my_project/agent-harness/trajectory/*.go   # 空 ⇒ 本仓不引依赖（seam）
+grep -rn 'go.opentelemetry.io' ~/my_project/goagent-kernel/trajectory/*.go   # 空 ⇒ 本仓不引依赖（seam）
 
 # 6. 本仓还开着什么（不是「没 grep 到」，是结构上没有）
-grep -rli 'guardian\|critic\|reviewer' ~/my_project/agent-harness --include='*.go' | grep -v _test   # 空
-grep -rli 'cron\|scheduler' ~/my_project/agent-harness --include='*.go' | grep -v _test              # 空
+grep -rli 'guardian\|critic\|reviewer' ~/my_project/goagent-kernel --include='*.go' | grep -v _test   # 空
+grep -rli 'cron\|scheduler' ~/my_project/goagent-kernel --include='*.go' | grep -v _test              # 空
 ```
 
 **没有验证到的**（写清楚，别当成已验证）：

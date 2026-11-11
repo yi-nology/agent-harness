@@ -1,4 +1,4 @@
-# agent-harness · 多智能体编排通用内核
+# goagent-kernel · 多智能体编排通用内核
 
 > 一句话：**编排是代码，LLM 只做单环节**——本仓只提供确定性编排的**机制面**，
 > **不认识任何领域概念**。
@@ -12,7 +12,7 @@
 > - **[docs/USAGE.md](docs/USAGE.md) = 怎么接、接错了会怎样** ← 宿主开发者从这儿开始
 > - **[docs/AI-GUIDE.md](docs/AI-GUIDE.md) = 怎么改、会被哪条门禁拦** ← 要动这个仓的 AI 代理从这儿开始
 > - [AGENTS.md](AGENTS.md) = 在本仓干活的工作纪律
-> - **[文档站](https://yi-nology.github.io/agent-harness/)** = 介绍 / 设计初衷 / 怎么用 / 能力 / 参考（VuePress，源码在 `site/`）
+> - **[文档站](https://yi-nology.github.io/goagent-kernel/)** = 介绍 / 设计初衷 / 怎么用 / 能力 / 参考（VuePress，源码在 `site/`）
 
 > **全部文档一览**（`docs/` 下标着**历史快照**的那些记录当时的判断与踩坑，
 > 不是当前事实；当前事实一律以本文 + 门禁 + 源码为准）：
@@ -371,7 +371,7 @@ make architecture-check   # 域词污染 + 依赖方向，违反即非零退出
 import (
 	"path/filepath"
 
-	"github.com/yi-nology/agent-harness/archcheck"
+	"github.com/yi-nology/goagent-kernel/archcheck"
 )
 
 // ① 定位仓根：从当前目录向上找 architecture-policy.yaml
@@ -454,7 +454,7 @@ if res.HasBlocking() {
 
 ### 与 oekit 家族的一致性（2026-10-17 补齐）
 
-`oekit`（基础库）→ `oagentkit`（agent 原语）→ `agent-harness`（编排内核）→
+`oekit`（基础库）→ `oagentkit`（agent 原语）→ `goagent-kernel`（编排内核）→
 上游宿主仓是同一条依赖链。harness 曾是矩阵里唯一不守家规的成员，现已把
 可机械判定的三条也做成门禁（理由详见 [AGENTS.md](AGENTS.md)）：
 
@@ -556,7 +556,7 @@ goroutine 怎么起、回调怎么声明、errors 怎么包），没有一条查
 
 ## 文档站（GitHub Pages · VuePress）
 
-**[yi-nology.github.io/agent-harness](https://yi-nology.github.io/agent-harness/)**
+**[yi-nology.github.io/goagent-kernel](https://yi-nology.github.io/goagent-kernel/)**
 
 **VuePress 文档站**：介绍、设计初衷、怎么用（接入路线图 + 最小示例）、能力详解（九组）、
 门禁体系、坑速查、包清单与机器事实。
@@ -648,6 +648,7 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 | 本仓版本 | 变更 | 下游要做什么 |
 |---|---|---|
+| **v0.30.0**（未发版） | **BREAKING：项目整体更名 `agent-harness` → `goagent-kernel`**——旧名在语境里与「模型外壳 agent harness」「评测 harness」「harness.io」三头撞车（实测搜索前排全是本仓明确不做的东西），名字把读者引向错误预期。GitHub 仓、Go module path、文档站 URL 全部换名；仓内 94 个文件的 import 与活文档已全部替换。**历史快照刻意保留旧名**（CHANGELOG 与 docs/ 标注「历史快照」的文档不改写历史）；门禁规则 ID（`harness-*`）是内部标识符，不在本次更名范围。**API 逐字不变**——本次只是身份换名 | **① 机械替换 import**：`github.com/yi-nology/agent-harness/…` → `github.com/yi-nology/goagent-kernel/…`（全局替换即可，调用面零改动）。<br>**② `go mod tidy`**——module path 是编译期身份，不跑 tidy 会直接报找不到模块。<br>**③ 旧 GitHub URL 自动 301**（仓页面与 git 协议均然，旧 remote 不用急着改）；**文档站 URL 不重定向**：`yi-nology.github.io/agent-harness/` → [`yi-nology.github.io/goagent-kernel/`](https://yi-nology.github.io/goagent-kernel/)。|
 | **v0.29.0**（已发版，tag `v0.29.0`） | **判据面补强：cmdpolicy 事实面收编上游 bashguard**：① `DecideCommand` 从「只比 argv 前缀」升级为**全调用 AST 判定**（事实面收编 `oagentkit/tools/bashguard`，mvdan.cc/sh 真 AST）——前缀判据的三类典型绕过在此闭合：**多段**（`git status; rm -rf /` 的 rm 段）、**命令替换**（`echo $(rm -rf /)` 里的嵌套 rm）、**写重定向**（`git status > /etc/passwd` 的 `>` 是语句级事实、不在 argv 里）；② 新增**事实面下限**：含写重定向或动态展开（`$()`/反引号/`$VAR`）⇒ 裁决**不低于 prompt**（这两类语义前缀规则结构上看不见，静默 allow 即「判据比声明宽」）；③ 新增哨兵 `ErrUnjudgeable`（AST 超长/解析失败 ⇒ 判不了就不放行）；`Verdict` 新增 `Wrote`/`Dynamic` 事实字段，`Explain` 追加信号说明。**依赖**：新增 `github.com/oagentkit/tools` v0.14.3（带入 `mvdan.cc/sh` v3.14.1）；其余第一方地板与 v0.28.0 相同（该轮已抬到 guardx v0.24.1 / runtime v0.12.6 / toolgate v0.17.0 / pkg v0.42.0 等，以 `go.mod` 为准） | **① `go mod tidy`**——引入新依赖 `oagentkit/tools`（含 `mvdan.cc/sh` 传递依赖），不跑就报 `updates to go.mod needed`。<br>**② `DecideCommand` 的判定结果会变严**（这是修复不是回归）：此前被绕过的三类命令现在会被拦/升 prompt——`git status > x` 由 allow 变 **prompt**、`git status; rm -rf /` 由 allow 变 **forbidden**（全调用面取最严）。若你的宿主依赖旧行为放行这类命令：要么按新口径补规则，要么改用 **`Decide(argv)`**（纯前缀、不做事实面判定，调用面一字未动）。<br>**③ `Verdict` 新增 `Wrote`/`Dynamic` 两个字段**：键名构造不受影响；**无键名字面量**构造会编译不过，改键名即可。<br>**④ 命令解析失败/超长从「放行」变报错**（`ErrUnjudgeable`）——判不了就不放行，与 `ErrUnclosedQuote` 同一处置口径 |
 | **v0.28.0**（已发版，tag `v0.28.0`） | **两处上游能力收编 + 一处下游可见的行为修正 + 第四轮 issue 清零**：① `cmdpolicy` 的**分词面收编上游 `oekit/pkg/shellx`**（本仓删掉手写分词器与 `mergeSeparators`，约 100 行）——收编**顺带修掉三处 POSIX 错误**：双引号内的反斜杠不再被一律丢弃（`"a\b"` 由 `ab` 变回 `a\b`，bash 实测即此）、分隔符只在**字符相邻**时合并（`a & & b` 不再被误并成 `a && b`）、CR 归空白（CRLF 命令行的行尾 CR 不再粘进最后一个 token）；② `cmdpolicy.SplitCommands` 的段文本改用上游 `shellx.QuoteArgv` 拼装，**段变得可往返**（段再分词逐项还原原 token）；③ `ptc` 的子进程 stderr 落进 `ExecutionAborted.Stderr` 前**过上游 `guardx/logredact` 脱敏**（凭据形态打码：URL 内嵌凭据、Bearer 头、JWT、厂商 token 前缀、长 hex、键值对）——子进程常把连接串与 API key 打进 stderr（MCP server 启动回显配置是最高频形态），而这段文本原先原样进错误消息与诊断报告；④ **第四轮 issue 清零（#62-#67）**：`egress` 代理变量判据收严为「一个不缺、一个不歪」（#62）、绕过名单收口为 NO_PROXY/no_proxy 并集单判定（#63）、`policy` 门面补 `Mutating(b)` 转发（#64，`toolgate` v0.17.0：`Op.Mutating` 三态化，**nil=未知 ⇒ 审计门 fail-safe 升人审**）、`ptc` 子进程后端三处契约修复（#65-#67，判定环归因复用 `stageOutcome` 等） | **① `cmdpolicy` 的分词结果在三处形态上会变**（只影响含反斜杠 / 空格分隔的 `& ` / CRLF 行尾的命令行）：本仓旧实现给 `"a\b"` → `ab`，现在给 `a\b`——**这是修复不是回归**（bash 实测逐字一致），但若你的宿主按旧行为做过前缀匹配，需按新口径核对。② `SplitCommands` 返回的段文本形态变了（含空格的段现在带引号）——**段仍是合法的 shell 命令行**，可再分词、可回放，但**不要再按字面比对段文本**（改判段再分词后的 token）。③ `ptc` 的 `ExecutionAborted.Stderr` 现在是**脱敏后**的文本：崩溃原因（fatal error / panic 栈）原样保留，凭据被打码——若你的宿主把 stderr 全文写进自己的日志系统，脱敏后是安全方向（凭据不再二次扩散）；若你的宿主**依赖**从 stderr 里读到某个明文 key（不当用法），请改从别的通道取。<br>**④ `go mod tidy`**：本轮无新增依赖（`shellx` 与 `logredact` 都在已声明的 `oekit/pkg` 与 `oagentkit/guardx` 模块内），故依赖地板不变。<br>**⑤ 若你的宿主依赖「不标变更=非变更=放行」**：`toolgate` v0.17.0 起 `Op.Mutating` 三态化（`*bool`），nil=未知 ⇒ 审计门升人审——`gatecheck`/`tooldisclose`/`ptc` 不再替宿主猜变更标记，**需显式声明**。<br>**⑥ `egress.Verify` 收严**：六个代理变量「一个不缺、一个不歪」才绿、`Bypass` 判定对 NO_PROXY/no_proxy 取并集——此前靠缺省通过的配置会开始报违约（修复假绿，#62/#63） |
 | **v0.27.1**（已发版，tag `v0.27.1`） | **修复轮，无破坏性变更**：`ptc` 的拒绝分类载体化（issue #53-#59）——分类随抛出对象一起走，收口处据此把「守卫判定拒绝」与「守卫自己崩了」分成两类，不再一律映射成 transient；另修 `protocol` 的报告校验、`drain` 的预算归一、`pending` 的列值解析。**依赖地板不变** | **无需 `go mod tidy`**，调用面逐字不变。**若你的宿主按「拒绝一律可重试」处理 ptc 的拒绝**，请改按 `toolfail` 的分类分流（`Kind` 随拒绝一起给出）——本版起「权限拒绝被当成瞬时错」这条误判已修正 |
@@ -666,7 +667,7 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 | **v0.8.3** | **依赖地板追平上游本轮新版本**（`oagentkit/llm` v0.14.2→v0.15.0、`oekit/concurrency` v0.18.0→v0.19.0）；**无代码变更** | **`go mod tidy`**——地板抬高对下游是隐式 breaking：不跑就报 `updates to go.mod needed`，且报错不提真正原因。**无行为差异**：llm v0.15.0 只新增了一个**可选**字段 `OpenAIProviderConfig.HTTPClient`（缺省 nil 时行为逐字不变），本仓只用 llm 的空导入（`tools.go` 的工具依赖登记），不碰其 API。**顺带值得知道**：llm v0.15.0 起宿主可注入自己的 `*http.Client` → 配合本仓 `netguard.NewClient` 把出站守卫挂到 `Transport.DialContext`（写面校验拦不住 DNS rebinding，守卫必须在拨号层）——接线形态见 [llm v0.15.0](https://github.com/oagentkit/llm/releases/tag/v0.15.0) |
 | **v0.8.2** | **依赖地板追平上游本轮新版本**（`oekit/pkg` v0.18.0→v0.20.0、`oagentkit/guardx` v0.13.0→v0.13.1）；**无代码变更** | **`go mod tidy`**——地板抬高对下游是隐式 breaking：不跑就报 `updates to go.mod needed`，且报错不提真正原因。两处抬升**均无行为差异**（`guardx` v0.13.1 只改 `go.mod`/`go.sum`；`oekit/pkg` v0.20.0 相对 v0.18.0 是纯增量 + 一处退避溢出修复），逐项核对见 [CHANGELOG.md](CHANGELOG.md) 的 v0.8.2 段 |
 | **v0.8.0** | **`sideeffect.Store` 新增 `Renew` 方法**（续期 + 校验持有资格），并新增 `sideeffect.FencedSink` 契约（下游拒收陈旧写入）；新增 `retryplan` 包（重试处置决策） | **接口层面的破坏性变更**：宿主若已实现 `sideeffect.Store`，需补上 `Renew(ctx, act, lease, ttl) (Lease, error)` 方法——语义见包头注释（**续期必须同时校验令牌仍是最新代**，否则是「假续期」）。宿主若已实现下游栅栏拒收，可改用 `FencedSink` 契约对齐比较口径与原子性要求。`FencedSink` 与 `retryplan` 是**新增**的，不影响既有代码 |
-| **v0.7.0** | **`toolfail` 与 `sandbox` 下沉上游 `oagentkit/guardx`（v0.9.0）**，本仓转**门面**（类型别名 + 常量别名 + 单条上游转发）；依赖地板抬到上游本轮新版本（`guardx` v0.8.2→v0.9.0、`llm` v0.14.1→v0.14.2、`agent` v0.10.0→v0.10.1）| **调用面逐字兼容，宿主代码不用改**——类型别名是编译期同一类型，宿主现有的 `errors.As` / `errors.Is` 判定链继续有效。**但必须 `go mod tidy`**：地板抬高对下游是隐式 breaking，不跑就报 `updates to go.mod needed`，且报错不提真正原因。下游若直接 import 过 `github.com/yi-nology/agent-harness/toolfail` 或 `.../sandbox` 的**具体实现**（如自造 `*Failure`、注册自定义 Provider），请改 import 上游路径 `github.com/oagentkit/guardx/toolfail` / `.../sandbox`——门面只保转发，不提供实现。逐版差异见 [CHANGELOG.md](CHANGELOG.md) 的 v0.7.0 段 |
+| **v0.7.0** | **`toolfail` 与 `sandbox` 下沉上游 `oagentkit/guardx`（v0.9.0）**，本仓转**门面**（类型别名 + 常量别名 + 单条上游转发）；依赖地板抬到上游本轮新版本（`guardx` v0.8.2→v0.9.0、`llm` v0.14.1→v0.14.2、`agent` v0.10.0→v0.10.1）| **调用面逐字兼容，宿主代码不用改**——类型别名是编译期同一类型，宿主现有的 `errors.As` / `errors.Is` 判定链继续有效。**但必须 `go mod tidy`**：地板抬高对下游是隐式 breaking，不跑就报 `updates to go.mod needed`，且报错不提真正原因。下游若直接 import 过 `github.com/yi-nology/goagent-kernel/toolfail` 或 `.../sandbox` 的**具体实现**（如自造 `*Failure`、注册自定义 Provider），请改 import 上游路径 `github.com/oagentkit/guardx/toolfail` / `.../sandbox`——门面只保转发，不提供实现。逐版差异见 [CHANGELOG.md](CHANGELOG.md) 的 v0.7.0 段 |
 | **v0.6.5** | **依赖地板追平上游本轮新版本**（`oekit/pkg` v0.17.0→v0.18.0、`oagentkit/obs` v0.9.2→v0.9.3、`oagentkit/mcpkit` v0.8.2→v0.8.3）；**`archcheck` 的 god object 判据改比「实质方法数」**（方法总数 − 转发壳数），policy 新增可选字段 `forwarding_shell_max_chars` | **`go mod tidy`**——地板抬高对下游是隐式 breaking：不跑就报 `updates to go.mod needed`，且报错不提真正原因。**判据变更对下游无感**：policy 不写新字段即按缺省 140 生效；若宿主要保持旧语义（方法总数），在自己 policy 里显式写 `forwarding_shell_max_chars: 0` 即可逐字退回旧行为。逐模块版本差异与判据推导见 [CHANGELOG.md](CHANGELOG.md) 的 v0.6.5 段 |
 | **v0.6.4** | 纯文档：新增 `docs/AI-GUIDE.md`（面向 AI 代理的操作手册），并校准 README「工程底座」表的三处漂移 | 无（无 API 变更、无地板抬高）|
 | **v0.6.3** | **依赖地板追平上游本轮新版本**（llm / obs / mcpkit / concurrency / core 共 5 个模块）| **`go mod tidy`**——地板抬高对下游是隐式 breaking：不跑就报 `updates to go.mod needed`，且报错不提真正原因。逐模块版本差异与「是否影响本仓」已逐个核对，写在 [CHANGELOG.md](CHANGELOG.md) 的 v0.6.3 段 |
@@ -693,11 +694,11 @@ ptc.Options.Stages      // []invoke.Stage
 ## 宿主接入
 
 ```bash
-go get github.com/yi-nology/agent-harness@latest
+go get github.com/yi-nology/goagent-kernel@latest
 ```
 
 ```go
-require github.com/yi-nology/agent-harness v0.29.0   // 零 replace，直接版本化引入
+require github.com/yi-nology/goagent-kernel v0.29.0   // 零 replace，直接版本化引入
 ```
 
 > 升级前用 `git ls-remote --tags origin` 核候选版本真的存在——
@@ -709,7 +710,7 @@ require github.com/yi-nology/agent-harness v0.29.0   // 零 replace，直接版�
 > `go get ...@<新版本>`——这也是为什么这里写当前版本号而不是 `v0.0.0`。
 
 ```go
-import "github.com/yi-nology/agent-harness/dispatch"
+import "github.com/yi-nology/goagent-kernel/dispatch"
 
 // 派发守卫：宿主提供拓扑，harness 提供机制
 type myEdgeSource struct{ reg *myRegistry }

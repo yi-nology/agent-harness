@@ -2,17 +2,17 @@ import { viteBundler } from '@vuepress/bundler-vite'
 import { defaultTheme } from '@vuepress/theme-default'
 import { defineUserConfig } from 'vuepress'
 
-// 站点配置。base 必须是 /agent-harness/——GitHub Pages 项目站挂在子路径下，
+// 站点配置。base 必须是 /goagent-kernel/——GitHub Pages 项目站挂在子路径下，
 // 写错根路径整站资源 404。
 export default defineUserConfig({
   lang: 'zh-CN',
-  title: 'agent-harness',
+  title: 'goagent-kernel',
   description: '编排是代码，LLM 只做单环节——多智能体编排的通用内核：机制面，不认识任何领域概念。',
-  base: '/agent-harness/',
-  head: [['link', { rel: 'icon', href: '/agent-harness/favicon.svg' }]],
+  base: '/goagent-kernel/',
+  head: [['link', { rel: 'icon', href: '/goagent-kernel/favicon.svg' }]],
   bundler: viteBundler(),
   theme: defaultTheme({
-    repo: 'yi-nology/agent-harness',
+    repo: 'yi-nology/goagent-kernel',
     repoLabel: 'GitHub',
     editLink: false,
     lastUpdated: false,
@@ -32,7 +32,7 @@ export default defineUserConfig({
       {
         text: 'AI 直读',
         children: [
-          { text: '本站 llms.txt', link: 'https://yi-nology.github.io/agent-harness/llms.txt' },
+          { text: '本站 llms.txt', link: 'https://yi-nology.github.io/goagent-kernel/llms.txt' },
           { text: 'oekit llms.txt', link: 'https://oekit.github.io/llms.txt' },
           { text: 'oagentkit llms.txt', link: 'https://oagentkit.github.io/llms.txt' },
         ],
@@ -46,7 +46,7 @@ export default defineUserConfig({
         ],
       },
     ],
-    footer: 'MIT License · github.com/yi-nology/agent-harness · <a href="https://yi-nology.github.io/agent-harness/llms.txt">AI 直读 llms.txt</a>',
+    footer: 'MIT License · github.com/yi-nology/goagent-kernel · <a href="https://yi-nology.github.io/goagent-kernel/llms.txt">AI 直读 llms.txt</a>',
     sidebar: {
       '/guide/': [
         {
