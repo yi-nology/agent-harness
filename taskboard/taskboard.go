@@ -44,11 +44,20 @@
 //
 // 故 @Claim@ 改收 @ClaimRequest@（只说「要多长的租约」），token 由存储铸造
 // 并随返回的 @@Task@ 给出。契约与实现从此一致，且不可能被调用方绕过。
+//
+// # 续期与接管代次（v0.33.0 起，详见 renew.go）
+//
+// 长任务没有续期手段就必然被接管；续期走 @@RenewingBoard.Renew@@——
+// 它是**资格检查**不是心跳：校验令牌仍是最新代，同时把到期时刻推后。
+// 接管代次 @@Fence@@ 与令牌**同源**（同一次认领的同一原子操作铸造），
+// 同一任务上严格递增；旧持有者迟到的提交凭「令牌不匹配 ⇒ @@ErrLeaseLost@@」
+// 必然被拒，且不波及新持有者。
 package taskboard
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -100,6 +109,11 @@ type Lease struct {
 	// 它**不由调用方提供**——见 ClaimRequest 的注释：调用方能造令牌，
 	// 「凭令牌认人」就名存实亡。
 	Token string
+	// Fence 接管代次（栅栏令牌）：与 Token **同一次原子操作**铸造，同一任务上
+	// 每次认领成功严格递增；续期**不**递增（续期不是接管）。
+	//
+	// 判据与下游栅栏的用法见 Fence 与 RenewingBoard 的契约说明（renew.go）。
+	Fence Fence
 	// Until 租约到期时刻（零值 = 不限期，由宿主自担）。
 	//
 	// 到期后其他 agent 可以接管：进程崩掉时没有它会留下一把永久占用。
@@ -159,7 +173,8 @@ type Board interface {
 	List(ctx context.Context) ([]Task, error)
 	// Claim 认领一个任务。
 	//
-	// **令牌由存储铸造**并随返回的 Task 一起给出（Task.Lease.Token）；
+	// **令牌由存储铸造**并随返回的 Task 一起给出（Task.Lease.Token 与
+	// Task.Lease.Fence 同一次原子操作铸造，Fence 在同一任务上严格递增）；
 	// 调用方只给「要多长的租约」（ClaimRequest），不给令牌。
 	//
 	// 以下情形必须报错而不是「尽力而为」：不存在（ErrNotFound）/
@@ -182,6 +197,9 @@ var (
 	// ErrTerminal 任务已是终态。
 	ErrTerminal = errors.New("taskboard: 任务已是终态")
 	// ErrLeaseLost 令牌不匹配（租约已易主或被释放过）。
+	//
+	// 旧持有者迟到的一切动作——Release / Complete / Renew——都用它拒收：
+	// 接管必然铸造新令牌，令牌不匹配即说明你不是现任持有者。
 	ErrLeaseLost = errors.New("taskboard: 租约已易主")
 )
 
@@ -245,10 +263,10 @@ func Check(tasks []Task) []Problem {
 				out = append(out, Problem{Task: t.ID, Code: CodeClaimedNoLease,
 					Text: "已认领但没有 owner 或租约令牌：释放与完成都无从验证"})
 			}
-		} else if t.Owner != "" || t.Lease.Token != "" {
-			// 非认领态残留 owner/token：宿主会照着它以为「还有人负责」。
+		} else if t.Owner != "" || t.Lease.Token != "" || t.Lease.Fence != 0 {
+			// 非认领态残留 owner/token/代次：宿主会照着它以为「还有人负责」。
 			out = append(out, Problem{Task: t.ID, Code: CodeLeaseNoClaim,
-				Text: "非认领态残留 owner/租约：读起来像还有人负责，实际没人"})
+				Text: "非认领态残留 owner/租约/代次：读起来像还有人负责，实际没人"})
 		}
 		if t.State.Terminal() && t.Owner != "" {
 			out = append(out, Problem{Task: t.ID, Code: CodeTerminalClaimed,
@@ -284,11 +302,8 @@ func Check(tasks []Task) []Problem {
 			Text: "依赖成环（含 " + joinIDs(cycle) + "）：环上的任务永远不会就绪"})
 	}
 
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Task != out[j].Task {
-			return out[i].Task < out[j].Task
-		}
-		return out[i].Code < out[j].Code
+	slices.SortStableFunc(out, func(a, b Problem) int {
+		return cmp.Or(cmp.Compare(a.Task, b.Task), cmp.Compare(a.Code, b.Code))
 	})
 	return out
 }
@@ -318,7 +333,7 @@ func detectCycle(byID map[TaskID]Task) []TaskID {
 			queue = append(queue, id)
 		}
 	}
-	sort.Slice(queue, func(i, j int) bool { return queue[i] < queue[j] })
+	slices.Sort(queue)
 	done := 0
 	for len(queue) > 0 {
 		id := queue[0]
@@ -340,11 +355,8 @@ func detectCycle(byID map[TaskID]Task) []TaskID {
 			left = append(left, id)
 		}
 	}
-	sort.Slice(left, func(i, j int) bool { return left[i] < left[j] })
-	if len(left) > 5 {
-		left = left[:5]
-	}
-	return left
+	slices.Sort(left)
+	return left[:min(len(left), 5)]
 }
 
 // joinIDs 把 id 列表拼成一段可读文本。

@@ -26,9 +26,10 @@ type durable struct {
 
 	done      map[sideeffect.Key]sideeffect.Result
 	uncertain map[sideeffect.Key]string
+	recons    map[sideeffect.Key]durableRecon
 	held      map[string]sideeffect.Lease
 	expiry    map[string]time.Time
-	holders   map[string]sideeffect.Key
+	holders   map[string]string
 	intents   map[sideeffect.Key]durableIntent
 	maxFence  map[string]sideeffect.Fence
 	terminals map[commitgate.Ref]commitgate.Commit
@@ -42,9 +43,10 @@ func newDurable() *durable {
 		snaps:     map[string]checkpoint.Snapshot{},
 		done:      map[sideeffect.Key]sideeffect.Result{},
 		uncertain: map[sideeffect.Key]string{},
+		recons:    map[sideeffect.Key]durableRecon{},
 		held:      map[string]sideeffect.Lease{},
 		expiry:    map[string]time.Time{},
-		holders:   map[string]sideeffect.Key{},
+		holders:   map[string]string{},
 		intents:   map[sideeffect.Key]durableIntent{},
 		maxFence:  map[string]sideeffect.Fence{},
 		terminals: map[commitgate.Ref]commitgate.Commit{},
@@ -53,9 +55,16 @@ func newDurable() *durable {
 }
 
 // durableIntent 一次未裁决的执行意图（Acquire 原子登记）。
+// durableRecon 一次对账认领。
+type durableRecon struct {
+	holder  string
+	expires time.Time
+}
+
 type durableIntent struct {
 	resource string
 	fence    sideeffect.Fence
+	holder   string
 	expires  time.Time
 }
 
@@ -95,6 +104,13 @@ func (d *durable) Acquire(_ context.Context, act sideeffect.Action, ttl time.Dur
 		return sideeffect.OutcomeUncertain, sideeffect.Lease{}, sideeffect.Result{}, nil
 	}
 	now := time.Now()
+	// 对账占用未过期 ⇒ 对账中（仍是未知态）；过期占用清掉（可重入）。
+	if r, ok := d.recons[act.Key]; ok {
+		if now.Before(r.expires) {
+			return sideeffect.OutcomeUncertain, sideeffect.Lease{}, sideeffect.Result{}, nil
+		}
+		delete(d.recons, act.Key)
+	}
 	// 执行意图未裁决 → 不得重新授予执行权（进程死在记账之前的那条窗口）。
 	if it, ok := d.intents[act.Key]; ok {
 		if now.Before(it.expires) {
@@ -111,12 +127,13 @@ func (d *durable) Acquire(_ context.Context, act sideeffect.Action, ttl time.Dur
 		return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, nil
 	}
 	d.maxFence[act.Resource]++
-	lease := sideeffect.Lease{Resource: act.Resource, Fence: d.maxFence[act.Resource], TTL: ttl}
+	holder := sideeffect.MintHolder()
+	lease := sideeffect.Lease{Resource: act.Resource, Fence: d.maxFence[act.Resource], Holder: holder, TTL: ttl}
 	d.held[act.Resource] = lease
 	d.expiry[act.Resource] = now.Add(ttl)
-	d.holders[act.Resource] = act.Key
-	// 意图与令牌在同一次原子操作里登记。
-	d.intents[act.Key] = durableIntent{resource: act.Resource, fence: lease.Fence, expires: now.Add(ttl)}
+	d.holders[act.Resource] = holder
+	// 意图、令牌、持有者身份在同一次原子操作里登记。
+	d.intents[act.Key] = durableIntent{resource: act.Resource, fence: lease.Fence, holder: holder, expires: now.Add(ttl)}
 	return sideeffect.OutcomeApplied, lease, sideeffect.Result{}, nil
 }
 
@@ -126,26 +143,49 @@ func (d *durable) dropIntent(act sideeffect.Action, it durableIntent) {
 	if it.resource == "" {
 		return
 	}
-	if h, ok := d.holders[it.resource]; ok && h == act.Key {
+	if h, ok := d.holders[it.resource]; ok && h == it.holder {
 		delete(d.held, it.resource)
 		delete(d.expiry, it.resource)
 		delete(d.holders, it.resource)
 	}
 }
 
-// holdOwned 资源闸是否仍由本次尝试持有（只比令牌不够：释放后令牌没变）。
-func (d *durable) holdOwned(act sideeffect.Action, lease sideeffect.Lease) bool {
-	cur, ok := d.held[act.Resource]
-	if !ok || cur.Fence != lease.Fence {
-		return false
+// leaseResourceErr 三项联查第一项：租约的资源必须与动作的资源一致。
+func leaseResourceErr(act sideeffect.Action, lease sideeffect.Lease) error {
+	if lease.Resource != act.Resource {
+		return sideeffect.ErrResourceMismatch
 	}
-	return d.holders[act.Resource] == act.Key
+	return nil
 }
 
-// intentOwned 本次尝试是否仍归该令牌所有。
-func (d *durable) intentOwned(act sideeffect.Action, lease sideeffect.Lease) bool {
+// holdOwnerErr 三项联查：资源闸是否仍由**这份凭据**持有。
+func (d *durable) holdOwnerErr(act sideeffect.Action, lease sideeffect.Lease) error {
+	if err := leaseResourceErr(act, lease); err != nil {
+		return err
+	}
+	cur, ok := d.held[act.Resource]
+	if !ok || lease.Fence == 0 || cur.Fence != lease.Fence {
+		return sideeffect.ErrFenceStale
+	}
+	if d.holders[act.Resource] != lease.Holder {
+		return sideeffect.ErrNotHolder
+	}
+	return nil
+}
+
+// intentOwnerErr 三项联查：本次尝试是否仍归**这份凭据**所有。
+func (d *durable) intentOwnerErr(act sideeffect.Action, lease sideeffect.Lease) error {
+	if err := leaseResourceErr(act, lease); err != nil {
+		return err
+	}
 	it, ok := d.intents[act.Key]
-	return ok && it.fence == lease.Fence
+	if !ok || it.fence != lease.Fence {
+		return sideeffect.ErrFenceStale
+	}
+	if it.holder != lease.Holder {
+		return sideeffect.ErrNotHolder
+	}
+	return nil
 }
 
 func (d *durable) Complete(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, res sideeffect.Result) (sideeffect.Result, error) {
@@ -154,8 +194,11 @@ func (d *durable) Complete(_ context.Context, act sideeffect.Action, lease sidee
 	if prior, ok := d.done[act.Key]; ok {
 		return prior, nil
 	}
-	if !d.holdOwned(act, lease) || !d.intentOwned(act, lease) {
-		return sideeffect.Result{}, sideeffect.ErrFenceStale
+	if err := d.holdOwnerErr(act, lease); err != nil {
+		return sideeffect.Result{}, err
+	}
+	if err := d.intentOwnerErr(act, lease); err != nil {
+		return sideeffect.Result{}, err
 	}
 	d.done[act.Key] = res
 	delete(d.intents, act.Key)
@@ -169,8 +212,8 @@ func (d *durable) Complete(_ context.Context, act sideeffect.Action, lease sidee
 func (d *durable) Release(_ context.Context, act sideeffect.Action, lease sideeffect.Lease) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.holdOwned(act, lease) {
-		return sideeffect.ErrFenceStale
+	if err := d.holdOwnerErr(act, lease); err != nil {
+		return err
 	}
 	delete(d.held, act.Resource)
 	delete(d.expiry, act.Resource)
@@ -182,11 +225,11 @@ func (d *durable) Release(_ context.Context, act sideeffect.Action, lease sideef
 func (d *durable) Abandon(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, _ string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.intentOwned(act, lease) {
-		return sideeffect.ErrFenceStale
+	if err := d.intentOwnerErr(act, lease); err != nil {
+		return err
 	}
 	delete(d.intents, act.Key)
-	if d.holdOwned(act, lease) {
+	if err := d.holdOwnerErr(act, lease); err == nil {
 		delete(d.held, act.Resource)
 		delete(d.expiry, act.Resource)
 		delete(d.holders, act.Resource)
@@ -197,8 +240,12 @@ func (d *durable) Abandon(_ context.Context, act sideeffect.Action, lease sideef
 func (d *durable) MarkUncertain(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, reason string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.holdOwned(act, lease) || !d.intentOwned(act, lease) {
-		return sideeffect.ErrFenceStale
+	// 三项联查全部发生在任何状态被改之前：写失败时意图原样留在存储里。
+	if err := d.holdOwnerErr(act, lease); err != nil {
+		return err
+	}
+	if err := d.intentOwnerErr(act, lease); err != nil {
+		return err
 	}
 	d.uncertain[act.Key] = reason
 	delete(d.intents, act.Key)
@@ -215,20 +262,47 @@ func (d *durable) ResolveUncertain(_ context.Context, act sideeffect.Action, res
 		return sideeffect.OutcomeContended, sideeffect.Result{}, sideeffect.ErrNotUncertain
 	}
 	delete(d.intents, act.Key)
+	delete(d.recons, act.Key)
 	if res.Applied {
 		d.done[act.Key] = res.Result
 		delete(d.uncertain, act.Key)
-		return sideeffect.OutcomeApplied, res.Result, nil
+		return sideeffect.OutcomeReplayed, res.Result, nil
+	}
+	if act.RetrySafety == sideeffect.RetrySafetyUnsafe && !res.ForceRetryable {
+		// 「不可重试」的动作，裁决「未生效」不解除阻塞（显式决策才放行）。
+		return sideeffect.OutcomeUncertain, sideeffect.Result{}, sideeffect.ErrUnsafeNotRetryable
 	}
 	delete(d.uncertain, act.Key)
 	return sideeffect.OutcomeContended, sideeffect.Result{}, nil
 }
 
+// BeginReconcile 认领对账权：同一 Key 同一时刻至多一个对账者，过期可重入。
+func (d *durable) BeginReconcile(_ context.Context, act sideeffect.Action, ttl time.Duration) (sideeffect.Reconcile, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, ok := d.done[act.Key]; ok {
+		return sideeffect.Reconcile{}, sideeffect.ErrNotUncertain
+	}
+	if _, ok := d.uncertain[act.Key]; !ok {
+		return sideeffect.Reconcile{}, sideeffect.ErrNotUncertain
+	}
+	now := time.Now()
+	if r, ok := d.recons[act.Key]; ok && now.Before(r.expires) {
+		return sideeffect.Reconcile{}, sideeffect.ErrReconcileTaken
+	}
+	holder := sideeffect.MintHolder()
+	d.recons[act.Key] = durableRecon{holder: holder, expires: now.Add(ttl)}
+	return sideeffect.Reconcile{Holder: holder, ExpiresAt: now.Add(ttl)}, nil
+}
+
 func (d *durable) Renew(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, ttl time.Duration) (sideeffect.Lease, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.holdOwned(act, lease) || !d.intentOwned(act, lease) {
-		return sideeffect.Lease{}, sideeffect.ErrFenceStale
+	if err := d.holdOwnerErr(act, lease); err != nil {
+		return sideeffect.Lease{}, err
+	}
+	if err := d.intentOwnerErr(act, lease); err != nil {
+		return sideeffect.Lease{}, err
 	}
 	now := time.Now()
 	d.expiry[act.Resource] = now.Add(ttl)

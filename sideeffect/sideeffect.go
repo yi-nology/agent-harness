@@ -106,10 +106,29 @@ package sideeffect
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"time"
 
 	"github.com/oekit/pkg/errors"
 )
+
+// MintHolder 铸造一份持有者身份（Lease.Holder / Reconcile.Holder 的参考
+// 铸造原语，v0.33.0）。
+//
+// 256 位随机数，不可预测、授予之间不重合。存储实现**可以**用它，也可以用
+// 任何不可预测的方案（存储侧序列派生、UUIDv4 等），但铸造必须发生在
+// **存储侧的授予动作里**——调用方自选的身份等于没有身份（与 taskboard
+// 「令牌由存储铸造」同一条纪律：凭据由判据面铸造）。随机源失败时直接
+// panic：宁可拒绝授予，也不发一份可预测的凭据。
+func MintHolder() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(fmt.Sprintf("铸造持有者身份失败: %v", err))
+	}
+	return hex.EncodeToString(b[:])
+}
 
 // Key 幂等键：标识「一个逻辑动作」。
 //
@@ -175,6 +194,24 @@ type Fence uint64
 // 效果一样——**这把钥匙不再有效**，你的迟到写入不得落地。
 var ErrFenceStale = errors.New("栅栏令牌已过期")
 
+// ErrNotHolder 持有者身份不匹配：这笔操作出示的凭据**不是本次授予铸造的
+// 那份**。
+//
+// 与 ErrFenceStale 的分工：令牌陈旧说明「这一代已经过去」；持有者不匹配
+// 说明「令牌或许仍是这一代，但出示者不是被授予人」——栅栏令牌会经下游
+// 流转（FencedSink），见过的组件拿令牌来冒充持有者时，被这道防线拦下。
+// 只比令牌不比持有者的实现，拦不住这个形态。
+var ErrNotHolder = errors.New("持有者身份不匹配：本次尝试不归该凭据所有")
+
+// ErrResourceMismatch 租约与动作的资源不一致：A 资源的租约被拿去做 B
+// 资源的操作。
+//
+// Complete / Renew / MarkUncertain 同时收 act（含 Resource）与 lease
+// （含 Resource），两者各说各话时无法都成立——契约要求存储侧拦下，
+// 而不是各自按自己那份判（「判据共享一个真相」的另一面：**两个真相
+// 等于没有真相**）。
+var ErrResourceMismatch = errors.New("租约与动作的资源不一致")
+
 // FencedSink 下游资源的「拒收陈旧写入」边界。
 //
 // # 为什么要有它
@@ -227,6 +264,22 @@ type Lease struct {
 	Resource string
 	// Fence 本次持有对应的栅栏令牌（同一 Resource 上单调递增）。
 	Fence Fence
+	// Holder 持有者身份，由**存储侧在授予时铸造**（v0.33.0 起）。
+	//
+	// # 为什么 Lease 还需要身份——栅栏令牌不够吗
+	//
+	// Fence 标识的是「该资源上的第几代持有」，它**可能泄露**：栅栏要传给下游
+	// （FencedSink 的写入参数就是它），凡是参与过那次写入的组件都见过这枚令牌。
+	// 见过 ≠ 可以冒充——持有者身份是授予时在**存储侧**铸造的第二份凭据，
+	// 不经任何下游接口流转，持令牌者拿不出它。
+	//
+	// 于是「Complete / Renew / MarkUncertain 只认令牌」升级为三项联查
+	// （令牌 + 持有者 + 资源一致，见 Store 契约）：一个只偷到了令牌的组件，
+	// 在持有者还在场时冒充不了它。
+	//
+	// 与 taskboard「令牌由存储铸造」同一条纪律：**凭据由判据面铸造**，
+	// 调用方自选的凭据不是凭据。
+	Holder string
 	// TTL 本次持有的有效期。
 	TTL time.Duration
 }
