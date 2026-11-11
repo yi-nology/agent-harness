@@ -591,6 +591,25 @@ modules:
   # 别的仓就够不着：于是每个宿主要么各写一遍判据（各判一套，漂移到没人发现），
   # 要么干脆不写（policy 的依赖拓扑表变成死条文：躺在文件里、看起来有人维护过，
   # 实际一条都不判）。
+  # 参考运行时示例（v0.32.0 新增）：端到端演示机制怎么串起来。
+  #
+  # 为什么它是**模块**而不是散落的脚本：未登记的包目录对依赖方向门禁**隐形**——
+  # 任何模块都能 import 它而不判违规。于是示例里长出的真实依赖（checkpoint /
+  # commitgate / sideeffect / taskboard）就没人管了。
+  #
+  # 为什么它零新依赖：存储用**纯 stdlib 内存实现**。本仓「依赖面窄」是既有优势，
+  # 不为示例牺牲——真实 SQLite/PostgreSQL 的接入形态写成契约（README + sidetest），
+  # 而不是拖一个驱动进内核的依赖图。
+  - id: reference-runtime
+    roots: [examples/reference-runtime]
+    requires: [checkpoint, commitgate, contract, sideeffect, taskboard, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      参考运行时示例：创建任务 → 多步骤执行 → 中断 → 恢复续跑 → 并发认领 →
+      副作用对账。它是**示例**不是能力包：机制面仍在 checkpoint/commitgate/
+      sideeffect/taskboard 里，本目录只演示它们怎么接线。
+
   - id: archcheck
     roots: [archcheck]
     requires: []
@@ -1239,7 +1258,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
