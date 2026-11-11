@@ -42,6 +42,9 @@ func DiscoverPackages(root string) ([]string, error) {
 		if relErr != nil {
 			return relErr
 		}
+		// 统一成 / 分隔：清单键、报告与测试断言全用斜杠形态，
+		// windows 的 filepath.Rel 返回 \ 分隔，不归一就是「同一个包两个名字」。
+		rel = filepath.ToSlash(rel)
 		if rel == "." {
 			return nil
 		}
