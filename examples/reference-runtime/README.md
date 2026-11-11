@@ -47,6 +47,11 @@ CGO_ENABLED=0 go test ./examples/... -count=1
 内核**只给契约与判据，不给存储**。宿主要落库，实现下面这些接口即可；
 本仓的 `archcheck` 门禁会检查你声明的依赖边是否与实际 import 一致。
 
+**可抄的成品已就位（v0.33.0 起）**：[`examples/pgstore`](../pgstore/README.md)
+是三套契约的 PostgreSQL 参考实现——`sidetest` / `boardtest` / 栅栏套件在真实
+数据库上跑同一段判据，外加 SIGKILL 故障恢复 e2e 与 docker compose 部署案例。
+本节的落库形态表是它的**摘要**，实现细节以那份代码为准。
+
 ### 1. `checkpoint.StoreCAS`（进度快照，单调存取）
 
 | 方法 | 语义 | SQLite / PostgreSQL 形态 |
@@ -103,7 +108,9 @@ token TEXT, until TIMESTAMP, seq INTEGER)`。
 
 - **本示例的原子性只来自一把进程内的互斥锁**，只在单进程内成立。跨进程部署时，
   上面的每一条判据都必须落到数据库的原子操作上——内核的判据是**确定性的**，
-  但「谁赢」由存储判，不由进程判。
+  但「谁赢」由存储判，不由进程判。落到数据库上的成品见
+  [`examples/pgstore`](../pgstore/README.md)：同一段 `sidetest` / `boardtest`
+  契约套件 + SIGKILL 故障恢复 e2e 在真实 PostgreSQL 上判过它。
 - **副作用的上界是「同一逻辑动作至多一次施加」，不是 exactly-once**。
   远端是否生效由远端说了算：内核能做的只是把「不知道」显式化（结果未知）并要求
   对账，**不能**替调用方判定「没生效」。要拿到 exactly-once，需要把幂等键一路

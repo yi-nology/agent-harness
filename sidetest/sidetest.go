@@ -83,6 +83,20 @@
 //  28. reconcile_taken_while_active   占用未过期时第二个对账者被拒；裁决清除占用
 //  29. reconcile_reentrant_after_expiry 占用过期可重新认领；过期 ≠ 放行
 //
+// 「下游栅栏」一族六场景在 **sink.go**（v0.33.0 新增，RunSinkContract，判
+// FencedSink 的比较口径与原子性）：
+//
+//  30. fresh_accepted                令牌更大 → 接受写入
+//  31. equal_accepted                等于已见最大 → 接受（只有更小才是陈旧）
+//  32. stale_rejected_no_write       陈旧拒收为 ErrFenceStale，且零写入
+//  33. stale_after_fresh_keeps_max   新先旧后：已见最大不被陈旧写污染
+//  34. concurrent_stale_rejected     并发下更旧的那次不能后落覆盖
+//  35. write_error_no_partial_write  写入体失败 → 预占与部分写一起回滚
+//
+// 判据收编自 sideeffect 包内对内存替身的用例（判据只有一份）：内存替身与
+// PostgreSQL 参考实现（examples/pgstore）跑同一段断言，宿主的 FencedSink
+// 实现也接它，不另造一套。
+//
 // # 时钟
 //
 // 租约过期需要可控时钟，否则只能靠 sleep（慢且 flaky）。

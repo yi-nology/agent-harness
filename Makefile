@@ -38,7 +38,20 @@ PKG_COV_MIN := 70
 #
 # 记这一笔的原因是它验证了「失效即红」这条机制：补完用例后第一次跑 cover-gate，
 # 门禁自己报的就是「豁免失效，请从 PKG_COV_EXEMPT 移除」，而不是默默放行。
-PKG_COV_EXEMPT :=
+#
+# # 现存一条结构性豁免（2026-11-12，issue #94）
+#
+# 豁免对象是 examples/pgstore（PostgreSQL 参考存储）。原因：该包的全部用例
+# 都是**环境依赖的 integration 用例**——没有可连的 PostgreSQL 时在环境入口
+# 显式 Skipf（写明原因与起法；这是环境依赖入口的显式跳过，不是场景级后门，
+# 套件场景本身仍硬失败），⇒ 语句覆盖率恒为 0%，对它判「≥70%」判的是
+# 「环境有没有库」，不是「代码测没测」。该包的判据由 sidetest / boardtest /
+# RunSinkContract 共享契约套件 + SIGKILL 故障恢复 e2e 承担，在 integration
+# 层真跑（`make integration` / CI 的 postgres service container / compose 的
+# verify profile）。拆除条件：**结构性豁免，无自然到期日**——与 cmd/ptcchild
+# 同型（包的性质决定了通用覆盖率判据不适用）；若将来该包长出不依赖数据库的
+# 可测逻辑，把那部分判据接进常规层即可缩窄本豁免。
+PKG_COV_EXEMPT := examples/pgstore
 # 零测试文件豁免（逗号分隔，按包路径**后缀**匹配）。同样「失效即红」。
 #
 # 为什么要这条判据（issue #30）：`go test` 对无测试文件的包输出
@@ -48,12 +61,17 @@ PKG_COV_EXEMPT :=
 # 整包不写测试，判据一声不吭。判据分不出「合理的零测试」与「漏写测试」——
 # 那就别假装分得出，要求显式声明：要么补测试，要么在这里登记并写清为什么。
 #
-# 当前两项：
+# 当前三项：
 #   cmd/archcheck  纯 CLI 装配层（Load/Run/WriteReport 的拼装与 flag 解析）；
 #                  判定逻辑全在 archcheck 包，那里有完整用例。
 #   cmd/ptcchild   子进程夹具：不作为独立包被调用，而是由 ptc 的用例用
 #                  `go build` 编出来当被测子进程（见 ptc/subprocess_exec_test.go）。
-PKG_NO_TEST_EXEMPT := cmd/archcheck,cmd/ptcchild
+#   examples/pgstore/cmd/pgsmoke  部署冒烟入口（issue #105）：它的「用例」就是
+#                  compose 的 smoke 服务 / make integration 真跑一遍（连真实
+#                  PostgreSQL 断言四条判据）——环境依赖的 integration 入口，
+#                  与 examples/pgstore 的豁免同一理由；拆装配层判据进常规层
+#                  即可缩窄。
+PKG_NO_TEST_EXEMPT := cmd/archcheck,cmd/ptcchild,examples/pgstore/cmd/pgsmoke
 # 门禁工具的版本口径。**单一来源在这里**，ci.yml 必须与之一致（versioncheck 判）。
 # 运行时还要再断言一次实跑版本（lint / vuln 目标里）——「钉了版本」与「跑的是
 # 那个版本」是两件事：命令在 PATH 里只说明门禁会跑，不说明跑的是同一套判据。
@@ -73,8 +91,12 @@ RACE_ENV := CGO_ENABLED=1
 CROSS_TARGETS := linux/amd64 linux/arm64 darwin/arm64 windows/amd64
 # govulncheck 版本口径：CI 装这个版本，与本机验证过的一致（同 lint 的理由）。
 GOVULNCHECK_VERSION := v1.7.0
+# PG 参考实现（examples/pgstore）的 integration 测试 DSN。compose 起 postgres
+# 后用它；指向已有实例时直接覆盖（PGREF_DSN=... make integration）。
+PGREF_DSN := postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+COMPOSE   := docker compose -f examples/docker-compose.yml
 
-.PHONY: build fmt-check vet lint test race cover cover-gate vuln crossbuild versioncheck architecture-check docsync site check tidy devlink devunlink clean
+.PHONY: build fmt-check vet lint test race cover cover-gate vuln crossbuild versioncheck architecture-check docsync integration site check tidy devlink devunlink clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -244,6 +266,29 @@ crossbuild: ## 交叉构建矩阵（声明支持的平台必须真的编得过�
 
 architecture-check: ## 架构治理门禁（域词污染红线 + 依赖方向）
 	$(EXPORT) $(GOENV) go run ./cmd/archcheck $(if $(findstring --report,$(MAKECMDGOALS)),--report,)
+
+# ── integration 层（issue #94 #95 #105）──────────────────────────────
+#
+# 为什么不在 check 里：check 必须在任何机器上一条命令可跑（无 docker 也要绿），
+# 而 PG 契约验证要真的连数据库。判据不因此变弱——CI 有 postgres service
+# container 的 integration job 必跑它；compose 的 verify profile 是同一批用例
+# 的另一种起法。跳过只发生在**环境入口**（无 DSN 时测试显式 Skipf 带原因），
+# 套件场景本身硬失败不静默跳过（sidetest 的既有纪律，保持）。
+integration: ## PG 契约套件 + SIGKILL e2e（compose 起 PostgreSQL；起不来明确报错，不静默跳过）
+	@command -v docker >/dev/null 2>&1 || { \
+	  echo "docker 未安装：PG 参考实现的契约验证需要 PostgreSQL。"; \
+	  echo "起法一：安装 docker 后重跑 make integration；"; \
+	  echo "起法二：GAK_PGREF_DSN=... 指向已有实例，go test ./examples/pgstore/ -count=1"; \
+	  exit 1; }
+	@$(COMPOSE) up -d --wait postgres || { \
+	  echo "docker compose 起 postgres 失败——PG 契约验证不静默跳过，明确失败。"; \
+	  echo "排查：docker daemon 是否在跑？5432 端口是否被占？"; \
+	  exit 1; }
+	@status=0; \
+	GAK_PGREF_DSN=$(PGREF_DSN) $(GOENV) go test ./examples/pgstore/ -count=1 -timeout 15m || status=1; \
+	$(COMPOSE) down >/dev/null 2>&1 || true; \
+	if [ $$status -ne 0 ]; then echo "PG 契约套件 / SIGKILL e2e 未通过（见上方输出）"; exit 1; fi; \
+	echo "PG 契约套件 + SIGKILL e2e ✓（sidetest/boardtest/栅栏套件 + 故障恢复）"
 
 docsync: ## README 包表 ↔ 仓库实际（生产行数 / 外部依赖）一致性门禁
 	$(EXPORT) $(GOENV) go run ./cmd/docsync

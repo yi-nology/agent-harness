@@ -1,0 +1,137 @@
+//go:build unix
+
+// pg_e2e_child_test.go —— 故障恢复 e2e 的**子进程侧**（issue #95）。
+//
+// 父进程（pg_e2e_test.go）用 os/exec re-exec 本测试二进制的这个入口，
+// 对它做真实的进程操作（SIGKILL / 等待退出）。子进程与父进程唯一的共享
+// 状态是 PostgreSQL（GAK_PGREF_DSN + 测试专属 schema）——这正是
+// 「判据归存储，不归进程」要成立的那个前提：SIGKILL 之后，内存里的一切
+// （连接、锁、变量）都不存在，留下的只有库里的行。
+package pgstore
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/goagent-kernel/sideeffect"
+)
+
+// 子进程模式的环境变量（父进程写、子进程读；DSN 复用 dsnEnv）。
+const (
+	envChildMode = "GAK_PGREF_CHILD"
+	envSchema    = "GAK_PGREF_SCHEMA"
+	envKey       = "GAK_PGREF_KEY"
+	envResource  = "GAK_PGREF_RESOURCE"
+	envTTLMS     = "GAK_PGREF_TTL_MS"
+)
+
+// 三种子进程模式（名字即子进程里效果体的剧本）。
+const (
+	// childModeRecordThenHang 效果体登记调用后挂住（等 SIGKILL）——死在施加之前。
+	childModeRecordThenHang = "record-then-hang"
+	// childModeApplyThenHang 效果体经栅栏写完下游后挂住——死在施加之后、记账之前。
+	childModeApplyThenHang = "apply-then-hang"
+	// childModeOneShot 效果体写完下游、短暂停顿后正常收场——竞争用例的两个进程。
+	childModeOneShot = "one-shot"
+)
+
+// TestPGRefChildProcess 子进程入口：只在父进程 re-exec 本测试二进制
+// （设置了 GAK_PGREF_CHILD）时才真正执行；常规测试运行显式跳过。
+func TestPGRefChildProcess(t *testing.T) {
+	mode := os.Getenv(envChildMode)
+	if mode == "" {
+		t.Skip("子进程入口（re-exec 模式）：常规测试运行不执行，见 pg_e2e_test.go 的父进程用例")
+	}
+	runChildE2E(t, mode)
+}
+
+// runChildE2E 子进程剧本：抢闸 → 按模式施加 → 打印判定结论。
+//
+// 判定结论走 stdout（OUTCOME=/UNCERTAIN= 前缀行），父进程按行解析；
+// 「结果未知」是合法判据不是故障——照常上报，以 0 退出。
+func runChildE2E(t *testing.T, mode string) {
+	t.Helper()
+	dsn := os.Getenv(dsnEnv)
+	schema := os.Getenv(envSchema)
+	key := os.Getenv(envKey)
+	resource := os.Getenv(envResource)
+	if dsn == "" || schema == "" || key == "" || resource == "" {
+		t.Fatalf("子进程环境不完整：dsn/schema/key/resource 均必须设置")
+	}
+	ttlMS, err := strconv.Atoi(os.Getenv(envTTLMS))
+	if err != nil || ttlMS <= 0 {
+		t.Fatalf("子进程环境不完整：TTL 非法 %q", os.Getenv(envTTLMS))
+	}
+	ttl := time.Duration(ttlMS) * time.Millisecond
+
+	pool := schemaPool(t, dsn, schema)
+	eff := NewEffectStore(pool)
+	ds := NewDownstream(pool)
+	runner := sideeffect.NewRunner(eff, ttl)
+	act := sideeffect.Action{
+		Key:         sideeffect.Key(key),
+		Resource:    resource,
+		Payload:     []byte("p"),
+		RetrySafety: sideeffect.RetrySafetyUnknown, // 按最弱处理：失败即需对账
+	}
+
+	outcome, _, execErr := runner.Execute(context.Background(), act, func(ctx context.Context, lease sideeffect.Lease) (sideeffect.Result, error) {
+		if err := recordEffectCall(ctx, pool, key); err != nil {
+			return sideeffect.Result{}, err
+		}
+		switch mode {
+		case childModeRecordThenHang:
+			// 施加之前挂住：下游不会有任何写入。
+			time.Sleep(60 * time.Second)
+			return sideeffect.Result{Payload: []byte("never")}, nil
+		case childModeApplyThenHang, childModeOneShot:
+			// 经**栅栏下游**施加（Fence 随租约传入，比较与写入同一次原子操作）。
+			if err := applyDownstream(ctx, ds, resource, lease.Fence, "applied"); err != nil {
+				return sideeffect.Result{}, err
+			}
+			if mode == childModeOneShot {
+				time.Sleep(300 * time.Millisecond) // 撑开竞争窗口，让双进程真的撞上
+				return sideeffect.Result{Payload: []byte("applied")}, nil
+			}
+			time.Sleep(60 * time.Second) // 挂住等 SIGKILL（记账不会发生）
+			return sideeffect.Result{Payload: []byte("applied")}, nil
+		default:
+			return sideeffect.Result{}, fmt.Errorf("未知子进程模式 %q", mode)
+		}
+	})
+
+	fmt.Printf("OUTCOME=%s\n", outcome)
+	if execErr != nil {
+		if errors.Is(execErr, sideeffect.ErrOutcomeUnknown) {
+			fmt.Println("UNCERTAIN=1")
+			return
+		}
+		t.Fatalf("子进程执行失败: %v", execErr)
+	}
+}
+
+// applyDownstream 经栅栏下游写一次业务数据（参考宿主的「施加」动作）。
+func applyDownstream(ctx context.Context, ds *Downstream, resource string, fence sideeffect.Fence, value string) error {
+	return ds.WriteFenced(ctx, resource, fence, func(wctx context.Context) error {
+		_, err := ExecWithin(wctx, `UPDATE pgref_downstream SET value = $2 WHERE resource = $1`, resource, value)
+		return err
+	})
+}
+
+// recordEffectCall 效果体调用计数（UPSERT 自增）：跨进程断言「动作体执行了几次」
+// 的唯一真相——内存计数器随进程死亡消失，库里这行不会。
+func recordEffectCall(ctx context.Context, pool *pgxpool.Pool, key string) error {
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO pgref_e2e_calls (key, calls) VALUES ($1, 1)
+		 ON CONFLICT (key) DO UPDATE SET calls = pgref_e2e_calls.calls + 1`, key); err != nil {
+		return errors.Wrap(err, "pgstore e2e: 登记效果体调用失败", "key", key)
+	}
+	return nil
+}

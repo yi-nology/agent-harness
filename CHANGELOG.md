@@ -218,7 +218,66 @@ Key 停在未知态，与「从未开始对账」不可区分。三档重试安�
 
 * test(boardtest): 竞争测试规模与场景补齐——16 条套件 + 规模参数化（#97 #87）
 
-**依赖地板无变化**（本版无新增/升级依赖）。
+### 参考存储车道：PostgreSQL 参考实现 + 真实进程故障恢复 + compose 部署案例（#84 #94 #95 #105）
+
+此前「跨进程判据归存储，不归进程」的全部主张，只在**单进程内存实现**里被
+验证过：参考存储的原子性来自一把进程内互斥锁，`FencedSink` 只有契约与测试
+替身，「进程死掉」与「函数返回错误」在持久化语义上的差别没有任何用例触碰。
+本小节把这三块都落到真实数据库与真实进程上。
+
+* **新增依赖 `github.com/jackc/pgx/v5 v5.13.0`**（本版唯一的依赖地板变化）：
+  纯 Go（`CGO_ENABLED=0` 交叉构建不受影响），v5 原生 API 自带连接池与事务
+  骨架。**边界不动**：它只被 `examples/pgstore` import，内核各包的依赖图里
+  没有驱动——policy 的 `dependency_direction.ext_prefixes` 登记
+  `github.com/jackc`，内核包若 import 它依赖方向门禁当场红。
+* **`examples/pgstore`：三套契约的 PostgreSQL 参考实现**（issue #94，它是
+  参考实现不是内核依赖）：`sideeffect.Store` 的 **Acquire 三判合一在一个
+  事务里**（`SELECT … FOR UPDATE` 行锁，锁序恒为资源行 → 动作行；判定顺序
+  逐字对齐契约：已完成 > 结果未知 > 执行中 > 资源被占 > 授予；授予时令牌、
+  `sideeffect.MintHolder()` 铸造的持有者身份、执行意图**同一事务**落库）；
+  Complete / Release / Abandon / Renew / MarkUncertain 同事务**三项联查**，
+  校验失败即整体回滚（「标记写失败必须保住执行意图」由此成立）；
+  `taskboard.Board`（含 `RenewingBoard`）认领是事务内读-判-写，令牌随机铸造、
+  代次同一次落库；`checkpoint.StoreCAS` 条件 upsert 拒陈旧拒零。
+  **验收：`sidetest` 29 条 + `boardtest` 全家族在真实 PostgreSQL 上跑通，
+  与内存版跑同一段套件——套件不为任何实现开后门。**
+* **`sideeffect.FencedSink` 的 PostgreSQL 下游参考实现**（issue #84）：栅栏
+  预占是一条带条件的 `INSERT … ON CONFLICT DO UPDATE … WHERE seen_fence <=
+  presented`（影响行数为 0 即陈旧，此刻零写入），写入体经 `ExecWithin` 走
+  **同一事务**，报错即整体回滚——**不得部分写**落成事务语义而不是注释。
+  判据收编为共享套件 `sidetest.RunSinkContract`（6 条：新令牌接受 / 等于也
+  接受 / 陈旧拒收零写入 / 新先旧后保最大 / 并发陈旧被拒 / **写入体失败不
+  部分写**），内存替身与 PG 实现跑同一段断言；三步非原子实现的反面教材
+  （`TestNonAtomicSinkIsCaught`）保留在 sideeffect 包内作确定性负对照。
+* **真实进程故障恢复 e2e**（issue #95，unix build tag，re-exec 模式）：
+  父进程起子进程执行动作 → `SIGKILL` → 等 TTL 过期 → 断言同一 Key 转入
+  **需对账态而不被重放**；死在施加之后记账之前的形态，对账「已生效」后同一
+  Key 只**重放**既有结果（动作体累计恰 1 次）；**双进程竞争**同一 Key，
+  恰好一个 `OutcomeApplied`、下游恰好一代令牌。跨进程共享状态只有
+  PostgreSQL——SIGKILL 后内存里的一切消失，留下的只有库里的行。
+* **docker compose 集成环境**（issue #105，`examples/docker-compose.yml`）：
+  一套 compose 同时服务契约验证与参考部署——默认 profile 起
+  `postgres` + 参考宿主冒烟（`cmd/pgsmoke`：幂等重放 / 栅栏拒陈旧 / 双宿主
+  竞争恰好一个 applied / 双 agent 认领恰好一个赢家，一条命令
+  `docker compose -f examples/docker-compose.yml up --abort-on-container-exit
+  --exit-code-from smoke`）；`verify` profile 在容器里跑全部契约套件 +
+  SIGKILL e2e。Kubernetes 作为可选形态在 README 说明映射（StatefulSet /
+  Deployment / Job），**不作为默认路径**。
+* **CI**：新增 `integration-pg` job（postgres service container）每次推送
+  真跑同一批用例；本地等价入口 `make integration`（compose 起 postgres →
+  go test → down，compose 起不来明确报错不静默跳过）。无 PostgreSQL 时
+  用例在**环境入口**显式 `t.Skipf`（写明原因与起法），套件场景本身仍硬失败
+  ——跳过只发生在环境依赖入口，不给任何实现开洞。
+* **门禁配套**：`examples/pgstore` 登记 `PKG_COV_EXEMPT`（结构性豁免：全部
+  用例是环境依赖的 integration 用例，无库时覆盖率恒 0%，判据由 integration
+  层承担，理由与边界见 Makefile）；policy 登记 `pgrefstore` 模块并进
+  `thresholds.scan_roots`（超长文件 / god object 照判）；docsync 口径随
+  实测重算（包表 `sidetest` 行 + 工程底座三数 + USAGE policy 登记数 45）。
+
+* feat(examples): PostgreSQL 参考存储 + 真实进程故障恢复 + compose 部署案例（#94 #95 #84 #105）
+
+**依赖地板变化**：+`github.com/jackc/pgx/v5 v5.13.0`（仅 `examples/pgstore`
+引用；宿主若不用 PG 参考实现则无感知）。
 
 ## [v0.32.1] — 2026-11-11
 

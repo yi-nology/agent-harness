@@ -25,9 +25,16 @@ go 1.27.4
 // 领域资产（专家包/技能/诊断链/运维词表）属于宿主，harness 侧一律不得出现：
 // 该纪律由 architecture-policy.yaml 的 harness-no-domain-vocabulary 门禁强制。
 
+// github.com/jackc/pgx/v5（v0.33.0 起，issue #94）：PostgreSQL 驱动，**只被
+// examples/pgstore（PG 参考实现）import**——它是参考实现不是内核依赖，内核
+// 各包的依赖图里没有它（policy 的 dependency_direction 判着：内核包 import
+// 驱动即红）。选 pgx/v5 的理由：纯 Go（CGO_ENABLED=0 的交叉构建矩阵不受影响）、
+// v5 原生 API 自带连接池（pgxpool）与事务骨架，宿主抄参考实现时不用再引
+// database/sql 适配层。
 require (
 	github.com/cloudwego/eino v0.9.23
 	github.com/dop251/goja v0.0.0-20261110143652-a4433846ae5b
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/oagentkit/agent v0.14.8
 	github.com/oagentkit/guardx v0.24.1
 	github.com/oagentkit/runtime v0.12.6
@@ -56,6 +63,9 @@ require (
 	github.com/google/pprof v0.0.0-20261110164715-8bb1ee682bd8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.2 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
@@ -76,6 +86,7 @@ require (
 	golang.org/x/arch v0.33.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20261109185158-a52e3aef5920 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
 	mvdan.cc/sh/v3 v3.14.1 // indirect
