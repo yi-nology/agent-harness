@@ -1,5 +1,10 @@
 // Package delta 增量节流器（真流式观测面）。
 //
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+//
 // 节流窗口 / 总量帽 / seq 单调 / 权威收口语义的**基础机制在 oagentkit/runtime/pacer**；
 // 本包提供其上的编排层：
 //   - (kind, iteration) 键控：同一轮内的 reasoning / text 各自成流；

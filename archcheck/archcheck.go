@@ -1,5 +1,9 @@
 // Package archcheck 是 architecture-policy.yaml 的**可执行面**。
 //
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // # 为什么它是一个可导入的包，而不是一个放在 cmd/ 下的脚本
 //
 // 存在意义：policy 文件若只当文档读，半年后就与代码事实脱节；把它做成门禁，

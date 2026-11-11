@@ -1,5 +1,11 @@
 // Package reminder 系统注入提示的**防伪包裹通道**（门面）。
 //
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+// 本包是门面：调用面稳定，判据语义跟随上游 github.com/oagentkit/guardx 演进。
+//
 // 核心已下沉 `github.com/oagentkit/guardx/injectband`：带外注入的身份防伪是
 // 通用安全原语，与编排无关，故归 guardx（tier 0 安全层）。本包只做一件事——
 // 保住调用路径稳定，宿主的 `reminder.Wrap(...)` 调用点一行不动。

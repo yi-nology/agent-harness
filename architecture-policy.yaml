@@ -1014,8 +1014,12 @@ dependency_direction:
   #
   #   cmd/archcheck、cmd/docsync、cmd/pkgcov  门禁 / 文档工具：import 各包是工具
   #                                            职责，不是机制依赖。
+  #   cmd/apilifecheck                        门禁工具（issue #113/#104，2026-11-12）：
+  #                                            判 api-lifecycle.yaml ↔ 包注释 ↔
+  #                                            覆盖 ↔ 错误登记表；解析各包语法树
+  #                                            是工具职责，同上。
   #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -1070,8 +1074,9 @@ sandbox_providers:
   severity: error
   desc: 执行沙箱后端的隔离档位必须登记在 sandbox_providers 段，且与代码事实一致（档位声明要有人签字）
   # 逐包列举，理由同 dependency_direction（issue #35）：前缀豁免会**无声地**把
-  # 将来新增的 cmd 子包一起盖住。这三个是工具，它们不实现 sandbox.Provider。
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, docs]
+  # 将来新增的 cmd 子包一起盖住。这些是工具，它们不实现 sandbox.Provider
+  # （cmd/apilifecheck 为 issue #113/#104 的生命周期门禁，2026-11-12 登记同批）。
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, docs]
   providers:
     - id: gatecheck-managed
       level: LevelProcess

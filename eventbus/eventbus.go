@@ -1,4 +1,10 @@
 // Package eventbus 事件单源双写（PHASE1_PLAN §2 决策 7）：
+//
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+//
 // 引擎只向本总线 Publish 一次，订阅者分别落 bq_event（repo）与 SSE（handler）。
 package eventbus
 

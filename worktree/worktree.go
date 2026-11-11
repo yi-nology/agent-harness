@@ -1,5 +1,9 @@
 // Package worktree 工作区隔离的**声明面与冲突判据**（不碰真实文件系统）。
 //
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // # 为什么是「声明面」而不是「实现」
 //
 // 本仓至今不碰 FS 语义：建目录、挂载、chroot、git worktree 都是宿主与执行后端
