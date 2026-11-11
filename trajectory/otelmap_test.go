@@ -25,6 +25,15 @@ func specSamples() []Row {
 		{Seq: 5, Kind: KindToolResult, ID: "tool#c2", Turn: 1, HasStep: true, StepID: 1,
 			CallID: "c2", Tool: "beta_fn", Pairing: PairingUnpairedResult,
 			EndAt: at(450), Status: StatusOrphan, Summary: "tool_result:beta_fn"},
+		// 副作用行（v0.33.0）：授予段收口态携带全部 sideeffect 属性。
+		{Seq: 6, Kind: KindSideEffect, ID: "sideeffect#act-a", Turn: 1, HasStep: true, StepID: 1,
+			SideEffectKey: "act-a", SideEffectPhase: SideEffectCompleted,
+			SideEffectResource: "res-a", SideEffectFence: 3, SideEffectSafety: "safe",
+			StartAt: at(40), EndAt: at(300), Status: StatusClosed, Summary: "sideeffect:act-a"},
+		// 快照行（v0.33.0）：点观察携带 run_id / seq / status。
+		{Seq: 7, Kind: KindCheckpoint, ID: "checkpoint#run-a#7", Turn: 1,
+			CheckpointRunID: "run-a", CheckpointSeq: 7, CheckpointStatus: "running",
+			EndAt: at(310), Status: StatusOrphan, Summary: "checkpoint#run-a#7"},
 	}
 }
 
@@ -36,6 +45,9 @@ func TestAttrSpecsCoverEveryAttribute(t *testing.T) {
 		AttrRowID, AttrKind, AttrRowStatus, AttrTurnSeq, AttrStepID,
 		AttrToolName, AttrToolCallID, AttrToolPairing, AttrToolDupResults,
 		AttrDurationMs, AttrSummary,
+		AttrSideEffectKey, AttrSideEffectPhase, AttrSideEffectResource,
+		AttrSideEffectFence, AttrSideEffectSafety,
+		AttrCheckpointRunID, AttrCheckpointSeq, AttrCheckpointStatus,
 	}
 	if len(AttrSpecs) != len(all) {
 		t.Fatalf("契约表 %d 条、常量 %d 个：多与少都算没对上", len(AttrSpecs), len(all))

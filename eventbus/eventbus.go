@@ -228,6 +228,38 @@ const (
 	EventToolPairingLeak       = "tool_pairing_leak"
 	// 身份违规 IM 推送已处理标记（identity-watch 通知扫描兜底的幂等锚点；payload {"ref":<源事件ID>}）。
 	EventIdentityViolationNotified = "identity_violation_notified"
+
+	// 副作用轨迹事件（v0.33.0，issue #99）：sideeffect 闸的生命周期留痕——
+	// trajectory 投影器据此产出 sideeffect 行，排障时「这个副作用到底施加了吗」
+	// （授予 / 施加 / 对账 / 裁决）在轨迹里可答。词表收在 eventbus 单源（与
+	// tool_call/tool_result 同一条纪律：另立一套事件词表必然漂）。
+	//
+	// 发布方是宿主（内核只给词表与投影，不做投递）；载荷键面见 trajectory 包
+	// 的映射说明：key/resource/fence/retry_safety/applied。**reason 不进轨迹行**
+	// （自由文本、基数无界，与 payload 同一条禁区纪律）。
+	//
+	//   - granted：闸授予执行权（Acquire → OutcomeApplied）——开启一个 sideeffect 行；
+	//   - completed：施加并记账成功（Complete 被接受）——收口该行；
+	//   - abandoned：显式放弃本次尝试（确定未生效 / 下游按幂等键去重）——收口该行；
+	//   - uncertain：结果未知（施加失败 / 记账失败 / 租约过期未裁决）——收口该行，
+	//     并开启该 Key 的「对账」段（等 resolved 收口）；
+	//   - resolved：对账裁决落定（payload.applied=true|false）——收口对账段；
+	//   - replayed：动作早已完成、本次取回既有结果（Acquire → OutcomeReplayed）——
+	//     点事件（无括号段）；
+	//   - contended：资源正被他人持有 / 有未裁决尝试（Acquire → OutcomeContended）——
+	//     点事件；双 Worker 争用的证据面（issue #98 的并发形态在此可见）。
+	EventSideEffectGranted   = "sideeffect_granted"
+	EventSideEffectCompleted = "sideeffect_completed"
+	EventSideEffectAbandoned = "sideeffect_abandoned"
+	EventSideEffectUncertain = "sideeffect_uncertain"
+	EventSideEffectResolved  = "sideeffect_resolved"
+	EventSideEffectReplayed  = "sideeffect_replayed"
+	EventSideEffectContended = "sideeffect_contended"
+
+	// EventCheckpointCommitted 快照提交留痕（v0.33.0，issue #99）：编排进度快照
+	// 成功落库一次即发布——排障时「恢复点停在哪个序号」在轨迹里可答。点事件
+	// （无括号段）。载荷键面：run_id / seq / status / done（已完成步骤数）。
+	EventCheckpointCommitted = "checkpoint_committed"
 )
 
 // Bus 进程内事件总线（单实例；cluster 多副本 Phase③ 换 NATS 扇出）。

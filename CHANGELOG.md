@@ -220,6 +220,102 @@ Key 停在未知态，与「从未开始对账」不可区分。三档重试安�
 
 **依赖地板无变化**（本版无新增/升级依赖）。
 
+### 恢复判定与副作用记录协调：恢复前三方对账（checkpoint，#90）
+
+此前 `checkpoint.BuildPlan` 只看快照、`sideeffect` 闸只看自己的账，两者互不
+感知——「快照说已完成、闸说结果未知」可以同时成立：宿主在副作用的结论落定
+**之前**乐观落了快照、然后进程死了。恢复按快照跳过该步 ⇒ 那个「结果未知」的
+副作用**既没对账也没重做**，悬在中间，而恢复判定认为一切正常。失效是**静默**的。
+
+修法：新增 `checkpoint.Reconcile(plan, views)`（纯函数，判据落 checkpoint 侧）。
+把计划要**跳过**的步骤逐个对上闸侧视图（宿主从 `sideeffect.Store.Acquire` 这个
+唯一观察口探出，按 Outcome 映射成 `GateState`——映射口径写在 `reconcile.go`
+接线说明里）：
+
+* 闸侧 `settled`（已结算）/ `absent`（无副作用动作）→ 与快照一致，放行；
+* `uncertain`（结果未知）/ `in_flight`（有未裁决尝试）/ `unrecorded`（闸认为
+  没做过）/ `unknown`（查询失败，判不了按冲突处理）→ 冲突 ⇒ 快照不可信 ⇒
+  **阻塞**（`Plan.Blocked()` 为真，`Skip`/`Run` 清空，逐冲突点名并回显宿主写的
+  观测依据），不得静默跳过；
+* Run 侧的闸态不构成冲突——执行时闸自己会拒绝（`OutcomeUncertain` /
+  `Contended`），两种判据各管各的执行点。
+
+新增异常类别 `AnomalySideEffectConflict`。用例两族：判据负例（「快照说完成、
+闸说未知/未裁决/没做过/判不了」的坏组合逐格必红）+ 端到端两条弧（乐观落库 →
+崩溃 → 重启 → 对账阻塞 → 裁决 → 解阻；裁决「未生效」后仍阻塞，直到宿主真正
+重做该步或修正快照）。宿主接线无需改任何 sideeffect 接口面。
+
+### AllowUnmanaged 逃逸口补上赋值路径：AST 级类型追踪（archcheck，#92）
+
+字面量判据按「复合字面量里的字段出现」判，`opts.AllowUnmanaged = true`
+（变量赋值）与 `opts.AllowUnmanaged = cfg.Unmanaged`（配置驱动）从它眼里
+溜过去——而那恰是生产代码最常见的写法（「另有一套管控，开关在配置里」）。
+盲区等于没有判。
+
+修法：新增第二道判据（`archcheck/unmanaged_assign.go`，同一规则
+`harness-ptc-unmanaged-escape`）：三趟 AST 追踪（go/types 的等价手段，不引
+go/types 的整仓类型检查成本）——类型层（谁**是** `ptc` 逃逸类型、谁的字段
+**带着**它，`type Cfg struct { ptc.Options }` 嵌入同判）→ 变量层（带类型的
+var / 短声明含取址与容器 / 函数参数与接收者；包级变量跨文件收齐）→ 赋值层
+（对持有者的 `….AllowUnmanaged = …` 即报）。**按赋值路径判、不按值判**（与
+字面量判据同一条纪律）：`= cfg.X` 与 `= false` 都报——逃逸口的开与关不该由
+数据流决定。反向验证：注入赋值 / 配置驱动 / 字段链 / 嵌入 / 容器 / 跨文件
+六种形态 ⇒ 红；宿主自建同名结构体字段 ⇒ 不误伤（类型感知换「报得准」）。
+残余盲区（经接口 / 无类型返回值 / 深层容器流转的接收方）写明在执行体头注与
+违规文案里，不假装覆盖。
+
+### PTC 执行预算压力测试矩阵：每格断言资源回收（ptc，#93）
+
+现有覆盖到的是「预算到点结果对不对」，**没有**「资源收回来了没有」——泄漏
+会累积成宿主的慢性故障（goroutine 数只增不减），功能测试看不见。新增矩阵
+（`ptc/stress_recovery_test.go` + `ptc/stress_subprocess_recovery_test.go`）：
+
+* 进程内三格（工具阻塞→墙钟耗尽 / 调用方取消 / 调用数预算耗尽）：
+  Run 收口后 goroutine 数回落到「基线 + 容差」；
+* 子进程四格：启动即异常退出（有限时间内干净报错、无残留）、运行中被外部
+  SIGKILL（OOM killer 的同形态注入：错误信息可读、PID 被收割、宿主继续可用）、
+  真 OOM（cgroup `memory.max`，能建的环境真跑，补上既有用例缺的回收断言）、
+  FD 回收（linux 上多轮执行后父侧描述符数不涨——管道每轮都要关干净）；
+* **阈值可配置**防慢机器 flaky：`GAK_STRESS_TOLERANCE`（goroutine 容差）、
+  `GAK_STRESS_SETTLE_MS`（回落窗口）、`GAK_STRESS_FD_TOL`（FD 容差）；
+  goroutine 基线取**多次采样的最小值**（负载抬高的是均值，最小值是
+  最不受干扰的那次），到点未回落即红并附全量栈快照。
+
+矩阵进 CI（ubuntu 上 FD 格与真 OOM 格真跑；darwin 上按环境跳过并写明理由）。
+
+### checkpoint 故障注入矩阵：恢复路径的失败形态可复跑（checkpoint，#98）
+
+新增 `checkpoint/faultinjection_test.go`，逐格写明期望的失败形态（不是
+「不报错就行」）：写库失败注入（显式失败 + 闸回滚 ⇒ 同序号可重试，run 不
+卡死）；并发 Seq 冲突（8 个独立闸抢同一序号 ⇒ 恰好 1 个赢家、7 个输家
+`ErrStaleSeq` 变红不静默覆盖，输家重灌后有序推进）；恢复中断（恢复到一半
+进程死掉 ⇒ 可再次恢复，已生效的副作用**不重放**——中断在快照之前的那半格
+同样钉住：快照落后于副作用账时重跑被闸拦成 replayed）；双 Worker 恢复同一
+任务（同时 Load + BuildPlan + 抢同一动作 ⇒ 恰好一个施加，另一个被有序拒绝
+`Contended`/`Replayed`，副作用计数为 1）。并发格过 `-race`。
+
+### trajectory 补上 SideEffect 与 Checkpoint 的 OTel 语义（trajectory，#99）
+
+排障最该问的两问此前在轨迹里查不到：「这个副作用到底施加了吗」与「恢复点
+停在哪个序号」。新增两类行与 8 个属性（命名与既有 turn/step/tool 同构，
+`harness.sideeffect.*` / `harness.checkpoint.*` 命名空间）：
+
+* **副作用行**：授予段（granted 起，completed / abandoned / uncertain 止，
+  起止相减即实测时长）+ 对账段（uncertain 起，resolved_applied /
+  resolved_cleared 止）+ 点观察（replayed / contended，孤儿行）；span 状态
+  语义：uncertain = error（已发生的问题：Key 被硬阻塞必须对账），对账挂起中
+  = unset，裁决 / 完成 / 放弃 / 点观察 = ok；
+* **快照行**：`checkpoint_committed` 点事件落孤儿行——提交没有括号段，
+  没有实测时长就不写时长，不拿 0 冒充；
+* eventbus 词表新增 `sideeffect_granted` / `sideeffect_completed` /
+  `sideeffect_abandoned` / `sideeffect_uncertain` / `sideeffect_resolved` /
+  `sideeffect_replayed` / `sideeffect_contended` / `checkpoint_committed`
+  （单源管理，投影器与宿主发布面共用同一词表）；
+* 契约表（`AttrSpecs`）同步 8 条，既有双向对拍判据全部适用（属性名唯一、
+  取值域一致、Go 类型逐条对上、无界不进 metric label）；**"内核只给映射、
+  宿主负责投递"边界不变**——发布接线归宿主（sideeffect 侧的事件化接线
+  留给副作用车道收口）。
+
 ## [v0.32.1] — 2026-11-11
 
 ### 修复：PTC 未受管逃逸口的豁免登记路径，此前是「照着指引做就红」
