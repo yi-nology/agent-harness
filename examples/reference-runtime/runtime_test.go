@@ -150,7 +150,7 @@ func TestConcurrentClaimHasSingleWinner(t *testing.T) {
 		// 走 async.GoSafe 而非裸 go func：panic 留痕不杀进程。
 		async.GoSafe(func() {
 			defer wg.Done()
-			_, err := store.tasks.Claim(ctx, "t-1", agent, taskboard.Lease{Token: "tok-" + string(agent)})
+			_, err := store.tasks.Claim(ctx, "t-1", agent, taskboard.ClaimRequest{TTL: time.Minute})
 			if err == nil {
 				mu.Lock()
 				winners++

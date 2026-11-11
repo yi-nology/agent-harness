@@ -52,7 +52,15 @@ type StoreCAS interface {
 	// 并发安全：两个进程同时提交时，只有序号较大的那个成功。典型的实现形态是
 	// 条件更新（SQL 的 WHERE seq < ?、带条件的 put、CAS 重试循环）。
 	//
-	// 注意 Seq == 0 恒视为「不参与单调判定」——它不是一次真实提交。
+	// # Seq == 0 必须被拒（v0.33.0 起）
+	//
+	// 序号为 0 的快照**不是一次真实提交**，故 SaveIfNewer 必须返回
+	// ErrStaleSeq 且**不得写入**。
+	//
+	// 此前契约写的是「Seq == 0 不参与单调判定」——那句话被实现读成了
+	// 「跳过判定照写」，于是 seq=0 反而成了**唯一能覆盖既有快照**的写：
+	// 已有 Seq=10 时，一份 Seq=0 的快照照样落库 ⇒ 恢复点静默回退，
+	// 且不报错。这正是本接口要防的那件事。
 	SaveIfNewer(ctx context.Context, s Snapshot) error
 
 	// Load 无记录时返回 ErrNotFound，不得返回 (零值, nil)。

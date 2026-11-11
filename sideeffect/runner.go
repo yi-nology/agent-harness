@@ -126,6 +126,16 @@ type Effect struct {
 // 最后两条是本包 v0.32.0 收紧的核心：此前「执行失败 → 释放闸 → 允许重试」
 // 是唯一出口，于是「远端已生效但响应丢了」会被下一次重试变成重复施加——
 // 本包存在的理由被绕过，且失效是**静默**的（调用方只拿到一个普通错误）。
+//
+// v0.33.0 起这四条出口各自对应一条**不同**的存储操作，混用即失效：
+//
+//   - 可安全重试的两条 → Store.Abandon（撤销执行意图 + 放闸）；
+//   - 结果未知的两条 → Store.MarkUncertain（转未知态）+ Store.Release
+//     （**只**放闸，不动意图）。
+//
+// 差别不是形式：意图是「这次尝试还没结论」的唯一凭据。在结果未知的那条
+// 路上误用 Abandon（等于把「可能已生效」当成「确定没生效」）⇒ 意图被撤销
+// ⇒ 该 Key 重新可被执行 ⇒ 重复施加的入口重新打开，且失效仍是**静默**的。
 func (r *Runner) Execute(ctx context.Context, act Action, fn func(ctx context.Context, lease Lease) (Result, error)) (Outcome, Result, error) {
 	return r.ExecuteWith(ctx, act, Effect{
 		Apply: func(ctx context.Context, _ any, lease Lease) (Result, error) {
@@ -210,8 +220,10 @@ func (r *Runner) ExecuteWith(ctx context.Context, act Action, eff Effect) (Outco
 	if eff.Prepare != nil {
 		prepared, err = eff.Prepare(ctx)
 		if err != nil {
-			// 准备失败：动作没开始，释放闸（不记账——没做过的不能记成做过）。
-			_ = r.store.Release(ctx, act, lease)
+			// 准备失败：动作没开始，**明确放弃**这次尝试（撤销执行意图 +
+			// 释放闸）。不记账——没做过的不能记成做过；而意图必须撤掉，
+			// 否则这个 Key 会一直卡在「有一次未裁决的尝试」上。
+			_ = r.store.Abandon(ctx, act, lease, "准备阶段失败：未施加任何副作用")
 			return OutcomeContended, Result{}, err
 		}
 	}
@@ -221,9 +233,10 @@ func (r *Runner) ExecuteWith(ctx context.Context, act Action, eff Effect) (Outco
 	renewed, err := r.store.Renew(ctx, act, lease, r.ttl)
 	if err != nil {
 		// 闸已易主（或续期失败）：**不施加任何副作用**，干净放弃。
-		// 释放闸——但那多半已经不是自己的闸了（故 Release 可能被拒，
-		// 那是正确的：不能放掉新持有者的闸）。
-		_ = r.store.Release(ctx, act, lease)
+		// 放弃 = 撤销本次尝试的执行意图 + 释放闸。资源闸多半已经不是自己的了
+		// （故释放可能被拒，那是正确的：不能放掉新持有者的闸）；
+		// 而执行意图仍归本次尝试所有，撤销它是对的——本次确实什么都没做。
+		_ = r.store.Abandon(ctx, act, lease, "施加前持有资格检查失败：未施加任何副作用")
 		if errors.Is(err, ErrFenceStale) {
 			return OutcomeContended, Result{}, errors.Wrap(ErrLeaseLost, "施加前检查发现闸已易主，本次动作放弃", "resource", act.Resource)
 		}
@@ -235,21 +248,32 @@ func (r *Runner) ExecuteWith(ctx context.Context, act Action, eff Effect) (Outco
 	res, execErr := eff.Apply(ctx, prepared, lease)
 	if execErr != nil {
 		if act.RetrySafety == RetrySafetySafe {
-			// 下游按幂等键去重 ⇒ 重试不会重复施加。释放闸，允许重试。
-			_ = r.store.Release(ctx, act, lease)
+			// 下游按幂等键去重 ⇒ 重试不会重复施加。撤销执行意图 + 释放闸，
+			// 允许重试。
+			_ = r.store.Abandon(ctx, act, lease, "施加失败但下游按幂等键去重，可安全重试")
 			return OutcomeContended, Result{}, execErr
 		}
 		// 结果未知：闸转入「未知」态，此 Key 在被裁决之前不得再被执行。
 		markErr := r.store.MarkUncertain(ctx, act, lease, execErr.Error())
-		_ = r.store.Release(ctx, act, lease)
 		if markErr != nil {
 			// 标记都没写进去 ⇒ 存储侧此刻不可信，**更不能**放行重试：
 			// 失败形态必须是变红，不能是变绿。
+			//
+			// ⚠️ 这里**绝不能**调 Abandon：意图一撤，这个 Key 就重新变成
+			// 「可被执行」⇒ 下一次重试会重新施加一次可能已经生效的动作。
+			// 也不调 Release（它虽然不动意图，但会让「意图还在」这件事
+			// 只剩一个 TTL 窗口的保障）。让意图留在存储里——它是唯一还在
+			// 挡着重试的东西。资源闸只能等 TTL 自然过期，这是「失败形态
+			// 必须是变红」的代价。
 			return OutcomeUncertain, Result{}, errors.Wrap(
 				errors.Append(errors.Append(ErrOutcomeUnknown, execErr), markErr),
 				"施加失败且未能标记结果未知（存储侧不可用），禁止重试",
 				"key", string(act.Key))
 		}
+		// 标记成功：本次尝试已有结论（未知）。执行意图随之撤销，
+		// 但「未知」本身继续挡着这个 Key——现在只放资源闸，让别的动作用
+		// 这个资源。
+		_ = r.store.Release(ctx, act, lease)
 		// 结果未知与原始原因**都**挂进错误链：调用方既要能判
 		// errors.Is(err, ErrOutcomeUnknown)（该不该对账），也要能判
 		// errors.Is(err, 原始错误)（失败原因是什么）——合成一条就丢一个。
@@ -266,13 +290,15 @@ func (r *Runner) ExecuteWith(ctx context.Context, act Action, eff Effect) (Outco
 		// 若就此放行，下一次同 Key 的 Acquire 会重新授予执行权 ⇒ 重复施加。
 		// 故转入「未知」态：宿主手里有结果（就是 res），裁决时可直接采信。
 		markErr := r.store.MarkUncertain(ctx, act, lease, "记账失败: "+err.Error())
-		_ = r.store.Release(ctx, act, lease)
 		if markErr != nil {
+			// 同上：标记失败时**不动**执行意图——它是唯一还在挡着重试的东西。
 			return OutcomeUncertain, res, errors.Wrap(
 				errors.Append(errors.Append(ErrOutcomeUnknown, err), markErr),
 				"动作已施加但记账失败，且未能标记结果未知，禁止重试",
 				"key", string(act.Key))
 		}
+		// 标记成功：执行意图随之撤销，「未知」继续挡着这个 Key。只放资源闸。
+		_ = r.store.Release(ctx, act, lease)
 		return OutcomeUncertain, res, errors.Wrap(
 			errors.Append(ErrOutcomeUnknown, err),
 			"动作已施加但记账失败，结果未知，必须先对账裁决",

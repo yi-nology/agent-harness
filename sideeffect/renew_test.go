@@ -41,8 +41,12 @@ func TestPrepareFailureAppliesNothing(t *testing.T) {
 		t.Fatalf("准备失败不该记账，实得 %d", st.completeCalls)
 	}
 	// 闸被释放 → 后续重试能真正执行。
-	if st.releaseCalls != 1 {
-		t.Fatalf("准备失败应释放闸 1 次，实得 %d", st.releaseCalls)
+	//
+	// 释放走的是「显式放弃」（Abandon）：它撤销本次尝试的执行意图 +
+	// 放掉资源闸。不撤销意图的话，这个 Key 会永远卡在「有一次未裁决的尝试」
+	// 上——租约过期后转入未知态，重试变成「必须先对账」，而事实上什么都没做。
+	if st.abandonCalls != 1 {
+		t.Fatalf("准备失败应显式放弃 1 次（撤销执行意图 + 放闸），实得 %d", st.abandonCalls)
 	}
 }
 
@@ -176,10 +180,15 @@ func TestLeaseLostIsRetryableNotPermanent(t *testing.T) {
 	a := act("k1", "res-a")
 
 	// 第一次：闸易主 → 拒绝。
+	//
+	// 接管者是**另一个 Key**：本次尝试的执行意图仍归本令牌所有，
+	// 于是编排器可以「显式放弃」它（本次确实什么都没做）⇒ 该 Key 仍可重做。
+	// 若接管者用的是**同一个 Key**，那次 Acquire 会把本 Key 转入未知态
+	// （执行意图判据），此时即便本次什么都没做也要先对账——见 intent_test.go。
 	_, _, err := r.ExecuteWith(ctx, a, Effect{
 		Prepare: func(context.Context) (any, error) {
 			st.advance(2 * time.Minute)
-			_, _, _, _ = st.Acquire(ctx, a, time.Minute)
+			_, _, _, _ = st.Acquire(ctx, act("k2", "res-a"), time.Minute)
 			return "p", nil
 		},
 		Apply: func(context.Context, any, Lease) (Result, error) { return Result{}, nil },
@@ -304,8 +313,8 @@ func TestRenewAfterTakeoverRejected(t *testing.T) {
 		t.Fatalf("Acquire 失败: %v", err)
 	}
 	st.advance(2 * time.Minute)
-	// 别人接管。
-	if _, _, _, err := st.Acquire(ctx, a, time.Minute); err != nil {
+	// 别人接管（另一个 Key 抢同一个资源 ⇒ 栅栏令牌前进一位）。
+	if _, _, _, err := st.Acquire(ctx, act("k2", "res-a"), time.Minute); err != nil {
 		t.Fatalf("接管 Acquire 失败: %v", err)
 	}
 	// 旧持有者续期 → 必须被拒。

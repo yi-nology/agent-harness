@@ -7,6 +7,7 @@ package boardtest
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -20,11 +21,33 @@ import (
 type memBoard struct {
 	mu    sync.Mutex
 	tasks map[taskboard.TaskID]*taskboard.Task
+
+	// seq 令牌计数器。令牌由**存储**铸造（这是 v0.33.0 的要害：
+	// 调用方自带令牌的话，「凭令牌认人」名存实亡）。
+	seq uint64
+
+	// now 可注入时钟（过期判定必须读它，否则过期场景恒不触发）。
+	now func() time.Time
 }
 
-func newMemBoard(t *testing.T) taskboard.Board {
+func newMemBoard(t *testing.T, clock *FakeClock) ClockedBoard {
 	t.Helper()
 	return &memBoard{tasks: map[taskboard.TaskID]*taskboard.Task{}}
+}
+
+// UseClock 注入时钟（套件约定）。
+func (m *memBoard) UseClock(now func() time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.now = now
+}
+
+// clockLocked 当前时刻。**只在持锁时调用**。
+func (m *memBoard) clockLocked() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
 }
 
 // Seed 摆初始任务（套件约定：创建语义是宿主资产，故走这个可选接口）。
@@ -50,7 +73,7 @@ func (m *memBoard) List(ctx context.Context) ([]taskboard.Task, error) {
 	return out, nil
 }
 
-func (m *memBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboard.AgentID, lease taskboard.Lease) (taskboard.Task, error) {
+func (m *memBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.tasks[id]
@@ -60,7 +83,7 @@ func (m *memBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboa
 	if t.State.Terminal() {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, string(id))
 	}
-	if t.State == taskboard.StateClaimed && !leaseExpired(t.Lease, time.Now()) {
+	if t.State == taskboard.StateClaimed && !leaseExpired(t.Lease, m.clockLocked()) {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, string(id))
 	}
 	for _, d := range t.Deps {
@@ -68,6 +91,12 @@ func (m *memBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboa
 		if !ok || !dep.State.Terminal() {
 			return taskboard.Task{}, errors.Wrap(taskboard.ErrBlocked, string(d))
 		}
+	}
+	// 令牌由存储铸造；到期时刻也由存储按**自己的**时钟算。
+	m.seq++
+	lease := taskboard.Lease{Token: fmt.Sprintf("tok-%d", m.seq)}
+	if req.TTL > 0 {
+		lease.Until = m.clockLocked().Add(req.TTL)
 	}
 	t.State = taskboard.StateClaimed
 	t.Owner = agent
@@ -126,7 +155,7 @@ type brokenBoard struct {
 	barrier *sync.WaitGroup
 }
 
-func (b *brokenBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboard.AgentID, lease taskboard.Lease) (taskboard.Task, error) {
+func (b *brokenBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
 	// 第一段：读（拿完锁就放开）。
 	b.mu.Lock()
 	t, ok := b.tasks[id]
@@ -150,7 +179,7 @@ func (b *brokenBoard) Claim(ctx context.Context, id taskboard.TaskID, agent task
 	cur := b.tasks[id]
 	cur.State = taskboard.StateClaimed
 	cur.Owner = agent
-	cur.Lease = lease
+	cur.Lease = taskboard.Lease{Token: fmt.Sprintf("tok-broken-%d", cur.Seq+1)}
 	cur.Seq++
 	return *cur, nil
 }
@@ -167,8 +196,7 @@ func TestJudgeCatchesNonAtomicBoard(t *testing.T) {
 	b.barrier.Add(n)
 
 	agents := []taskboard.AgentID{"a1", "a2", "a3", "a4"}
-	winners, err := taskboard.ConcurrentClaim(context.Background(), b, "t1", agents,
-		func(a taskboard.AgentID) taskboard.Lease { return taskboard.Lease{Token: "tok-" + string(a)} })
+	winners, err := taskboard.ConcurrentClaim(context.Background(), b, "t1", agents, time.Minute)
 	if err != nil {
 		t.Fatalf("判据本身不该报错: %v", err)
 	}

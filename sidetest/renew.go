@@ -79,3 +79,30 @@ func runRenewAfterTakeoverRejected(t *testing.T, factory Factory) {
 		t.Fatalf("闸已易主后续期应被拒为 ErrFenceStale，实得 %v", err)
 	}
 }
+
+// runRenewAfterReleaseRejected 钉住：闸被**释放**之后，原租约不得再续期。
+//
+// 失效形态：只比栅栏令牌、不验持有者 ⇒ 释放后的租约仍能续期。
+// 栅栏只在**接管**时递增——没人接管时令牌没有变，于是「已经放手」这件事
+// 在令牌上完全看不出来，原持有者以为还拿着闸（其实闸是空的，
+// 随时可能被别人抢走）。
+//
+// 这条与「过期持有者续期被拒」同族但不同因：那条是令牌变了，这条是
+// **令牌没变而持有关系没了**——只比令牌的实现会漏掉它。
+func runRenewAfterReleaseRejected(t *testing.T, factory Factory) {
+	st, _ := newStore(t, factory)
+	ctx := context.Background()
+	a := act("k1", "res-a")
+
+	_, lease, _, err := st.Acquire(ctx, a, time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	if err := st.Release(ctx, a, lease); err != nil {
+		t.Fatalf("Release 失败: %v", err)
+	}
+
+	if _, err := st.Renew(ctx, a, lease, time.Minute); !errors.Is(err, sideeffect.ErrFenceStale) {
+		t.Fatalf("释放后的租约不得再续期（应被拒为 ErrFenceStale），实得 %v", err)
+	}
+}

@@ -23,6 +23,7 @@ package taskboard
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
@@ -30,10 +31,12 @@ import (
 
 // ConcurrentClaim 让多个 agent 同时认领同一个任务，返回成功者数量。
 //
-// lease 为每个 agent 铸造租约（测试里通常是固定 token；真实存储应当自己铸）。
+// ttl 是本次认领申请的租约有效期（每个 agent 申请同一把长度）——
+// **令牌由存储铸造**（见 Board.Claim），本判据不碰令牌。
+//
 // 返回的 error 只表示**基础设施故障或契约违反**，不表示「有人输」——
 // 输家是正常结果。
-func ConcurrentClaim(ctx context.Context, b Board, id TaskID, agents []AgentID, lease func(AgentID) Lease) (int, error) {
+func ConcurrentClaim(ctx context.Context, b Board, id TaskID, agents []AgentID, ttl time.Duration) (int, error) {
 	if len(agents) == 0 {
 		return 0, errors.New("taskboard: 并发认领判据需要至少一个 agent")
 	}
@@ -53,7 +56,7 @@ func ConcurrentClaim(ctx context.Context, b Board, id TaskID, agents []AgentID, 
 		async.GoSafe(func() {
 			defer wg.Done()
 			<-start
-			_, err := b.Claim(ctx, id, agent, lease(agent))
+			_, err := b.Claim(ctx, id, agent, ClaimRequest{TTL: ttl})
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
