@@ -13,7 +13,7 @@
 
 ## 怎么读这份文档
 
-**按需跳读，不必全接。** 27 个能力包分 12 组彼此独立的能力，典型接入顺序如下：
+**按需跳读，不必全接。** 本文覆盖 23 个能力包，分 10 组彼此独立的能力，典型接入顺序如下：
 
 ```
 ① 契约面        contract + statemachine    ← 你的状态长什么样（必接）
@@ -31,11 +31,24 @@
 每节的结构一致：**职责 → 最小集成片段 → 关键符号 → 坑**。
 最后一节 [§6 坑速查表](#6-坑速查表) 是全文浓缩，接线完成后拿它自查一遍。
 
-> **27 与 29 的口径差**：本文覆盖 **27 个能力包**（下面 12 组）。
-> `architecture-policy.yaml` 的 `modules` 段登记 **24 个**——
-> 多出的两个是 `toolname`（工具名归一的**单一真相**，被 `tooldisclose` 与 `ptc`
-> 共用，不单独成组接入）与 `archcheck`（门禁工具本身，宿主不用引）。
-> 两个数都对，说的不是一件事。
+> **三个口径，各说一件事**（别混）：
+>
+> | 口径 | 数字 | 是什么 |
+> |---|---|---|
+> | 本文覆盖 | 23 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
+> | 仓里有什么 | **41** 个包 | README 包表口径（机器校验，`make docsync` 判）|
+> | policy 登记 | **44** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+>
+> 后两个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
+> （机器判不了「该不该讲某个包」，故只由本文负责）。
+>
+> **包数口径（机器校验，`make docsync` 判）**：本仓共 **41** 个包（README 包表口径）；
+> `architecture-policy.yaml` 的 `modules` 段登记 **44** 个包目录。
+>
+> 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
+> CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件
+> （`sidetest`）、子包（`taskboard/boardtest`）与参考示例
+> （`examples/reference-runtime`）——它们不是「能力包」，但都在仓里、都在门禁下。
 
 ---
 
@@ -99,7 +112,7 @@ module github.com/yi-nology/goagent-kernel
 go get github.com/yi-nology/goagent-kernel@latest
 
 # 或钉到具体版本（查已发布版本：git ls-remote --tags origin）
-go get github.com/yi-nology/goagent-kernel@v0.6.4
+go get github.com/yi-nology/goagent-kernel@latest
 ```
 
 > **版本号为什么写 `@latest` 而不是钉死一个数字**：本文写稿时是 v0.6.4，
@@ -732,8 +745,12 @@ return out;
   宿主收到 `{"count":null}` 与「没给 count」是两件事。
 - **被判定环拒绝的调用同样计数**（`res.Calls++`）：程序可以 try/catch 掉这次错误再循环，
   若不计预算，一个被拒的工具就能被无限重试，`MaxCalls` 形同虚设。
-- **`Stages` 为 nil 时不接任何判定**，行为与引入 Stages 之前逐字一致，
-  但那条路径**不带门禁**——接入方须自行确认这是有意的。
+- **v0.32.0 起：`Stages` 为空且装配了工具绑定 ⇒ 拒绝执行**（`ErrorKind=unmanaged`）。
+  此前是「不接任何判定、照常执行」——那条路径不带门禁，却**没有任何信号**：
+  你拿到的是一个正常的执行结果，而程序里的 `host.<tool>(...)` 已经直达你的工具。
+  本包是对外推荐的批量调用路径，默认位必须在安全那一侧。两个例外：
+  **不装配任何绑定**（纯计算程序）不需要判定环；确需裸执行时显式声明
+  `ptc.Options{AllowUnmanaged: true}`——但那是**逃逸口**，本仓门禁会拦生产代码里的显式逃逸。
 - **运行期异常的 `Location` 经常是空的**，这是工具能力边界：程序体是 async IIFE，
   函数体异常变成 Promise rejection，goja 未提供「rejection 处回溯调用栈」的公开面。
   拿不到就零值，**不猜**。
@@ -1657,13 +1674,16 @@ outcome, res, err := runner.ExecuteWith(ctx, act, sideeffect.Effect{
     // 准备阶段：算结果、构造请求，**不施加副作用**。
     Prepare: func(ctx context.Context) (any, error) { return buildRequest(ctx), nil },
     // 施加阶段：真正对外部世界动手。
-    Apply: func(ctx context.Context, prepared any) (sideeffect.Result, error) {
-        return sideeffect.Result{Payload: doIt(ctx, prepared)}, nil
+    //
+    // lease 里带**栅栏令牌**（lease.Fence）：把它传给下游，下游才能拒收
+    // 过期持有者的迟到写。没有它，栅栏就只剩上游那半截。
+    Apply: func(ctx context.Context, prepared any, lease sideeffect.Lease) (sideeffect.Result, error) {
+        return sideeffect.Result{Payload: doIt(ctx, prepared, lease.Fence)}, nil
     },
 })
 ```
 
-**三个必须知道的点**：
+**四个必须知道的点**：
 
 1. **`Key` 是幂等键，同一逻辑动作的所有重试必须用同一个**。用不同 Key 重试
    等于声明「这是两个不同的动作」，本包不拦（那是你的语义错误）。
@@ -1672,6 +1692,25 @@ outcome, res, err := runner.ExecuteWith(ctx, act, sideeffect.Effect{
    同时开着**，副作用施加两次。`Execute`（单段）也做这个检查。
 3. **执行失败不记账**（没做成的不能记成做成了），但**会释放闸**（否则失败残留的
    闸把后续重试全挡成「别人占着」，动作从此做不成）。
+4. **v0.32.0 起：施加失败且无法判定远端是否已生效 ⇒ 结果未知，禁止重试**。
+   「响应丢了」与「远端没做」在调用方看来完全一样，而前者重试就是**重复施加**。
+   故闸把该 Key 转入「结果未知」（`OutcomeUncertain`），必须先对账：
+
+   ```go
+   // 施加失败后：同一个 Key 再来一次会被**拒**（动作体不会被再次调用）
+   outcome, _, err := runner.Execute(ctx, act, fn)   // outcome == OutcomeUncertain
+
+   // 宿主查下游事实后裁决：确认已生效 → 记为完成；确认未生效 → 允许重试
+   _, _, err = runner.Reconcile(ctx, act, sideeffect.Resolution{
+       Applied: true,                       // 已生效
+       Result:  sideeffect.Result{Payload: resultBytes},
+       Reason:  "查下游：动作已生效",
+   })
+   ```
+
+   只有当你的下游**按幂等键去重**时，才可以在 `Action.RetrySafety` 里声明
+   `sideeffect.RetrySafetySafe`——那等于断言「重试不会重复施加」。**断言错了
+   就是重复施加**，故它是显式选择，且不声明时按最弱处理（结果未知 + 对账）。
 
 **下游资源侧要拒收陈旧写入**：若你的目标系统能被并发写入，实现
 `FencedSink`——它钉了两件必须全局一致的事：比较口径（**小于**已见过的最大令牌
@@ -1690,7 +1729,8 @@ outcome, res, err := runner.ExecuteWith(ctx, act, sideeffect.Effect{
 #### 3.10.3 `sidetest`：给你的存储实现一份验收标准
 
 `Store` 的正确性无法靠「看起来对」保证，而**每家宿主都会自己写一遍存储实现**。
-`sidetest` 把「宿主实现必须满足什么」固化成 10 条可复跑的子测试：
+`sidetest` 把「宿主实现必须满足什么」固化成 15 条可复跑的子测试
+（含 v0.32.0 新增的「结果未知」一族五条）：
 
 ```go
 import "github.com/yi-nology/goagent-kernel/sidetest"

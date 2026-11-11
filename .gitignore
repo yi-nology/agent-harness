@@ -82,6 +82,9 @@
 /site/docs/reference/packages.md
 /site/docs/reference/pitfalls.md
 /site/docs/reference/releases.md
+/site/docs/reference/adr.md
+/site/docs/adr/
+/site/docs/.vuepress/adr-manifest.json
 /site/docs/.vuepress/public/llms.txt
 
 # ── 系统 ──

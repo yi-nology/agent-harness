@@ -1,6 +1,23 @@
 import { viteBundler } from '@vuepress/bundler-vite'
 import { defaultTheme } from '@vuepress/theme-default'
 import { defineUserConfig } from 'vuepress'
+import { readFileSync } from 'node:fs'
+
+// ADR 清单由 site/gen.mjs 生成（页面本体也在生成物里）。
+//
+// 为什么清单不写死在本文件里：每加一篇 ADR 就要手改一次侧栏配置，
+// 而那一次手改总会有人忘——侧栏与实际页数就此漂移，且没有任何东西会红。
+// 故清单从生成物读：页数变了，配置自动跟着变。
+//
+// 清单文件不存在时直接报错而不是静默用空数组：那是构建顺序错了
+// （npm run docs:build 会先跑 node gen.mjs），不是「本仓没有 ADR」。
+let adrManifest = []
+try {
+  adrManifest = JSON.parse(readFileSync(new URL('./adr-manifest.json', import.meta.url), 'utf8'))
+} catch (e) {
+  console.error('config.js: 读不到 adr-manifest.json —— 先跑 node gen.mjs（npm run docs:build 会自动先跑）')
+  throw e
+}
 
 // 站点配置。base 必须是 /goagent-kernel/——GitHub Pages 项目站挂在子路径下，
 // 写错根路径整站资源 404。
@@ -42,6 +59,7 @@ export default defineUserConfig({
         children: [
           { text: '包清单与机器事实', link: '/reference/packages.html' },
           { text: '门禁体系', link: '/reference/gates.html' },
+          { text: '决策记录（ADR）', link: '/reference/adr.html' },
           { text: '版本记录', link: '/reference/releases.html' },
         ],
       },
@@ -65,9 +83,16 @@ export default defineUserConfig({
           children: [
             '/reference/packages.md',
             '/reference/gates.md',
+            '/reference/adr.md',
             '/reference/releases.md',
             '/reference/pitfalls.md',
           ],
+        },
+      ],
+      '/adr/': [
+        {
+          text: '决策记录',
+          children: adrManifest.map((a) => '/adr/' + a.file),
         },
       ],
     },

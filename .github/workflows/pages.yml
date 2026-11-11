@@ -20,6 +20,9 @@ on:
       - 'Makefile'
       - 'architecture-policy.yaml'
       - 'docs/USAGE.md'
+      # ADR 是站点决策记录页的**唯一真相源**（site/gen.mjs 从 docs/adr/ 投影）：
+      # 不列进触发路径，改了 ADR 站点就不会重建——读者看到的推导会停在旧版本。
+      - 'docs/adr/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
