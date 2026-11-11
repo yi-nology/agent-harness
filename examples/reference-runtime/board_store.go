@@ -13,6 +13,12 @@
 //
 // 到期时刻也由**存储自己的时钟**算：调用方的时钟与存储的时钟可能对不上，
 // 跨进程时更不能假设一致。
+//
+// # 续期与接管代次（v0.33.0 起，issue #87）
+//
+// 本存储实现 taskboard.RenewingBoard：Renew 是**资格检查**不是心跳——
+// 校验令牌仍是当前租约的、且未过期，通过才把到期时刻推后（同一把锁内完成，
+// 原子）。接管代次 Lease.Fence 与令牌同一次铸造，同一任务上严格递增。
 package main
 
 import (
@@ -112,8 +118,12 @@ func (s *boardStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboa
 	}
 
 	// 铸一枚新令牌：每次认领都换新 ⇒ 上一轮的令牌无法重用（ABA）。
+	// 接管代次与令牌**同一次铸造**（同源）：seq 单调递增 ⇒ 同一任务上严格递增。
 	s.seq++
-	lease := taskboard.Lease{Token: fmt.Sprintf("tok-%d", s.seq)}
+	lease := taskboard.Lease{
+		Token: fmt.Sprintf("tok-%d", s.seq),
+		Fence: taskboard.Fence(s.seq),
+	}
 	if req.TTL > 0 {
 		lease.Until = s.clock().Add(req.TTL)
 	}
@@ -163,6 +173,34 @@ func (s *boardStore) Complete(_ context.Context, id taskboard.TaskID, token stri
 	t.Seq++
 	s.tasks[id] = t
 	return nil
+}
+
+// Renew 续期并确认持有资格（taskboard.RenewingBoard，issue #87）。
+//
+// 校验（令牌是当前租约的 + 租约未过期）与延长在同一把锁内完成——原子；
+// TTL 语义与 Claim 一致；续期不换令牌、不递增代次（续期不是接管）。
+func (s *boardStore) Renew(_ context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	t, ok := s.tasks[id]
+	if !ok {
+		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在", "task", string(id))
+	}
+	if t.State != taskboard.StateClaimed || t.Lease.Token != token {
+		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, "租约令牌不匹配", "task", string(id))
+	}
+	if !leaseHeld(t, s.clock()) {
+		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, "租约已过期，资格终止（请重新认领）", "task", string(id))
+	}
+	if req.TTL > 0 {
+		t.Lease.Until = s.clock().Add(req.TTL)
+	} else {
+		t.Lease.Until = time.Time{}
+	}
+	t.Seq++
+	s.tasks[id] = t
+	return t, nil
 }
 
 // leaseHeld 该任务当前是否仍被持有。

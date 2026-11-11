@@ -29,6 +29,8 @@ type fakeStore struct {
 	holders map[string]fakeHold
 	// intents Key → 未裁决的执行意图（Acquire 原子写入）。
 	intents map[Key]fakeIntent
+	// recons Key → 对账占用（BeginReconcile 写入）。
+	recons map[Key]fakeRecon
 	// maxFence Resource → 已见过的最大令牌。
 	maxFence map[string]Fence
 
@@ -54,10 +56,10 @@ type fakeStore struct {
 	resolveCalls       int
 }
 
-// fakeHold 一次持有（含到期时刻与持有者）。
+// fakeHold 一次持有（含到期时刻与持有者身份）。
 type fakeHold struct {
 	lease   Lease
-	holder  Key
+	holder  string
 	expires time.Time
 }
 
@@ -68,7 +70,14 @@ type fakeHold struct {
 type fakeIntent struct {
 	resource string
 	fence    Fence
+	holder   string
 	expires  time.Time
+}
+
+// fakeRecon 一次对账认领。
+type fakeRecon struct {
+	holder  string
+	expires time.Time
 }
 
 func newFakeStore() *fakeStore {
@@ -77,6 +86,7 @@ func newFakeStore() *fakeStore {
 		uncertain: map[Key]string{},
 		holders:   map[string]fakeHold{},
 		intents:   map[Key]fakeIntent{},
+		recons:    map[Key]fakeRecon{},
 		maxFence:  map[string]Fence{},
 		now:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
@@ -126,6 +136,15 @@ func (s *fakeStore) Acquire(_ context.Context, act Action, ttl time.Duration) (O
 
 	now := s.clockLocked()
 
+	// 判据二点五：对账占用未过期 ⇒ 对账中（仍是未知态，不得授予执行权）。
+	// 过期的占用在这里清掉（可重入：对账者死亡不永久占住这个 Key）。
+	if r, ok := s.recons[act.Key]; ok {
+		if now.Before(r.expires) {
+			return OutcomeUncertain, Lease{}, Result{}, nil
+		}
+		delete(s.recons, act.Key)
+	}
+
 	// 判据三：本 Key 上有一次未裁决的尝试。
 	if it, ok := s.intents[act.Key]; ok {
 		if now.Before(it.expires) {
@@ -150,9 +169,10 @@ func (s *fakeStore) Acquire(_ context.Context, act Action, ttl time.Duration) (O
 	// 并**原子地登记执行意图**（少了它，「进程死在记账之前」就查无实据）。
 	next := s.maxFence[act.Resource] + 1
 	s.maxFence[act.Resource] = next
-	lease := Lease{Resource: act.Resource, Fence: next, TTL: ttl}
-	s.holders[act.Resource] = fakeHold{lease: lease, holder: act.Key, expires: now.Add(ttl)}
-	s.intents[act.Key] = fakeIntent{resource: act.Resource, fence: next, expires: now.Add(ttl)}
+	holder := MintHolder()
+	lease := Lease{Resource: act.Resource, Fence: next, Holder: holder, TTL: ttl}
+	s.holders[act.Resource] = fakeHold{lease: lease, holder: holder, expires: now.Add(ttl)}
+	s.intents[act.Key] = fakeIntent{resource: act.Resource, fence: next, holder: holder, expires: now.Add(ttl)}
 	return OutcomeApplied, lease, Result{}, nil
 }
 
@@ -171,25 +191,55 @@ func (s *fakeStore) dropIntentLocked(act Action, it fakeIntent) {
 	if it.resource == "" {
 		return
 	}
-	if h, ok := s.holders[it.resource]; ok && h.holder == act.Key && h.lease.Fence == it.fence {
+	if h, ok := s.holders[it.resource]; ok && h.holder == it.holder && h.lease.Fence == it.fence {
 		delete(s.holders, it.resource)
 	}
 }
 
-// intentOwned 本次尝试是否仍归该令牌所有。
-func (s *fakeStore) intentOwned(act Action, lease Lease) bool {
-	it, ok := s.intents[act.Key]
-	return ok && it.fence == lease.Fence
+// leaseResourceErr 三项联查第一项：租约的资源必须与动作的资源一致。
+func leaseResourceErr(act Action, lease Lease) error {
+	if lease.Resource != act.Resource {
+		return errors.Wrap(ErrResourceMismatch, "凭据被拒：租约与动作的资源不一致",
+			"act_resource", act.Resource, "lease_resource", lease.Resource)
+	}
+	return nil
 }
 
-// holdOwned 资源闸是否仍由本次尝试持有。
+// intentOwnerErr 三项联查：本次尝试是否仍归**这份凭据**所有。
+func (s *fakeStore) intentOwnerErr(act Action, lease Lease) error {
+	if err := leaseResourceErr(act, lease); err != nil {
+		return err
+	}
+	it, ok := s.intents[act.Key]
+	if !ok {
+		return errors.Wrap(ErrFenceStale, "本次尝试已无未裁决的执行意图", "key", string(act.Key))
+	}
+	if it.fence != lease.Fence {
+		return errors.Wrap(ErrFenceStale, "本次尝试已不属于该令牌（已转入未知态或已被放弃）", "resource", act.Resource)
+	}
+	if it.holder != lease.Holder {
+		return errors.Wrap(ErrNotHolder, "凭据被拒：持有者身份不匹配（意图不是本次授予铸造的那份）", "key", string(act.Key))
+	}
+	return nil
+}
+
+// holdOwnerErr 三项联查：资源闸是否仍由**这份凭据**持有。
 //
-// 只比令牌不够：释放闸之后令牌**没有**变（栅栏只在接管时递增），
-// 于是「释放后的租约」能拿同一个令牌继续续期/记账——闸已经易主，
-// 而持有者以为还拿着。这就是「释放后的租约仍能续期」那道洞。
-func (s *fakeStore) holdOwned(act Action, lease Lease) bool {
+// 判定顺序有意如此：令牌不匹配或已释放 → ErrFenceStale（这一代已经过去）；
+// 令牌还在这一代但持有者不是出示者 → ErrNotHolder（令牌会经下游流转，
+// 见过的组件拿着令牌来冒充持有者，被这道防线拦下）。
+func (s *fakeStore) holdOwnerErr(act Action, lease Lease) error {
+	if err := leaseResourceErr(act, lease); err != nil {
+		return err
+	}
 	h, ok := s.holders[act.Resource]
-	return ok && h.lease.Fence == lease.Fence && h.holder == act.Key
+	if !ok || lease.Fence == 0 || h.lease.Fence != lease.Fence {
+		return errors.Wrap(ErrFenceStale, "栅栏令牌已不是最新代或资源已释放", "resource", act.Resource)
+	}
+	if h.holder != lease.Holder {
+		return errors.Wrap(ErrNotHolder, "凭据被拒：持有者身份不匹配（持有不是本次授予铸造的那份）", "resource", act.Resource)
+	}
+	return nil
 }
 
 func (s *fakeStore) Complete(_ context.Context, act Action, lease Lease, res Result) (Result, error) {
@@ -203,11 +253,11 @@ func (s *fakeStore) Complete(_ context.Context, act Action, lease Lease, res Res
 	if prior, ok := s.done[act.Key]; ok {
 		return prior, nil
 	}
-	if !s.holdOwned(act, lease) {
-		return Result{}, errors.Wrap(ErrFenceStale, "栅栏令牌已不是最新代或资源已易主", "resource", act.Resource)
+	if err := s.holdOwnerErr(act, lease); err != nil {
+		return Result{}, err
 	}
-	if !s.intentOwned(act, lease) {
-		return Result{}, errors.Wrap(ErrFenceStale, "本次尝试已不属于该令牌（已转入未知态或已被放弃）", "resource", act.Resource)
+	if err := s.intentOwnerErr(act, lease); err != nil {
+		return Result{}, err
 	}
 	s.done[act.Key] = res
 	delete(s.intents, act.Key)
@@ -224,8 +274,8 @@ func (s *fakeStore) Release(_ context.Context, act Action, lease Lease) error {
 	if s.releaseErr != nil {
 		return s.releaseErr
 	}
-	if !s.holdOwned(act, lease) {
-		return errors.Wrap(ErrFenceStale, "栅栏令牌已不是最新代或资源已易主", "resource", act.Resource)
+	if err := s.holdOwnerErr(act, lease); err != nil {
+		return err
 	}
 	delete(s.holders, act.Resource)
 	// 释放**不**撤销执行意图：意图没被裁决之前，这个 Key 不得再被执行。
@@ -240,12 +290,12 @@ func (s *fakeStore) Abandon(_ context.Context, act Action, lease Lease, _ string
 	if s.abandonErr != nil {
 		return s.abandonErr
 	}
-	if !s.intentOwned(act, lease) {
-		return errors.Wrap(ErrFenceStale, "本次尝试已不属于该令牌（已转入未知态或已被放弃）", "resource", act.Resource)
+	if err := s.intentOwnerErr(act, lease); err != nil {
+		return err
 	}
 	delete(s.intents, act.Key)
 	// 资源闸只在仍是自己的时才放——易主了就不碰（那是新持有者的闸）。
-	if s.holdOwned(act, lease) {
+	if err := s.holdOwnerErr(act, lease); err == nil {
 		delete(s.holders, act.Resource)
 	}
 	return nil
@@ -258,13 +308,15 @@ func (s *fakeStore) MarkUncertain(_ context.Context, act Action, lease Lease, re
 	if s.markUncertainErr != nil {
 		return s.markUncertainErr
 	}
-	// 令牌校验 + 意图归属：过期持有者不得改写新持有者的状态，
-	// 也不得把一段「已被放弃」的尝试改写成未知。
-	if !s.holdOwned(act, lease) {
-		return errors.Wrap(ErrFenceStale, "栅栏令牌已不是最新代或资源已易主", "resource", act.Resource)
+	// 三项联查：过期持有者不得改写新持有者的状态，也不得把一段
+	// 「已被放弃」的尝试改写成未知。校验全部发生在**任何状态被改之前**——
+	// 写失败（含 markUncertainErr 注入）时意图原样留在存储里（契约硬要求：
+	// 标记失败后它是唯一还在挡着重试的东西）。
+	if err := s.holdOwnerErr(act, lease); err != nil {
+		return err
 	}
-	if !s.intentOwned(act, lease) {
-		return errors.Wrap(ErrFenceStale, "本次尝试已不属于该令牌（已转入未知态或已被放弃）", "resource", act.Resource)
+	if err := s.intentOwnerErr(act, lease); err != nil {
+		return err
 	}
 	s.uncertain[act.Key] = reason
 	delete(s.intents, act.Key)
@@ -285,12 +337,18 @@ func (s *fakeStore) ResolveUncertain(_ context.Context, act Action, res Resoluti
 	if _, ok := s.uncertain[act.Key]; !ok {
 		return OutcomeContended, Result{}, ErrNotUncertain
 	}
-	// 裁决即结论：执行意图一并撤销（这次尝试已有结论）。
+	// 裁决即结论：执行意图与对账占用一并撤销（这次尝试已有结论）。
 	delete(s.intents, act.Key)
+	delete(s.recons, act.Key)
 	if res.Applied {
 		s.done[act.Key] = res.Result
 		delete(s.uncertain, act.Key)
-		return OutcomeApplied, res.Result, nil
+		return OutcomeReplayed, res.Result, nil
+	}
+	if act.RetrySafety == RetrySafetyUnsafe && !res.ForceRetryable {
+		// 「不可重试」的动作，一句来自对账的「未生效」不足以重新开门。
+		// 未知标记原样保留（仍被硬阻塞），放行必须显式签字。
+		return OutcomeUncertain, Result{}, ErrUnsafeNotRetryable
 	}
 	delete(s.uncertain, act.Key)
 	return OutcomeContended, Result{}, nil
@@ -299,12 +357,12 @@ func (s *fakeStore) ResolveUncertain(_ context.Context, act Action, res Resoluti
 func (s *fakeStore) Renew(_ context.Context, act Action, lease Lease, ttl time.Duration) (Lease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// 资格校验与续期在同一次原子操作里：校验不过就不续期。
-	if !s.holdOwned(act, lease) {
-		return Lease{}, errors.Wrap(ErrFenceStale, "栅栏令牌已不是最新代或资源已易主", "resource", act.Resource)
+	// 资格校验（三项联查）与续期在同一次原子操作里：校验不过就不续期。
+	if err := s.holdOwnerErr(act, lease); err != nil {
+		return Lease{}, err
 	}
-	if !s.intentOwned(act, lease) {
-		return Lease{}, errors.Wrap(ErrFenceStale, "本次尝试已不属于该令牌（已转入未知态或已被放弃）", "resource", act.Resource)
+	if err := s.intentOwnerErr(act, lease); err != nil {
+		return Lease{}, err
 	}
 	now := s.clockLocked()
 	cur := s.holders[act.Resource]
@@ -316,4 +374,23 @@ func (s *fakeStore) Renew(_ context.Context, act Action, lease Lease, ttl time.D
 	it.expires = now.Add(ttl)
 	s.intents[act.Key] = it
 	return cur.lease, nil
+}
+
+// BeginReconcile 认领对账权：同一 Key 同一时刻至多一个对账者，过期可重入。
+func (s *fakeStore) BeginReconcile(_ context.Context, act Action, ttl time.Duration) (Reconcile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.done[act.Key]; ok {
+		return Reconcile{}, ErrNotUncertain
+	}
+	if _, ok := s.uncertain[act.Key]; !ok {
+		return Reconcile{}, ErrNotUncertain
+	}
+	now := s.clockLocked()
+	if r, ok := s.recons[act.Key]; ok && now.Before(r.expires) {
+		return Reconcile{}, ErrReconcileTaken
+	}
+	holder := MintHolder()
+	s.recons[act.Key] = fakeRecon{holder: holder, expires: now.Add(ttl)}
+	return Reconcile{Holder: holder, ExpiresAt: now.Add(ttl)}, nil
 }

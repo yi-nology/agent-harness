@@ -21,9 +21,10 @@
 //
 // # 三个守住的纪律
 //
-//  1. **span 名取低基数**：只有 @turn@ / @step@ / @tool_call@ / @tool_result@ 四种。
-//     工具名进**属性**而不是进名字——把工具名拼进 span 名会让 span 名的基数随
-//     工具目录膨胀，而大多数后端的聚合与采样都按名字做。
+//  1. **span 名取低基数**：只有 @turn@ / @step@ / @tool_call@ / @tool_result@ /
+//     @sideeffect@ / @checkpoint@ 六种。工具名与幂等键进**属性**而不是进名字
+//     ——把可变取值拼进 span 名会让名字的基数随工具目录 / 动作数膨胀，
+//     而大多数后端的聚合与采样都按名字做。
 //  2. **时长只在实测时写**：@duration_ms@ 仅当 @Row.Duration()@ 给出实测值才出现。
 //     没有实测就不写这个属性——而不是写 0 或估一个。这条与 @Row@ 结构上不设
 //     时长字段是同一件事：估算值不许冒充实测。
@@ -86,6 +87,34 @@ const (
 	AttrDurationMs = "harness.trajectory.duration_ms"
 	// AttrSummary 行摘要（宿主可用 Options.Summarize 覆盖；空则不写）。
 	AttrSummary = "harness.trajectory.summary"
+
+	// ── 副作用行（v0.33.0，issue #99）─────────────────────────────
+	// 排障第一问「这个副作用到底施加了吗」的属性面。属性命名与既有三类同构：
+	// 领域段（harness.sideeffect.*）+ 语义后缀。
+	// AttrSideEffectKey 幂等键（配对键：同 Key 的授予段 / 对账段 / 点观察聚合到
+	// 同一行标识下；宿主跨 span join 用）。无界标识——禁止作 metric label。
+	AttrSideEffectKey = "harness.sideeffect.key"
+	// AttrSideEffectPhase 副作用阶段（granted / completed / abandoned / uncertain /
+	// resolved_applied / resolved_cleared / replayed / contended）。
+	AttrSideEffectPhase = "harness.sideeffect.phase"
+	// AttrSideEffectResource 目标资源标识（租约的独占单位）。无界——禁止作 metric label。
+	AttrSideEffectResource = "harness.sideeffect.resource"
+	// AttrSideEffectFence 栅栏令牌（授予段 / 点行为观察到的代数；非授予段不写）。
+	AttrSideEffectFence = "harness.sideeffect.fence"
+	// AttrSideEffectSafety 重试安全性声明（unknown / safe / unsafe，与
+	// sideeffect.RetrySafety.String() 逐字一致；空声明不写——沉默按最弱处理，
+	// 属性面不替宿主补默认值）。
+	AttrSideEffectSafety = "harness.sideeffect.retry_safety"
+
+	// ── 快照行（v0.33.0，issue #99）──────────────────────────────
+	// 排障第二问「恢复点停在哪个序号」的属性面。
+	// AttrCheckpointRunID 编排运行标识（宿主分配的稳定标识）。无界——禁止作 metric label。
+	AttrCheckpointRunID = "harness.checkpoint.run_id"
+	// AttrCheckpointSeq 快照序号（严格递增；0 不会出现——seq=0 的快照不是一次真实提交）。
+	AttrCheckpointSeq = "harness.checkpoint.seq"
+	// AttrCheckpointStatus 快照的编排状态（取值域见 contract 的状态常量集；
+	// 本包**引用**那份词表而不复制——契约表里用 Note 指过去，抄一份就是第二真相）。
+	AttrCheckpointStatus = "harness.checkpoint.status"
 )
 
 // SpanStatus span 状态（OTel 的三值词表）。
@@ -158,6 +187,34 @@ func SpanOf(r Row) Span {
 			s.Attributes[AttrToolDupResults] = int64(r.DupResults)
 		}
 	}
+	if r.Kind == KindSideEffect {
+		if r.SideEffectKey != "" {
+			s.Attributes[AttrSideEffectKey] = r.SideEffectKey
+		}
+		if r.SideEffectPhase != "" {
+			s.Attributes[AttrSideEffectPhase] = string(r.SideEffectPhase)
+		}
+		if r.SideEffectResource != "" {
+			s.Attributes[AttrSideEffectResource] = r.SideEffectResource
+		}
+		if r.SideEffectFence > 0 {
+			s.Attributes[AttrSideEffectFence] = int64(r.SideEffectFence)
+		}
+		if r.SideEffectSafety != "" {
+			s.Attributes[AttrSideEffectSafety] = r.SideEffectSafety
+		}
+	}
+	if r.Kind == KindCheckpoint {
+		if r.CheckpointRunID != "" {
+			s.Attributes[AttrCheckpointRunID] = r.CheckpointRunID
+		}
+		if r.CheckpointSeq > 0 {
+			s.Attributes[AttrCheckpointSeq] = int64(r.CheckpointSeq)
+		}
+		if r.CheckpointStatus != "" {
+			s.Attributes[AttrCheckpointStatus] = r.CheckpointStatus
+		}
+	}
 	// 时长：唯一来源是起止相减（见 Row.Duration）。没有实测就**没有这个属性**。
 	if d, ok := r.Duration(); ok {
 		s.Attributes[AttrDurationMs] = float64(d) / float64(time.Millisecond)
@@ -195,14 +252,15 @@ func SpansOf(rows []Row) []Span {
 
 // parentIDOf 推一行的父 span 标识（**声明**的父，不保证在该批行里存在）。
 //
-// 层级只有一条：轮 → 环节 → 工具。工具行优先挂环节（更近的因果），没有环节号时
-// 挂轮次；不在任何轮次里的行（轮次外的事件、孤儿行）没有父，即它是根。
+// 层级只有一条：轮 → 环节 → 工具 / 副作用 / 快照。带环节号的行优先挂环节
+// （更近的因果），没有环节号时挂轮次；不在任何轮次里的行（轮次外的事件、
+// 孤儿行）没有父，即它是根。
 func parentIDOf(r Row) string {
 	switch r.Kind {
 	case KindTurn:
 		// 轮次行恒为根：一轮就是一个 trace（见头注「trace 边界」）。
 		return ""
-	case KindToolCall, KindToolResult:
+	case KindToolCall, KindToolResult, KindSideEffect, KindCheckpoint:
 		if r.HasStep {
 			return stepRowID(r.StepID)
 		}
@@ -219,6 +277,31 @@ func parentIDOf(r Row) string {
 // 其余一律 unset——包括 @missing_result@：
 // 「还没等到结果」与「结果重复了」是两件性质完全不同的事，前者可能仍在途。
 func spanStatusOf(r Row) SpanStatus {
+	// 副作用行：问题与结论都在阶段里，先于通用的「收口即 ok」判定。
+	// uncertain 是**已经发生**的事（结果未知、Key 被硬阻塞、必须对账）——
+	// 不是「还没等到」；但它不是 ok：两种语义都丢不得，error 承载前者，
+	// 未收口（对账挂起中）仍是 unset。
+	if r.Kind == KindSideEffect {
+		switch r.Status {
+		case StatusOpen:
+			return SpanStatusUnset // 授予在途 / 对账挂起中
+		case StatusOrphan:
+			// 孤儿 = 点观察或只有终点的结论，都是**确定的观测**。
+			if r.SideEffectPhase == SideEffectUncertain {
+				return SpanStatusError
+			}
+			return SpanStatusOK
+		default: // closed
+			if r.SideEffectPhase == SideEffectUncertain {
+				return SpanStatusError
+			}
+			return SpanStatusOK
+		}
+	}
+	// 快照行是点观察（孤儿形态）：提交本身是确定发生的成功观测。
+	if r.Kind == KindCheckpoint {
+		return SpanStatusOK
+	}
 	switch r.Pairing {
 	case PairingDuplicateResult, PairingDuplicateCall, PairingUnpairedResult:
 		// 这三类都是**已经发生**的不一致：重复结果可能意味着副作用被施加了两次

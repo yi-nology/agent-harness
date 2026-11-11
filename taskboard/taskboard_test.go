@@ -41,6 +41,7 @@ func TestCheckCatchesEachInvariant(t *testing.T) {
 		{"依赖自己", append(clean(), Task{ID: "t3", State: StateOpen, Deps: []TaskID{"t3"}}), CodeSelfDep},
 		{"认领却没有令牌", append(clean(), Task{ID: "t3", State: StateClaimed, Owner: "a1"}), CodeClaimedNoLease},
 		{"非认领态残留令牌", append(clean(), Task{ID: "t3", State: StateOpen, Lease: Lease{Token: "tok"}}), CodeLeaseNoClaim},
+		{"非认领态残留代次", append(clean(), Task{ID: "t3", State: StateOpen, Lease: Lease{Fence: 3}}), CodeLeaseNoClaim},
 		{"终态仍带 owner", append(clean(), Task{ID: "t3", State: StateDone, Owner: "a1", Seq: 1}), CodeTerminalClaimed},
 	}
 	for _, c := range cases {
@@ -88,7 +89,7 @@ func TestCheckIsDeterministic(t *testing.T) {
 		{ID: "t2", State: StateClaimed},
 	}
 	first := Check(tasks)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		got := Check(tasks)
 		if len(got) != len(first) {
 			t.Fatalf("两次判定条数不同: %d vs %d", len(got), len(first))
