@@ -30,8 +30,16 @@ type Provider struct {
 	Bindings []Binding
 	// Discover 程序内工具发现入口（nil = 不暴露该全局）。
 	Discover Discoverer
-	// Stages 每次绑定调用前必过的判定环（nil = 不接判定）。
+	// Stages 每次绑定调用前必过的判定环。
+	//
+	// **缺省即拒绝**：装配了绑定却没有判定环 ⇒ 本后端执行时返回
+	// ErrorKindUnmanaged（fail-closed）。详见 Options.Stages 的注释。
 	Stages []invoke.Stage
+	// AllowUnmanaged 显式允许「有绑定、无判定环」地执行（逃逸口，默认 false）。
+	//
+	// 与 Options.AllowUnmanaged 同义：逃逸口必须显式，且本仓门禁会拦
+	// 生产代码里的显式逃逸，让这个选择可见。
+	AllowUnmanaged bool
 }
 
 // ID 后端标识。
@@ -52,6 +60,8 @@ func (p Provider) Exec(ctx context.Context, req sandbox.Request) (sandbox.Outcom
 		MaxBytes: req.Budget.MaxBytes,
 		Discover: p.Discover,
 		Stages:   p.Stages,
+		// 逃逸口透传：Provider 与 Run 是同一条判据，不各判一套。
+		AllowUnmanaged: p.AllowUnmanaged,
 	})
 	out := sandbox.Outcome{OK: res.OK, Value: res.Value, Detail: res}
 	if !res.OK {

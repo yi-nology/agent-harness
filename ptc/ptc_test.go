@@ -29,20 +29,20 @@ func failing(name, msg string) Binding {
 func TestRunReturnContract(t *testing.T) {
 	ctx := context.Background()
 	// return 值=JSON 可序列化；undefined→null
-	r := Run(ctx, `return 42`, nil, Options{})
+	r := Run(ctx, `return 42`, nil, Options{Stages: allowStages()})
 	if !r.OK || r.Value != "42" {
 		t.Fatalf("数字 return 不符: %+v", r)
 	}
-	r = Run(ctx, `return {a: 1, b: "x"}`, nil, Options{})
+	r = Run(ctx, `return {a: 1, b: "x"}`, nil, Options{Stages: allowStages()})
 	if !r.OK || r.Value != `{"a":1,"b":"x"}` {
 		t.Fatalf("对象 return 序列化不符: %+v", r)
 	}
-	r = Run(ctx, ``, nil, Options{})
+	r = Run(ctx, ``, nil, Options{Stages: allowStages()})
 	if !r.OK || r.Value != "null" {
 		t.Fatalf("无 return 应为 null: %+v", r)
 	}
 	// 顶层 await 可用（async IIFE）
-	r = Run(ctx, `const v = await host.echo("x"); return v`, []Binding{echo("echo")}, Options{})
+	r = Run(ctx, `const v = await host.echo("x"); return v`, []Binding{echo("echo")}, Options{Stages: allowStages()})
 	if !r.OK || r.Value != `"OUT<x>"` {
 		t.Fatalf("await 绑定返回不符: %+v", r)
 	}
@@ -64,7 +64,7 @@ for (let i = 0; i < 5; i++) {
   if (n > max) max = n;
 }
 return { hosts: 5, maxLen: max };`
-	r := Run(context.Background(), prog, []Binding{big}, Options{})
+	r := Run(context.Background(), prog, []Binding{big}, Options{Stages: allowStages()})
 	wantLen := 4096 + len(`{"host":"h0"}`) // big 绑定=4096 M + 参数原文
 	if !r.OK || r.Value != fmt.Sprintf(`{"hosts":5,"maxLen":%d}`, wantLen) {
 		t.Fatalf("归并结果不符: %+v", r)
@@ -80,18 +80,18 @@ return { hosts: 5, maxLen: max };`
 // 失败是结果字段不是异常：JS 抛错/绑定失败/拒绝——恒 Result 不 panic。
 func TestRunFailureIsField(t *testing.T) {
 	ctx := context.Background()
-	r := Run(ctx, `throw new Error("boom")`, nil, Options{})
+	r := Run(ctx, `throw new Error("boom")`, nil, Options{Stages: allowStages()})
 	if r.OK || r.ErrorKind != "runtime" || !strings.Contains(r.Error, "boom") {
 		t.Fatalf("JS 抛错应落字段: %+v", r)
 	}
 	// 绑定失败可被程序捕获（try/catch 纪律）
 	r = Run(ctx, `try { await host.bad("x"); return "caught"; } catch (e) { return "caught:" + String(e).slice(0, 6); }`,
-		[]Binding{failing("bad", "kaboom")}, Options{})
+		[]Binding{failing("bad", "kaboom")}, Options{Stages: allowStages()})
 	if !r.OK || !strings.Contains(r.Value, "caught") {
 		t.Fatalf("绑定失败应可捕获: %+v", r)
 	}
 	// 未捕获=拒绝落字段
-	r = Run(ctx, `await host.bad("x")`, []Binding{failing("bad", "kaboom")}, Options{})
+	r = Run(ctx, `await host.bad("x")`, []Binding{failing("bad", "kaboom")}, Options{Stages: allowStages()})
 	if r.OK || r.ErrorKind != "runtime" || !strings.Contains(r.Error, "kaboom") {
 		t.Fatalf("未捕获绑定失败应落字段: %+v", r)
 	}
@@ -101,18 +101,18 @@ func TestRunFailureIsField(t *testing.T) {
 func TestRunBudgets(t *testing.T) {
 	ctx := context.Background()
 	r := Run(ctx, `for (let i = 0; i < 10; i++) await host.echo(String(i)); return "done"`,
-		[]Binding{echo("echo")}, Options{MaxCalls: 3})
+		[]Binding{echo("echo")}, Options{Stages: allowStages(), MaxCalls: 3})
 	if r.OK || r.ErrorKind != "budget_calls" {
 		t.Fatalf("调用超限应 budget_calls: %+v", r)
 	}
 
 	r = Run(ctx, `await host.echo("0123456789"); return "done"`,
-		[]Binding{echo("echo")}, Options{MaxBytes: 5})
+		[]Binding{echo("echo")}, Options{Stages: allowStages(), MaxBytes: 5})
 	if r.OK || r.ErrorKind != "budget_bytes" {
 		t.Fatalf("字节超限应 budget_bytes: %+v", r)
 	}
 
-	r = Run(ctx, `while (true) {}`, nil, Options{Timeout: 100 * time.Millisecond})
+	r = Run(ctx, `while (true) {}`, nil, Options{Stages: allowStages(), Timeout: 100 * time.Millisecond})
 	if r.OK || r.ErrorKind != "deadline" {
 		t.Fatalf("失控循环应 deadline 中断: %+v", r)
 	}
@@ -120,7 +120,7 @@ func TestRunBudgets(t *testing.T) {
 
 // 永不落定的 await：VM 无定时器——如实判 pending 不挂死。
 func TestRunPendingPromise(t *testing.T) {
-	r := Run(context.Background(), `await new Promise(function(){}); return 1`, nil, Options{Timeout: 2 * time.Second})
+	r := Run(context.Background(), `await new Promise(function(){}); return 1`, nil, Options{Stages: allowStages(), Timeout: 2 * time.Second})
 	if r.OK || r.ErrorKind != "pending" {
 		t.Fatalf("永不落定应 pending: %+v", r)
 	}
@@ -128,7 +128,7 @@ func TestRunPendingPromise(t *testing.T) {
 
 // return 值不可 JSON 序列化=bad_result（契约「必须 JSON 可序列化」的显形）。
 func TestRunBadResult(t *testing.T) {
-	r := Run(context.Background(), `return function(){}`, nil, Options{})
+	r := Run(context.Background(), `return function(){}`, nil, Options{Stages: allowStages()})
 	if r.OK || r.ErrorKind != "bad_result" {
 		t.Fatalf("函数 return 应 bad_result: %+v", r)
 	}
@@ -141,7 +141,7 @@ func TestRunBindingArgsAndNames(t *testing.T) {
 		got = args
 		return "ok", nil
 	}}
-	r := Run(context.Background(), `await host.get_logs_host1({cmd: "uptime", n: 3}); return "x"`, []Binding{b}, Options{})
+	r := Run(context.Background(), `await host.get_logs_host1({cmd: "uptime", n: 3}); return "x"`, []Binding{b}, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("对象参数/净化名应可调: %+v", r)
 	}
@@ -165,7 +165,7 @@ func TestDeadlineCancelsBlockedBinding(t *testing.T) {
 	}
 	start := time.Now()
 	res := Run(context.Background(), "return await host.run_approved_command('{}')",
-		[]Binding{block}, Options{Timeout: 100 * time.Millisecond})
+		[]Binding{block}, Options{Stages: allowStages(), Timeout: 100 * time.Millisecond})
 	elapsed := time.Since(start)
 	if elapsed > 2*time.Second {
 		t.Fatalf("阻塞绑定拖穿墙钟: %s", elapsed)
@@ -183,7 +183,7 @@ func TestDeadlineCancelsBlockedBinding(t *testing.T) {
 
 // 语法预检：syntax kind 带 goja 行号，不烧绑定预算（Calls 恒 0）。
 func TestSyntaxPreCheck(t *testing.T) {
-	res := Run(context.Background(), "return {{{", nil, Options{})
+	res := Run(context.Background(), "return {{{", nil, Options{Stages: allowStages()})
 	if res.ErrorKind != "syntax" {
 		t.Fatalf("kind 应为 syntax: %+v", res)
 	}
@@ -211,7 +211,7 @@ func TestMergeContextRegression(t *testing.T) {
 	prog := `var total = 0;
 for (var i = 0; i < 10; i++) { total += host["get_metrics_" + i]("{}").length; }
 return { merged: "ok", total: total };`
-	res := Run(context.Background(), prog, bindings, Options{MaxBytes: 1 << 20})
+	res := Run(context.Background(), prog, bindings, Options{Stages: allowStages(), MaxBytes: 1 << 20})
 	if !res.OK {
 		t.Fatalf("归并程序应成功: %+v", res)
 	}
@@ -236,7 +236,7 @@ func TestRunSurvivesHostBindingPanic(t *testing.T) {
 	ctx := context.Background()
 
 	// panic 在唯一一次调用里。
-	r := Run(ctx, `const v = await host.boom("{}"); return v`, []Binding{panicky}, Options{})
+	r := Run(ctx, `const v = await host.boom("{}"); return v`, []Binding{panicky}, Options{Stages: allowStages()})
 	if r.OK {
 		t.Fatalf("panic 不得伪装成成功: %+v", r)
 	}
@@ -256,7 +256,7 @@ func TestRunSurvivesHostBindingPanic(t *testing.T) {
 
 	// panic 前已成功的调用照常记账：半途留痕是审计要的。
 	r = Run(ctx, `const a = await host.ok("1"); const b = await host.boom("{}"); return b`,
-		[]Binding{echo("ok"), panicky}, Options{})
+		[]Binding{echo("ok"), panicky}, Options{Stages: allowStages()})
 	if r.ErrorKind != "host_panic" {
 		t.Fatalf("第二跳 panic: kind=%q", r.ErrorKind)
 	}
@@ -272,7 +272,7 @@ func TestRunSurvivesHostBindingPanic(t *testing.T) {
 		return "{}", nil
 	}}
 	r = Run(ctx, `const a = await host.ok("1"); const b = await host.boom("{}"); return a+b`,
-		[]Binding{echo("ok"), fixed}, Options{})
+		[]Binding{echo("ok"), fixed}, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("修好后的程序应跑通: %+v", r)
 	}

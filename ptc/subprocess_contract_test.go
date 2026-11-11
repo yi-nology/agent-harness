@@ -15,7 +15,7 @@ import (
 // 此前 req 是死参数，实际跑配置的程序却按请求上报（静默落差）。
 func TestSubprocessExecRejectsProgramMismatch(t *testing.T) {
 	child := buildChildProgram(t)
-	prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+	prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{Stages: allowStages(),
 		Program: `return "from-opts"`,
 		ExePath: child,
 	})
@@ -33,7 +33,7 @@ func TestSubprocessExecRejectsProgramMismatch(t *testing.T) {
 // 空请求程序 = 显式「跑配置的那个」，放行且结果来自 opts.Program。
 func TestSubprocessExecAcceptsEmptyRequestProgram(t *testing.T) {
 	child := buildChildProgram(t)
-	prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+	prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{Stages: allowStages(),
 		Program: `return "from-opts"`,
 		ExePath: child,
 	})

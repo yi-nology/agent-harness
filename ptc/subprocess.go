@@ -41,7 +41,6 @@ import (
 
 	"github.com/oagentkit/guardx/invoke"
 	"github.com/oagentkit/guardx/sandbox"
-	"github.com/oagentkit/guardx/toolfail"
 	"github.com/oagentkit/guardx/wire"
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
@@ -59,7 +58,17 @@ type SubprocessOptions struct {
 	// Bindings 宿主工具绑定。**实现留在父侧**——子进程只拿到名字与调用形态。
 	Bindings []Binding
 	// Stages 每次绑定调用前必过的判定环（与普通工具调用同一套）。
+	//
+	// **缺省即拒绝**：装配了绑定却没有判定环 ⇒ 本后端执行时返回
+	// ErrorKindUnmanaged（fail-closed）。子进程形态尤其不能放过这一档：
+	// 子进程里只有一个「发请求」的桩，判定在父侧做——父侧不装判定环，
+	// 子进程发来的工具调用就没人判。详见 Options.Stages 的注释。
 	Stages []invoke.Stage
+	// AllowUnmanaged 显式允许「有绑定、无判定环」地执行（逃逸口，默认 false）。
+	//
+	// 与 Options.AllowUnmanaged 同义：逃逸口必须显式，且本仓门禁会拦
+	// 生产代码里的显式逃逸。
+	AllowUnmanaged bool
 	// Timeout 墙钟期限。<=0 用 DefaultTimeout。
 	Timeout time.Duration
 	// MaxCalls 调用数上限。<=0 用 DefaultMaxCalls。
@@ -160,6 +169,13 @@ func (p *SubprocessProvider) Exec(ctx context.Context, req sandbox.Request) (san
 	if req.Program != "" && req.Program != p.opts.Program {
 		return sandbox.Outcome{}, fmt.Errorf("ptc: 单程序后端收到不匹配的请求程序（配置 %d 字节 ≠ 请求 %d 字节）——SubprocessProvider 的程序在装配期配死，每请求程序请走进程内 Provider 或新建后端实例",
 			len(p.opts.Program), len(req.Program))
+	}
+	// 安全默认：装配了工具绑定却没装判定环 ⇒ 拒绝执行（fail-closed）。
+	//
+	// 判在**起子进程之前**：子进程起来之后，工具调用的判定在父侧做——
+	// 父侧此刻不判，这次执行就已经把「无人判定」的事实变成既成事实。
+	if reason := unmanagedRefusal(p.opts.Bindings, p.opts.Stages, p.opts.AllowUnmanaged); reason != "" {
+		return sandbox.Outcome{}, &sandbox.Failure{Kind: ErrorKindUnmanaged, Message: reason}
 	}
 	// 预算收口（issue #66）：装配期配置与每请求预算逐项取严后写 Start 帧。
 	lim, maxMemory := p.effectiveBudget(req.Budget)
@@ -306,74 +322,6 @@ func (p *SubprocessProvider) run(ctx context.Context, lim runLimits, maxMemory i
 		return wire.Result{}, aborted
 	}
 	return res, nil
-}
-
-// handler 父侧应答一次工具调用：判定环 → 执行绑定 → 回帧。
-//
-// 判定环在**父侧**：宿主工具在父侧，判定环也必须在父侧——子进程里只有一个
-// 发请求的桩。若判定环放到子进程，「程序里的 host.<tool>() 与普通工具调用
-// 走同一套判定环」这条纪律就断了。
-func (p *SubprocessProvider) handler() wire.Handler {
-	byName := make(map[string]Binding, len(p.opts.Bindings))
-	for _, b := range p.opts.Bindings {
-		byName[b.Name] = b
-	}
-	return func(ctx context.Context, req wire.Request) (wire.Response, error) {
-		// 判定环：与普通工具调用同一套。
-		//
-		// 归因与进程内路径**同一份实现**（issue #65）：此前这里把一切
-		// EvaluateStages 的错误（含守卫 panic/故障）都映射成 permission_denied
-		// ——「宿主门禁坏了」被上报为「策略否定」，排障方向被引向守卫配置，
-		// 正是 #59 在进程内路径修掉的误归因换了一条执行路径复发。现在经
-		// stageOutcome 分类：stage_denied（正常裁决）/ stage_failed（守卫自身
-		// 故障，宿主要修的不是程序）；非 DenyError 的错误不得冠判定环词汇，
-		// 按 unknown 走。Kind 用本包 ErrorKind 词表——子进程侧的收口对它
-		// 逐字采信（remoteFailure.Kind → Result.ErrorKind），两个后端对同一
-		// 次拒绝报同一个词。
-		if serr := invoke.EvaluateStages(ctx, p.opts.Stages, invoke.Call{Name: req.Tool, Args: req.Args}); serr != nil {
-			kind, prefix := stageOutcome(serr)
-			msg := serr.Error()
-			if prefix != "" {
-				msg = prefix + ": " + msg
-			}
-			if kind == "" {
-				kind = string(toolfail.ClassUnknown)
-			}
-			return wire.Response{
-				OK:    false,
-				Kind:  kind,
-				Error: msg,
-			}, nil
-		}
-		b, ok := byName[req.Tool]
-		if !ok {
-			return wire.Response{
-				OK:    false,
-				Kind:  string(toolfail.ClassNotFound),
-				Error: fmt.Sprintf("工具 %q 未装配", req.Tool),
-			}, nil
-		}
-		out, err := b.Call(ctx, req.Args)
-		if err != nil {
-			return wire.Response{
-				OK:    false,
-				Kind:  string(toolfail.ClassUnknown),
-				Error: err.Error(),
-			}, nil
-		}
-		return wire.Response{OK: true, Value: out}, nil
-	}
-}
-
-// startBindings 把绑定清单转成协议形态：**只给名字与调用形态，不给实现**。
-//
-// 实现留在父侧——这正是跨进程的意义：宿主工具只在宿主进程里存在。
-func startBindings(bindings []Binding) []wire.StartBinding {
-	out := make([]wire.StartBinding, 0, len(bindings))
-	for _, b := range bindings {
-		out = append(out, wire.StartBinding{Name: b.Name, Signature: b.Signature})
-	}
-	return out
 }
 
 // pipeRW 把两个方向的文件合成一个 io.ReadWriter。

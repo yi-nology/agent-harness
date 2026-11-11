@@ -24,7 +24,7 @@ func TestBindingCollisionRejected(t *testing.T) {
 		okBind("get_logs", "REAL"),  // 名字真的是 get_logs
 		okBind("get-logs", "OTHER"), // 净化后撞名
 	}
-	r := Run(context.Background(), `return host.get_logs()`, bindings, Options{})
+	r := Run(context.Background(), `return host.get_logs()`, bindings, Options{Stages: allowStages()})
 
 	if r.OK {
 		t.Fatal("绑定撞名必须拒绝执行")
@@ -50,7 +50,7 @@ func TestBindingCollisionNeverRunsSideEffects(t *testing.T) {
 		{Name: "alpha_tool", Call: func(context.Context, string) (string, error) { hits++; return "A", nil }},
 		{Name: "alpha.tool", Call: func(context.Context, string) (string, error) { hits++; return "B", nil }},
 	}
-	r := Run(context.Background(), `return host.alpha_tool()`, bindings, Options{})
+	r := Run(context.Background(), `return host.alpha_tool()`, bindings, Options{Stages: allowStages()})
 
 	if r.OK {
 		t.Fatal("撞名应拒绝")
@@ -67,7 +67,7 @@ func TestBindingCollisionBeatsSyntaxError(t *testing.T) {
 	// a-b 与 a_b 净化后同为 a_b；x.y 净化成 x_y，与 x 不撞，别拿它当样本。
 	r := Run(context.Background(), `this is not js(((`, []Binding{
 		okBind("a-b", "1"), okBind("a_b", "2"),
-	}, Options{})
+	}, Options{Stages: allowStages()})
 	if r.ErrorKind != "binding_collision" {
 		t.Fatalf("程序体有语法错误时也应先报 binding_collision，实得 %q", r.ErrorKind)
 	}
@@ -85,7 +85,7 @@ func TestNoCollisionAmongDistinctNames(t *testing.T) {
 	}
 	// 先只取互不冲突的一组。
 	safe := []Binding{bindings[2], bindings[3], bindings[4]}
-	r := Run(context.Background(), `return host.write_file() + host.restart_service()`, safe, Options{})
+	r := Run(context.Background(), `return host.write_file() + host.restart_service()`, safe, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("互不冲突的绑定表必须正常执行，实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -101,7 +101,7 @@ func TestEmptyIdentBindingIsSkippedNotCollision(t *testing.T) {
 		okBind("---", "junk"),
 		okBind("real_one", "1"),
 		okBind("...", "junk2"),
-	}, Options{})
+	}, Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("挂不上的绑定应被跳过而非拒表，实得 %q / %q", r.ErrorKind, r.Error)
 	}

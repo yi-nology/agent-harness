@@ -71,7 +71,7 @@ func TestMemoryLimitFailsClosedWhenCannotBuild(t *testing.T) {
 	})
 
 	bin := buildChildProgramInPkg(t)
-	p := NewSubprocessProvider(SubprocessOptions{
+	p := NewSubprocessProvider(SubprocessOptions{Stages: allowStages(),
 		ExePath:   bin,
 		MaxMemory: 256 << 20,
 		Program:   "return 1;",
@@ -102,7 +102,7 @@ func TestAttachFailureKillsChild(t *testing.T) {
 	withMemCgroupFactory(t, func(int64) (memCgroup, error) { return fake, nil })
 
 	bin := buildChildProgramInPkg(t)
-	p := NewSubprocessProvider(SubprocessOptions{
+	p := NewSubprocessProvider(SubprocessOptions{Stages: allowStages(),
 		ExePath:   bin,
 		MaxMemory: 256 << 20,
 		Program:   "return 1;",
@@ -129,7 +129,7 @@ func TestCgroupReleasedAfterExecution(t *testing.T) {
 	withMemCgroupFactory(t, func(int64) (memCgroup, error) { return fake, nil })
 
 	bin := buildChildProgramInPkg(t)
-	p := NewSubprocessProvider(SubprocessOptions{
+	p := NewSubprocessProvider(SubprocessOptions{Stages: allowStages(),
 		ExePath:   bin,
 		MaxMemory: 256 << 20,
 		Program:   "return 1;",
@@ -158,7 +158,7 @@ func TestNoCgroupWhenNoMemoryLimit(t *testing.T) {
 	})
 
 	bin := buildChildProgramInPkg(t)
-	p := NewSubprocessProvider(SubprocessOptions{
+	p := NewSubprocessProvider(SubprocessOptions{Stages: allowStages(),
 		ExePath: bin,
 		Program: "return 1;",
 		Timeout: 10 * time.Second,

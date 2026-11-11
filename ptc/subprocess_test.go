@@ -19,7 +19,7 @@ import (
 
 // TestSubprocessProviderBasics 子进程后端的基本契约。
 func TestSubprocessProviderBasics(t *testing.T) {
-	p := NewSubprocessProvider(SubprocessOptions{})
+	p := NewSubprocessProvider(SubprocessOptions{Stages: allowStages()})
 	if p.ID() != SubprocessProviderID {
 		t.Errorf("ID=%q，应为 %q", p.ID(), SubprocessProviderID)
 	}
@@ -43,7 +43,7 @@ func TestSubprocessProviderBasics(t *testing.T) {
 // 若这里报支持，登记簿就会选中本后端，然后 Exec 因建不出 cgroup 而失败——
 // 宿主等到的却是「选了它却用不了」这种最难排查的形态。
 func TestSubprocessProviderWithMemoryConfigured(t *testing.T) {
-	p := NewSubprocessProvider(SubprocessOptions{MaxMemory: 256 << 20})
+	p := NewSubprocessProvider(SubprocessOptions{Stages: allowStages(), MaxMemory: 256 << 20})
 	// 零要求 → 支持（不要求内存上限就不受兜底能力约束）。
 	if !p.Supports(sandbox.Budget{}) {
 		t.Error("零要求应视为支持")
@@ -74,13 +74,13 @@ func TestSubprocessProviderWithMemoryConfigured(t *testing.T) {
 // 那里 `memLimitSupported()` 为 true，「没配」与「配了但兜不住」才分得开。
 // 反向对照见 TestSubprocessProviderWithMemoryConfigured。
 func TestSubprocessProviderWithoutMemoryConfigured(t *testing.T) {
-	p := NewSubprocessProvider(SubprocessOptions{})
+	p := NewSubprocessProvider(SubprocessOptions{Stages: allowStages()})
 	if p.Supports(sandbox.Budget{MaxMemory: 1 << 20}) {
 		t.Error("没配内存上限却声称能兑现，是撒谎")
 	}
 	// 反向对照：配了上限时的判定**只**取决于当前环境兜不兜得住。
 	// 在兜得住的环境（Linux + 可写 cgroup）上，这两条分支才分得开。
-	p2 := NewSubprocessProvider(SubprocessOptions{MaxMemory: 256 << 20})
+	p2 := NewSubprocessProvider(SubprocessOptions{Stages: allowStages(), MaxMemory: 256 << 20})
 	got := p2.Supports(sandbox.Budget{MaxMemory: 1 << 20})
 	if got != memLimitSupported() {
 		t.Errorf("配了上限时的判定=%v，应等于当前环境能力=%v", got, memLimitSupported())
@@ -91,7 +91,7 @@ func TestSubprocessProviderWithoutMemoryConfigured(t *testing.T) {
 //
 // 「漏声明得到的是兜不住，不是兜得住」——保守的那一侧。
 func TestSubprocessProviderUnsetMemoryNotSupported(t *testing.T) {
-	p := NewSubprocessProvider(SubprocessOptions{})
+	p := NewSubprocessProvider(SubprocessOptions{Stages: allowStages()})
 	if p.Supports(sandbox.Budget{MaxMemory: 1 << 20}) {
 		t.Error("没配内存上限时不应声称兑现内存")
 	}
@@ -229,45 +229,45 @@ func TestSubprocessEffectiveBudget(t *testing.T) {
 	}{
 		{
 			name:      "请求零值沿用装配期（缺省归一）",
-			opts:      SubprocessOptions{},
+			opts:      SubprocessOptions{Stages: allowStages()},
 			req:       sandbox.Budget{},
 			wantClock: DefaultTimeout, wantCalls: DefaultMaxCalls, wantBytes: DefaultMaxBytes,
 		},
 		{
 			name:      "请求更紧的墙钟被采纳",
-			opts:      SubprocessOptions{Timeout: 30 * time.Second, MaxCalls: 50, MaxBytes: 4096},
+			opts:      SubprocessOptions{Stages: allowStages(), Timeout: 30 * time.Second, MaxCalls: 50, MaxBytes: 4096},
 			req:       sandbox.Budget{WallClock: time.Second},
 			wantClock: time.Second, wantCalls: 50, wantBytes: 4096,
 		},
 		{
 			name:      "请求更紧的调用数与字节被采纳",
-			opts:      SubprocessOptions{Timeout: 30 * time.Second, MaxCalls: 50, MaxBytes: 4096},
+			opts:      SubprocessOptions{Stages: allowStages(), Timeout: 30 * time.Second, MaxCalls: 50, MaxBytes: 4096},
 			req:       sandbox.Budget{MaxCalls: 2, MaxBytes: 128},
 			wantClock: 30 * time.Second, wantCalls: 2, wantBytes: 128,
 		},
 		{
 			name:      "请求更宽不放大（安全方向）",
-			opts:      SubprocessOptions{Timeout: time.Second, MaxCalls: 2, MaxBytes: 128},
+			opts:      SubprocessOptions{Stages: allowStages(), Timeout: time.Second, MaxCalls: 2, MaxBytes: 128},
 			req:       sandbox.Budget{WallClock: time.Hour, MaxCalls: 9999, MaxBytes: 1 << 20},
 			wantClock: time.Second, wantCalls: 2, wantBytes: 128,
 		},
 		{
 			name:      "内存取严：请求更紧被采纳",
-			opts:      SubprocessOptions{Timeout: time.Second, MaxCalls: 5, MaxBytes: 512, MaxMemory: 256 << 20},
+			opts:      SubprocessOptions{Stages: allowStages(), Timeout: time.Second, MaxCalls: 5, MaxBytes: 512, MaxMemory: 256 << 20},
 			req:       sandbox.Budget{MaxMemory: 64 << 20},
 			wantClock: time.Second, wantCalls: 5, wantBytes: 512,
 			wantMemory: 64 << 20,
 		},
 		{
 			name:      "内存取严：请求更宽不放大",
-			opts:      SubprocessOptions{Timeout: time.Second, MaxCalls: 5, MaxBytes: 512, MaxMemory: 64 << 20},
+			opts:      SubprocessOptions{Stages: allowStages(), Timeout: time.Second, MaxCalls: 5, MaxBytes: 512, MaxMemory: 64 << 20},
 			req:       sandbox.Budget{MaxMemory: 1 << 30},
 			wantClock: time.Second, wantCalls: 5, wantBytes: 512,
 			wantMemory: 64 << 20,
 		},
 		{
 			name:      "内存：后端没配而请求了 ⇒ 按请求（不退回不设上限）",
-			opts:      SubprocessOptions{Timeout: time.Second, MaxCalls: 5, MaxBytes: 512},
+			opts:      SubprocessOptions{Stages: allowStages(), Timeout: time.Second, MaxCalls: 5, MaxBytes: 512},
 			req:       sandbox.Budget{MaxMemory: 32 << 20},
 			wantClock: time.Second, wantCalls: 5, wantBytes: 512,
 			wantMemory: 32 << 20,

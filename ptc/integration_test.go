@@ -47,7 +47,7 @@ func TestDerivedSignatureRunsInPTC(t *testing.T) {
 	}
 
 	// 只给必填：可选槽位不应出现。
-	r := ptc.Run(context.Background(), `return host.get_logs("h1")`, []ptc.Binding{bind}, ptc.Options{})
+	r := ptc.Run(context.Background(), `return host.get_logs("h1")`, []ptc.Binding{bind}, ptc.Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("派生形态应可用，实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -56,7 +56,7 @@ func TestDerivedSignatureRunsInPTC(t *testing.T) {
 	}
 
 	// 给到中间那个可选：应按签名序落到正确键上。
-	r = ptc.Run(context.Background(), `return host.get_logs("h1", 30)`, []ptc.Binding{bind}, ptc.Options{})
+	r = ptc.Run(context.Background(), `return host.get_logs("h1", 30)`, []ptc.Binding{bind}, ptc.Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("实得 %q / %q", r.ErrorKind, r.Error)
 	}
@@ -67,7 +67,7 @@ func TestDerivedSignatureRunsInPTC(t *testing.T) {
 	// 少传必填：必须被拦下，且不得触达绑定。
 	hits := 0
 	bind.Call = func(context.Context, string) (string, error) { hits++; return "x", nil }
-	r = ptc.Run(context.Background(), `return host.get_logs()`, []ptc.Binding{bind}, ptc.Options{})
+	r = ptc.Run(context.Background(), `return host.get_logs()`, []ptc.Binding{bind}, ptc.Options{Stages: allowStages()})
 	if r.OK {
 		t.Fatal("必填缺失应被拒")
 	}
@@ -110,7 +110,7 @@ func TestDerivedSignatureIsAccepted(t *testing.T) {
 			got = argsJSON
 			return "x", nil
 		},
-	}}, ptc.Options{})
+	}}, ptc.Options{Stages: allowStages()})
 	if !r.OK {
 		t.Fatalf("派生形态应被 ptc 接受，实得 kind=%q err=%q", r.ErrorKind, r.Error)
 	}
@@ -128,7 +128,7 @@ func TestMismatchedSignatureRejected(t *testing.T) {
 	r := ptc.Run(context.Background(), `return 1`, []ptc.Binding{{
 		Name: "get_logs", Signature: "other_name(h)",
 		Call: func(context.Context, string) (string, error) { return "x", nil },
-	}}, ptc.Options{})
+	}}, ptc.Options{Stages: allowStages()})
 	if r.OK || r.ErrorKind != "binding_signature" {
 		t.Fatalf("函数名与绑定名不一致的形态必须被拒，实得 OK=%v kind=%q", r.OK, r.ErrorKind)
 	}

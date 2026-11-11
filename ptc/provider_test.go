@@ -30,7 +30,7 @@ func TestProviderExecRunsProgram(t *testing.T) {
 		return "OUT<" + args + ">", nil
 	}}
 	reg := sandbox.NewRegistry()
-	if err := reg.Register(Provider{Bindings: []Binding{bind}}); err != nil {
+	if err := reg.Register(Provider{Bindings: []Binding{bind}, Stages: allowStages()}); err != nil {
 		t.Fatalf("登记失败: %v", err)
 	}
 	out, err := sandbox.Execute(context.Background(), reg, sandbox.LevelProcess,
