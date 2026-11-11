@@ -77,6 +77,13 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		if seen[r.ID] {
 			add(policyPath, 0, "规则 id %q 重复：两条规则共用一个 id，豁免与警告都无法定位到具体哪条", r.ID)
 		}
+		// 与内置规则重名：例外按「rule + path + line」三元组豁免，两条判定共用一个
+		// id ⇒ 一条例外会同时落到两条判定上，豁免不再精确（且 built-in 的 severity
+		// 恒定覆盖 policy 的声明，写在这里的那条 severity 是装饰）。
+		if isBuiltinRule(r.ID) {
+			add(policyPath, 0, "规则 id %q 与内置规则重名：内置判定由执行体恒定实现，"+
+				"policy 里的这条同名规则既不生效、又会与它共用豁免键", r.ID)
+		}
 		seen[r.ID] = true
 
 		// 没有执行体的规则 = 永远判不了的规则。旧实现把它当「声明面字段」
@@ -329,11 +336,34 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 	}
 
 	// ── 例外登记的完整性 ──
+	// 「规则存在」的口径 = policy rules 段的 id ∪ 内置规则 id。
+	//
+	// 为什么必须并上内置的：内置规则（未受管逃逸门禁、门包门禁、依赖方向门禁等）
+	// 不在 rules 段里——它们由本执行体实现或由 policy 的段驱动。旧口径只看 rules 段，
+	// 于是宿主照着本执行体的指引（「确需逃逸时在 policy 的 exceptions 里显式登记
+	// 豁免与拆除条件」）去登记 PTC 逃逸口的豁免时，自校验反而报它「指向不存在的
+	// 规则」——照着指引做就红。而恒开门禁恰恰是最需要豁免的那几条。
+	knownRules := make(map[string]bool, len(seen)+len(builtinRuleIDs))
+	for id := range seen {
+		knownRules[id] = true
+	}
+	for _, id := range builtinRuleIDs {
+		knownRules[id] = true
+	}
 	for _, ex := range pol.Exceptions {
-		if ex.Rule == "" {
+		switch {
+		case ex.Rule == "":
 			add(policyPath, 0, "例外登记缺少 rule 字段：无法定位它豁免的是哪条规则")
-		} else if !seen[ex.Rule] {
+		case ex.Rule == selfCheckRuleID:
+			// 自校验是豁免机制的**前置条件**：豁免它等于让任何声明都能静音——
+			// 包括「这条豁免登记本身不合法」这件事。故它不可豁免。
+			add(policyPath, 0, "例外登记不得豁免自校验规则 %q：自校验是豁免机制的前置条件，"+
+				"豁免它等于让任何声明都能静音（含「这条豁免本身不合法」）", ex.Rule)
+		case !knownRules[ex.Rule]:
 			add(policyPath, 0, "例外登记指向不存在的规则 %q：它豁免的东西无从查证", ex.Rule)
+		case isBuiltinRule(ex.Rule) && !builtinRuleEnforced(pol, ex.Rule):
+			add(policyPath, 0, "例外登记指向的规则 %q 当前不在判（该段被显式关闭或该判定面不存在）："+
+				"这条豁免今天什么都没豁免，却会在将来那条规则被启用时无声地开始生效", ex.Rule)
 		}
 		if ex.Until == "" {
 			add(policyPath, 0, "例外登记（%s %s:%d）缺少 until 字段：写不出到期日的例外等于永久豁免", ex.Rule, ex.Path, ex.Line)
