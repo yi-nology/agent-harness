@@ -1,5 +1,9 @@
 // Package pgstore 副作用闸 / 任务认领面 / 进度快照的 **PostgreSQL 参考实现**。
 //
+// 生命周期: Experimental（v0.33.0 定级）——参考实现，随契约套件与参考部署
+// 演进，不承诺任何兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级
+// 规则见 docs/api-compat.md。
+//
 // # 它是什么、不是什么
 //
 // 这是 examples 里的**参考实现**，不是内核依赖：内核（sideeffect / taskboard /

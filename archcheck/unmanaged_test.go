@@ -135,3 +135,229 @@ func New() ptc.Options { return ptc.Options{AllowUnmanaged: flag} }
 		t.Fatalf("配置驱动的逃逸也必须被报出，实得 %v", textsOf(vs))
 	}
 }
+
+// ── 赋值路径（v0.33.0，issue #92）────────────────────────────────────────
+//
+// 字面量判据判不出 `opts.AllowUnmanaged = …`（没有复合字面量）——而那正是
+// 生产代码最常见的写法。下列用例逐格钉住 AST 级类型追踪：注入即红；
+// 宿主自建同名字段不误伤（类型感知换「报得准」）。
+
+// TestUnmanagedEscapeCatchesAssignment 负例（issue #92 核心形态）：
+// 变量赋值开启逃逸口 ⇒ 红。
+func TestUnmanagedEscapeCatchesAssignment(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{
+		"app/app.go": `package app
+
+import "github.com/yi-nology/goagent-kernel/ptc"
+
+var opts ptc.Options
+
+func Setup() {
+	opts.AllowUnmanaged = true
+}
+`,
+	})
+	vs, err := unmanagedEscapeViolations(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsText(vs, "赋值选择了未受管执行") {
+		t.Fatalf("赋值路径的逃逸必须被报出，实得 %v", textsOf(vs))
+	}
+}
+
+// TestUnmanagedEscapeCatchesConfigDrivenAssignment 配置驱动路径：
+// 值来自配置（非字面量）同样红——判据按赋值路径判，不按值判。
+func TestUnmanagedEscapeCatchesConfigDrivenAssignment(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{
+		"app/app.go": `package app
+
+import "github.com/yi-nology/goagent-kernel/ptc"
+
+type Cfg struct{ Unmanaged bool }
+
+func Setup(cfg Cfg) {
+	opts := &ptc.Options{}
+	opts.AllowUnmanaged = cfg.Unmanaged
+}
+`,
+	})
+	vs, err := unmanagedEscapeViolations(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsText(vs, "赋值选择了未受管执行") {
+		t.Fatalf("配置驱动的赋值逃逸必须被报出，实得 %v", textsOf(vs))
+	}
+}
+
+// TestUnmanagedEscapeCatchesStructFieldAndEmbedding 结构体字段链与嵌入：
+// `cfg.O.AllowUnmanaged = …` 与嵌入提升后的 `cfg.AllowUnmanaged = …` 都红。
+func TestUnmanagedEscapeCatchesStructFieldAndEmbedding(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{
+		"app/app.go": `package app
+
+import "github.com/yi-nology/goagent-kernel/ptc"
+
+type ServerConfig struct {
+	PTC ptc.Options
+}
+
+type EmbeddedConfig struct {
+	ptc.Options
+}
+
+func touch(cfg *ServerConfig, emb EmbeddedConfig) {
+	cfg.PTC.AllowUnmanaged = true
+	emb.AllowUnmanaged = true
+}
+`,
+	})
+	vs, err := unmanagedEscapeViolations(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 2 {
+		t.Fatalf("字段链与嵌入两条赋值都应被报出，实得 %d: %v", len(vs), textsOf(vs))
+	}
+}
+
+// TestUnmanagedEscapeCatchesContainerElement 容器元素：`[]ptc.Options` 的
+// 元素字段赋值也红。
+func TestUnmanagedEscapeCatchesContainerElement(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{
+		"app/app.go": `package app
+
+import "github.com/yi-nology/goagent-kernel/ptc"
+
+func Setup() []ptc.Options {
+	opts := []ptc.Options{{}}
+	opts[0].AllowUnmanaged = true
+	return opts
+}
+`,
+	})
+	vs, err := unmanagedEscapeViolations(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsText(vs, "赋值选择了未受管执行") {
+		t.Fatalf("容器元素路径的逃逸必须被报出，实得 %v", textsOf(vs))
+	}
+}
+
+// TestUnmanagedEscapeCatchesCrossFileAssignment 包级变量跨文件赋值：
+// 声明在 a.go、赋值在 b.go——按目录（包）收变量，不漏。
+func TestUnmanagedEscapeCatchesCrossFileAssignment(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{
+		"app/a.go": `package app
+
+import "github.com/yi-nology/goagent-kernel/ptc"
+
+var opts ptc.Options
+`,
+		"app/b.go": `package app
+
+func Setup() {
+	opts.AllowUnmanaged = true
+}
+`,
+	})
+	vs, err := unmanagedEscapeViolations(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsText(vs, "赋值选择了未受管执行") {
+		t.Fatalf("跨文件赋值必须被报出，实得 %v", textsOf(vs))
+	}
+}
+
+// TestUnmanagedEscapeIgnoresOwnStructAssignment **不误伤**：宿主自建的
+// 同名字段不是本包的逃逸口——类型感知的收益就在这里（字段名一样、类型不同）。
+func TestUnmanagedEscapeIgnoresOwnStructAssignment(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{
+		"app/app.go": `package app
+
+type Opts struct{ AllowUnmanaged bool }
+
+func Setup(o *Opts) {
+	o.AllowUnmanaged = true
+}
+`,
+	})
+	vs, err := unmanagedEscapeViolations(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 0 {
+		t.Fatalf("宿主自建的同名字段不该被拦，实得 %v", textsOf(vs))
+	}
+}
+
+// TestUnmanagedEscapeBlindSpotIsDocumented 盲区形态（静态不可溯的接收方）
+// 不报——这条钉的是「判据的量纲」：它对不可溯形态失明是**设计选择**
+// （换来的是不误伤宿主自建字段），写下来才不会有人把它当成全量覆盖。
+func TestUnmanagedEscapeBlindSpotIsDocumented(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{
+		"app/app.go": `package app
+
+import "github.com/yi-nology/goagent-kernel/ptc"
+
+func newOpts() *ptc.Options { return &ptc.Options{} }
+
+func Setup() {
+	o := newOpts()
+	o.AllowUnmanaged = true
+}
+`,
+	})
+	vs, err := unmanagedEscapeViolations(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 字面量判据仍会抓住 newOpts 里的复合字面量形态（无 AllowUnmanaged 键，
+	// 不报）；赋值判据对「函数返回值」失明——盲区在案。
+	if containsText(vs, "赋值选择了未受管执行") {
+		t.Fatalf("赋值判据对静态不可溯的接收方应不报（盲区已写明），实得 %v", textsOf(vs))
+	}
+}
+
+// TestUnmanagedEscapeAssignmentBlocksRun 门禁级反向验证（issue #92 验收）：
+// 注入赋值形态的夹具 ⇒ 整个 archcheck.Run 的结果必须判为阻断
+// （cmd/archcheck 对 HasBlocking 退出码 1——见 cmd/archcheck/main.go）。
+func TestUnmanagedEscapeAssignmentBlocksRun(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{
+		"app/app.go": `package app
+
+import "github.com/yi-nology/goagent-kernel/ptc"
+
+var opts ptc.Options
+
+func Setup() {
+	opts.AllowUnmanaged = true
+}
+`,
+	})
+	vs, err := unmanagedEscapeViolations(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) == 0 {
+		t.Fatal("无违规：注入的赋值形态必须让门禁报红")
+	}
+	for _, v := range vs {
+		if v.Rule != unmanagedEscapeRuleID {
+			t.Fatalf("违规应挂在 %s 下，实得 %q", unmanagedEscapeRuleID, v.Rule)
+		}
+	}
+	// 违规计入阻断集（severity=error，见 archcheck.go 的 sevOf），宿主 CLI
+	// 据 HasBlocking 退出非 0——这里断言链路前端：违规存在且属阻断规则。
+}

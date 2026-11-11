@@ -1,6 +1,10 @@
 // Command pgsmoke 参考部署的**冒烟入口**：一个宿主进程连上 PostgreSQL，
 // 把副作用闸 + 栅栏下游 + 任务认领的关键判据各走一遍，全部通过即退出 0。
 //
+// 生命周期: Experimental（v0.33.0 定级）——部署冒烟入口，随参考部署演进，
+// 不承诺任何兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // docker compose 的 smoke 服务跑它（examples/docker-compose.yml），一条命令
 // 起「PostgreSQL + 参考宿主」并跑通冒烟。它不是测试替代品——完整契约判定
 // 在 go test ./examples/pgstore/（compose 的 contract 服务 / make integration）；

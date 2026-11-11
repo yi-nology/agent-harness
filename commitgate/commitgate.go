@@ -1,5 +1,10 @@
 // Package commitgate 环节终态的独占提交闸：同一环节的终态只允许被提交一次。
 //
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+//
 // # 它防的是什么
 //
 // 本仓的 statemachine 是**纯谓词**：CanTransition / MustTransition 只回答

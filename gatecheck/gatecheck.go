@@ -1,5 +1,9 @@
 // Package gatecheck 审批层与沙箱层的**联合判据**。
 //
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // # 它补的是哪一段
 //
 // Codex 的安全模型是**两层**：沙箱强制（技术上能做什么）+ 审批策略

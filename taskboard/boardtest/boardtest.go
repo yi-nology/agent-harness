@@ -1,5 +1,9 @@
 // Package boardtest @@Board@@ 的**共享契约测试套件**。
 //
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // 宿主写完存储实现后跑一遍：违反哪条契约就红在哪一条，免得「各判一套、
 // 漂移到没人发现为止」（与 @sidetest@ 同一范式）。
 //

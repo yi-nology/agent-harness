@@ -19,10 +19,19 @@
 // 那种形态（「这个部署可能跑未受管执行」）。故按**字段出现**判：
 // 生产代码要表达这个意图，就得先在 policy 里显式登记豁免。
 //
+// # 赋值路径（v0.33.0，issue #92）
+//
+// 「字段出现」只看复合字面量，`opts.AllowUnmanaged = true`（变量赋值）与
+// `opts.AllowUnmanaged = cfg.Unmanaged`（配置驱动）从它眼里溜过去。第二道
+// 判据在 unmanaged_assign.go：AST 级类型追踪（go/types 的等价手段），对
+// 持有着 ptc 逃逸类型的变量做该字段的**赋值**即报——同样不按值判。
+// 接收方类型静态不可溯的形态（接口 / 无类型返回值 / 深层容器）仍是盲区，
+// 但宿主自建的同名字段也因此不误报——报得准，规则才不会被习惯性忽略。
+//
 // # 这条门禁判不了什么（写明，而不是假装覆盖）
 //
-//   - 判不了通过**变量赋值**开启逃逸口的情形：`opts.AllowUnmanaged = true`
-//     里的 opts 类型要靠 go/types 推导，AST 拿不到。
+//   - 判不了接收方类型**静态不可溯**的赋值：经接口、无类型标注的函数返回值、
+//     深层容器元素流转过来的值（unmanaged_assign.go 头注写明口径）。
 //   - 判不了宿主**自建**的同名结构体字段（那不是本包的逃逸口）。
 package archcheck
 
@@ -50,7 +59,24 @@ var unmanagedEscapeTypes = map[string]bool{
 const unmanagedEscapeField = "AllowUnmanaged"
 
 // unmanagedEscapeViolations 判生产代码里是否显式选择了未受管执行。
+//
+// 两道判据同报一个规则：字面量（本函数，按「复合字面量里的字段出现」判）
+// 与赋值（unmanagedAssignViolations，AST 级类型追踪后按「对逃逸类型持有者
+// 的字段赋值」判）。
 func unmanagedEscapeViolations(root string) ([]Violation, error) {
+	litVs, err := unmanagedLiteralViolations(root)
+	if err != nil {
+		return nil, err
+	}
+	assignVs, err := unmanagedAssignViolations(root)
+	if err != nil {
+		return nil, err
+	}
+	return append(litVs, assignVs...), nil
+}
+
+// unmanagedLiteralViolations 字面量判据：复合字面量里的逃逸字段出现即报。
+func unmanagedLiteralViolations(root string) ([]Violation, error) {
 	fset := token.NewFileSet()
 	dirs, err := packageDirs(root, nil)
 	if err != nil {

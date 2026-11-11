@@ -1,5 +1,9 @@
 // otelmap.go —— 轨迹行 → OTel 属性的**契约表**（属性名 / 来源字段 / 取值域 / 基数上界）。
 //
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // # 为什么单独一张表
 //
 // otel.go 的映射函数回答「这一行导出去长什么样」，这张表回答「**宿主可以依赖什么**」。
@@ -91,8 +95,9 @@ var AttrSpecs = []AttrSpec{
 		Source: "Row.Kind",
 		Domain: Domain{Kind: "string", Values: []string{
 			string(KindTurn), string(KindStep), string(KindToolCall), string(KindToolResult),
+			string(KindSideEffect), string(KindCheckpoint),
 		}},
-		Card:      Cardinality{Max: 4, Why: "Kind 词表固定四值（与 Span.Name 同一词表：新增类目必须同步这里与用例）"},
+		Card:      Cardinality{Max: 6, Why: "Kind 词表固定六值（与 Span.Name 同一词表：新增类目必须同步这里与用例）"},
 		LabelSafe: true,
 	},
 	{
@@ -155,6 +160,62 @@ var AttrSpecs = []AttrSpec{
 		Source: "Row.Summary（可由 Options.Summarize 覆盖）",
 		Domain: Domain{Kind: "string", Note: "宿主注入的展示文案；内核默认标签不含任何领域词"},
 		Card:   Cardinality{Why: "自由文本，本仓定不出上界"},
+	},
+	// ── 副作用行（v0.33.0，issue #99）：「这个副作用到底施加了吗」的属性面 ──
+	{
+		Name:   AttrSideEffectKey,
+		Source: "Row.SideEffectKey（仅副作用行）",
+		Domain: Domain{Kind: "string", Note: "幂等键：一个逻辑动作一个值（宿主构造，须稳定）；同 Key 的授予段/对账段/点观察共用一个行标识，宿主跨 span join 用"},
+		Card:   Cardinality{Why: "动作数无上界（随运行规模增长）"},
+	},
+	{
+		Name:   AttrSideEffectPhase,
+		Source: "Row.SideEffectPhase（仅副作用行）",
+		Domain: Domain{Kind: "string", Values: []string{
+			string(SideEffectGranted), string(SideEffectCompleted), string(SideEffectAbandoned),
+			string(SideEffectUncertain), string(SideEffectResolvedApplied), string(SideEffectResolvedCleared),
+			string(SideEffectReplayed), string(SideEffectContended),
+		}},
+		Card:      Cardinality{Max: 8, Why: "Phase 词表固定八值（授予/施加/放弃/转未知/裁决两态/两个点观察；与 sideeffect 的 Outcome 词表同源，新增须同步这里与用例）"},
+		LabelSafe: true,
+	},
+	{
+		Name:   AttrSideEffectResource,
+		Source: "Row.SideEffectResource（仅副作用行）",
+		Domain: Domain{Kind: "string", Note: "目标资源标识：租约的独占单位（宿主定义）"},
+		Card:   Cardinality{Why: "资源数由宿主的领域决定，本仓定不出上界"},
+	},
+	{
+		Name:   AttrSideEffectFence,
+		Source: "Row.SideEffectFence（仅副作用行，且 >0；授予段与点行为才携带）",
+		Domain: Domain{Kind: "int64", Note: "栅栏令牌：同一资源上单调递增的代数，由存储侧在原子操作里分配"},
+		Card:   Cardinality{Why: "随接管次数增长，本仓定不出上界"},
+	},
+	{
+		Name:      AttrSideEffectSafety,
+		Source:    "Row.SideEffectSafety（仅副作用行，且非空——空声明不写，不替宿主补默认值）",
+		Domain:    Domain{Kind: "string", Values: []string{"unknown", "safe", "unsafe"}},
+		Card:      Cardinality{Max: 3, Why: "与 sideeffect.RetrySafety 的 String() 逐字一致（unknown=未声明，沉默按最弱处理）"},
+		LabelSafe: true,
+	},
+	// ── 快照行（v0.33.0，issue #99）：「恢复点停在哪个序号」的属性面 ──
+	{
+		Name:   AttrCheckpointRunID,
+		Source: "Row.CheckpointRunID（仅快照行）",
+		Domain: Domain{Kind: "string", Note: "编排运行标识（宿主分配，须稳定且可跨进程重建）"},
+		Card:   Cardinality{Why: "运行数随宿主的编排规模增长，本仓定不出上界"},
+	},
+	{
+		Name:   AttrCheckpointSeq,
+		Source: "Row.CheckpointSeq（仅快照行，且 >0——seq=0 的快照不是一次真实提交）",
+		Domain: Domain{Kind: "int64", Note: "快照序号：同一 RunID 下严格递增（存储侧 CAS 判据）"},
+		Card:   Cardinality{Why: "随步骤推进次数增长，本仓定不出上界"},
+	},
+	{
+		Name:   AttrCheckpointStatus,
+		Source: "Row.CheckpointStatus（仅快照行，且非空）",
+		Domain: Domain{Kind: "string", Note: "快照的编排状态：取值域**应当**是 contract 包的状态常量集（created/running/waiting_approval/succeeded/failed/cancelled/timed_out），但值由宿主写入快照——本仓保证不了宿主不写别的，故不列 Values、不标 label-safe（对宿主写面的保证不该由本包代签）"},
+		Card:   Cardinality{Why: "词表本身七值，但写入面在宿主，本仓给不出可保证的上界"},
 	},
 }
 

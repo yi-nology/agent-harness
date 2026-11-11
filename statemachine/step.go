@@ -1,4 +1,10 @@
 // Package statemachine 环节状态机（PHASE1_PLAN §6.2）：合法转移表硬编码 + 全覆盖单测。
+//
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+//
 // 所有状态迁移走条件 UPDATE（repo 层），影响行数=0 即竞态失败——standalone/cluster 同一写法。
 package statemachine
 

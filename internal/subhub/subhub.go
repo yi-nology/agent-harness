@@ -1,5 +1,9 @@
 // Package subhub 是「快照式订阅表」的**唯一实现**（本仓内部件，不进公开 API）。
 //
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // # 它替掉了什么
 //
 // 这段机制此前在本仓有三份**近乎逐字相同**的实现：`netguard/subscribe.go`、

@@ -1,0 +1,231 @@
+# goagent-kernel API 生命周期清单
+#
+# 双面设计（与 architecture-policy.yaml 同一条思路）：本文件既是「声明面」
+# （每个生产包的稳定性分级 + 定级理由，供宿主与 AI 对齐），也是「可执行面」
+# （由 `make apilifecheck`（cmd/apilifecheck）逐条校验，违反即非零退出）：
+#
+#   1. 清单里登记的每个包，其**包注释标记**必须与本清单的 level 一致——
+#      「文档里写了但代码里没改」的漂移在门禁处变红；
+#   2. 清单必须覆盖**全部生产包**（新增包不登记 = 门禁报「未登记」，
+#      与 docsync 的「未登记包」判定同向）；
+#   3. Deprecated 条目必须给 replacement（完整符号路径），且该符号
+#      必须真实存在——替代指向指到不存在的符号等于没有迁移路径。
+#
+# 分级判定规则（什么算 breaking，全文见 docs/api-compat.md）：
+#
+#   breaking = 改已有导出符号的签名 / 改可观测语义 / 改默认值 / 删导出符号。
+#   - Experimental：可随时改、删、拆，不承诺任何兼容；升级风险自负。
+#   - Stable：只允许 additive（新增导出符号、新增方法且给零值默认实现、
+#     新增错误值）；上述四类 breaking 一律不得发生。
+#   - Deprecated：本身仍按 Stable 兼容，但必须给替代符号与迁移路径；
+#     删除只发生在 minor 版本边界，且 CHANGELOG 必须带 BREAKING 段。
+#
+# 纪律：
+#   - 新增生产包 ⇒ 本清单同步登记 + 包注释打标记（AI-GUIDE 任务 A 已写）；
+#   - reason 每条必填——定级是一份承诺，没有理由的承诺无从复核；
+#   - 门面包用 follows_upstream 指向上游模块：这些包「标 Stable」的含义是
+#     调用面稳定，判据语义**跟随上游**演进（门禁会校验该包真的 import 它）。
+
+version: 1
+
+packages:
+  # ── 核心契约面（Stable：编排引擎与宿主状态的唯一边界，只增不改）──
+  - pkg: contract
+    level: Stable
+    since: v0.33.0
+    reason: 编排运行契约（纯接口面）。包注释已有「方法集只增不改」的稳定承诺，本清单把它升级成机器可判的声明。
+  - pkg: statemachine
+    level: Stable
+    since: v0.33.0
+    reason: 环节状态机纯函数件，零依赖，2026-10-18 起未再改动——判据已冻结。
+  - pkg: protocol
+    level: Stable
+    since: v0.33.0
+    reason: 统一报告契约 + 五级容错解析。容错解析本身就是兼容承诺的本体（旧格式必须一直能读）。
+  - pkg: sideeffect
+    level: Stable
+    since: v0.33.0
+    reason: 副作用「至多一次」跨进程契约。v0.32/v0.33 两轮 BREAKING（结果未知态、执行意图）已落定，语义进入稳定段；共享契约套件 sidetest 随行。
+  - pkg: taskboard
+    level: Stable
+    since: v0.33.0
+    reason: 多 agent 协调面的存储中立契约。包虽年轻（2026-11-06 立包），但它是与 sideeffect 同批的核心契约面，本轮令牌铸造 BREAKING 已落定后定级。
+  - pkg: checkpoint
+    level: Stable
+    since: v0.33.0
+    reason: 编排续跑契约（进度快照 + 跨进程 CAS）。「续跑而非重放」三条不变量已定型；零值 = 旧口径逐字不变是明文承诺。
+  - pkg: commitgate
+    level: Stable
+    since: v0.33.0
+    reason: 环节终态独占提交闸。判据（凭证放闸/令牌释放）已定型，2026-10-19 后仅注释级改动。
+  - pkg: sidetest
+    level: Stable
+    since: v0.33.0
+    reason: sideeffect.Store 共享契约套件。场景集只增不减（additive），契约面 Stable 则套件判定口径随之稳定。
+
+  # ── 零依赖小判据（Stable：已冻结的单一真相）──
+  - pkg: toolname
+    level: Stable
+    since: v0.33.0
+    reason: 工具名 → JS 标识符的单一真相，96 行零依赖，生产/消费两侧共用判据已逐字钉死。
+  - pkg: pending
+    level: Stable
+    since: v0.33.0
+    reason: 多轮挂起态载体，73 行零依赖，编码/宽容解码口径冻结。
+  - pkg: ticket
+    level: Stable
+    since: v0.33.0
+    reason: 一次性短时授权票据，零依赖；过期判定与消费判定同处、时钟可注入，机制自洽且 2026-11-06 后未动。
+  - pkg: watchdog
+    level: Stable
+    since: v0.33.0
+    reason: 被动配对不变量监视，零依赖，只告警不裁决——没有可变的裁决语义。
+
+  # ── 门面包（Stable：调用面稳定，判据跟随上游）──
+  - pkg: dispatch
+    level: Stable
+    since: v0.33.0
+    follows_upstream: github.com/oagentkit/agent
+    reason: 门面（facades 段登记）。核心在 oagentkit/agent，本包只保 allow 矩阵与深度上限的调用面。
+  - pkg: policy
+    level: Stable
+    since: v0.33.0
+    follows_upstream: github.com/oagentkit/toolgate
+    reason: 门面（facades 段登记）。审批判据在 oagentkit/toolgate/guardx，本包是审计门与判定环的接线面。
+  - pkg: reminder
+    level: Stable
+    since: v0.33.0
+    follows_upstream: github.com/oagentkit/guardx
+    reason: 门面（核心在 guardx/injectband）。宿主调用点一行不动是明文承诺。
+  - pkg: toolfail
+    level: Stable
+    since: v0.33.0
+    follows_upstream: github.com/oagentkit/guardx
+    reason: 门面（核心在 guardx/toolfail）。失败分类口径跨宿主必须一致，类型别名是编译期同一类型。
+  - pkg: sandbox
+    level: Stable
+    since: v0.33.0
+    follows_upstream: github.com/oagentkit/guardx
+    reason: 门面（核心在 guardx/sandbox）。档位语义与后端协议跨宿主必须一致。
+
+  # ── 判据已定型的机制包（Stable）──
+  - pkg: spill
+    level: Stable
+    since: v0.33.0
+    reason: 输出预算溢出三判据（提示契约/取回/按龄清理）已定型，2026-10-25 后未动。
+  - pkg: offload
+    level: Stable
+    since: v0.33.0
+    reason: 外置两阶段（先标记后替换）+ fail-soft 判据已定型。
+  - pkg: guardset
+    level: Stable
+    since: v0.33.0
+    reason: 守卫装配契约（Rank 定序/不可重试优先的保守裁决）已定型。
+  - pkg: retryplan
+    level: Stable
+    since: v0.33.0
+    reason: 三档重试路径组合判据已定型；上游 toolfail/sideeffect 均 Stable，耦合面受控。
+  - pkg: tooldisclose
+    level: Stable
+    since: v0.33.0
+    reason: 严格二分（未加载可重试 / 不在目录禁止绕过）已定型；检索打分是内部实现，不构成对外契约。
+  - pkg: eventbus
+    level: Stable
+    since: v0.33.0
+    reason: 进程内有损广播，持久化边界明文归宿主，2026-10-18 立包以来语义未变。
+  - pkg: delta
+    level: Stable
+    since: v0.33.0
+    reason: 增量节流（分片合并/权威整段/确定性收口）已冻结。
+  - pkg: drain
+    level: Stable
+    since: v0.33.0
+    reason: 优雅排水（轮取消脱钩/在途收敛/预算强制收刀）已定型。
+  - pkg: pii
+    level: Stable
+    since: v0.33.0
+    reason: 敏感面/处置策略注册表 + 单指针原子交换。注册表只增（additive），交换语义已定型。
+
+  # ── 仍在演进的包（Experimental：理由必填，升级风险自负）──
+  - pkg: budget
+    level: Experimental
+    since: v0.33.0
+    reason: 压实计划三重守卫刚落地，摘要生成与原文落盘仍是宿主接口——接口形状还会随宿主反馈调整。
+  - pkg: trajectory
+    level: Experimental
+    since: v0.33.0
+    reason: 投影行字段与工具调用配对状态仍随上游 runtime 事件流扩充，轮次模型未冻结。
+  - pkg: ptc
+    level: Experimental
+    since: v0.33.0
+    reason: v0.31/v0.33 两轮 BREAKING（缺省即拒绝、内存上限）都落在本包；VM 编排面仍在演进，2026-11-11 还在动。
+  - pkg: netguard
+    level: Experimental
+    since: v0.33.0
+    reason: 出站守卫与 egress 兑现链耦合，出口强制件两端仍空（GAP-20261107 的开项 P0），强制语义未定型。
+  - pkg: egress
+    level: Experimental
+    since: v0.33.0
+    reason: 三档单调可比已定，但兑现强度（Env/Verify 判据）两端仍空——P0 开着，定 Stable 为时过早。
+  - pkg: gatecheck
+    level: Experimental
+    since: v0.33.0
+    reason: 审批层×沙箱层的联合判据，语义跟随上游 guardx/toolgate 两层各自演进，联合口径还会动。
+  - pkg: preset
+    level: Experimental
+    since: v0.33.0
+    reason: 预设集随「档位×审批×出口」三件判据演进，三件其一未冻结则预设组合还会变。
+  - pkg: cmdpolicy
+    level: Experimental
+    since: v0.33.0
+    reason: 命令级判据（前缀 token 规则）2026-11-06 立包，危险形态清单是开放的，规则集还会扩。
+  - pkg: skilldisclose
+    level: Experimental
+    since: v0.33.0
+    reason: 三信号触发权重（点名>资源>描述）仍在校准，检索面未冻结。
+  - pkg: hookengine
+    level: Experimental
+    since: v0.33.0
+    reason: 判定面三件事已定义，但传输形态在上游（Codex/DSH）仍在分叉，匹配语义可能随之调整。
+  - pkg: memorypipe
+    level: Experimental
+    since: v0.33.0
+    reason: 记忆注入三段的边界刚划出，摘要策略与宿主磨合未完。
+  - pkg: delegate
+    level: Experimental
+    since: v0.33.0
+    reason: 异构委托契约三条刚立（2026-11-06），ACP 一类上游的线格式与能力语义仍在动。
+  - pkg: worktree
+    level: Experimental
+    since: v0.33.0
+    reason: 冲突判据刚落（重叠即冲突），挂载/隔离的宿主侧语义还会补。
+  - pkg: sessionref
+    level: Experimental
+    since: v0.33.0
+    reason: 跨会话引用的保鲜/失效判据 2026-11-06 立包，注入边界还在补。
+
+  # ── 门禁与内部件（Experimental：无对外兼容承诺，登记以保覆盖完整）──
+  - pkg: archcheck
+    level: Experimental
+    since: v0.33.0
+    reason: 架构门禁执行体，可被宿主复用（ADR-0002），但规则集随 policy 演进会增删——判据面本身不适合 Stable 承诺。
+  - pkg: internal/subhub
+    level: Experimental
+    since: v0.33.0
+    reason: internal 内部件，Go 可见性规则已挡住外部引用，无对外承诺；登记只为「清单覆盖全部生产包」判据不留暗角。
+  - pkg: taskboard/boardtest
+    level: Experimental
+    since: v0.33.0
+    reason: 任务板竞争测试场景集，随场景扩展；不是宿主依赖面。
+  - pkg: examples/reference-runtime
+    level: Experimental
+    since: v0.33.0
+    reason: 参考实现（package main）。示例演示契约怎么满足，不构成任何兼容承诺。
+  - pkg: examples/pgstore
+    level: Experimental
+    since: v0.33.0
+    reason: PostgreSQL 参考实现（issue #94 #84 #95）。参考实现不是内核依赖，随契约套件与参考部署演进，不构成任何兼容承诺。
+  - pkg: examples/pgstore/cmd/pgsmoke
+    level: Experimental
+    since: v0.33.0
+    reason: 部署冒烟入口（issue #105）。它的验收是 compose 冒烟 / make integration 真跑，不是稳定 API 面。

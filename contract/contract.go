@@ -1,5 +1,10 @@
 // Package contract 编排运行契约：编排引擎与宿主状态之间的**唯一边界**。
 //
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+//
 // ## 为什么需要这个包
 //
 // L2 抽取在 `flowEngine`（42 方法）处遇到硬墙，实测结论（详见 docs/SPLIT_PLAN.md §一.4）：

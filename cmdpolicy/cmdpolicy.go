@@ -1,5 +1,9 @@
 // Package cmdpolicy 命令级判据（机制面）。
 //
+// 生命周期: Experimental（v0.33.0 定级）——本包仍会改、删、拆，不承诺任何
+// 兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
+// docs/api-compat.md。
+//
 // # 它补的是判定面的**宽度**，不是深度
 //
 // 本仓的判定链已经覆盖「工具调用」这一层（policy / tooldisclose / watchdog），

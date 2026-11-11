@@ -1,4 +1,11 @@
 // Package dispatch 实现「权限即拓扑」：agent 间可达性由 allow 矩阵物理决定，
+//
+// 生命周期: Stable（v0.33.0 定级）——只允许 additive 变更（新增导出符号 /
+// 新增方法且给零值默认实现 / 新增错误值）；改签名、改语义、改默认值、
+// 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
+// 逐包理由见 api-lifecycle.yaml。
+// 本包是门面：调用面稳定，判据语义跟随上游 github.com/oagentkit/agent 演进。
+//
 // 矩阵在构建期物化、运行期只读，被拒绝的派发返回结构化 *DenyError。
 //
 // 守卫核心已下沉 oagentkit/agent/dispatch；本包只做两件事：

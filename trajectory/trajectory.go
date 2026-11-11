@@ -32,7 +32,6 @@
 package trajectory
 
 import (
-	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -53,6 +52,16 @@ const (
 	// KindToolResult 工具结果行：**只在结果没有对应调用时**出现——
 	// 配对缺口要显形，不能因为「没有调用行可挂」就把结果丢掉。
 	KindToolResult Kind = "tool_result"
+	// KindSideEffect 副作用行（v0.33.0，issue #99）：一次副作用动作的
+	// 授予 → 收口段（granted 起，completed/abandoned/uncertain 止），
+	// 以及该 Key 的对账段（uncertain 起，resolved 止）。排障第一问
+	// 「这个副作用到底施加了吗」的答案面。
+	KindSideEffect Kind = "sideeffect"
+	// KindCheckpoint 快照行（v0.33.0，issue #99）：一次编排进度快照的成功落库
+	// （checkpoint_committed）。**点事件**：无括号段，落成孤儿行（只有终点的行）
+	// ——没有实测时长就不写时长，不拿 0 冒充。排障第二问「恢复点停在哪个序号」
+	// 的答案面。
+	KindCheckpoint Kind = "checkpoint"
 )
 
 // Status 轨迹行的收口状态。
@@ -97,10 +106,13 @@ type Row struct {
 	// Kind 行类目。
 	Kind Kind
 	// ID 行标识：轮次行 "turn#1"；带环节号的步骤行 "step#7"；
-	// 工具行 "tool#<call_id>"；无自然键的行用 "step#-<seq>" 形式兜底
+	// 工具行 "tool#<call_id>"；副作用行 "sideeffect#<key>"（同 Key 的多段
+	// ——授予段、对账段——共用一个标识：它们是同一个动作的先后两段）；
+	// 快照行 "checkpoint#<run_id>#<seq>"；无自然键的行用 "step#-<seq>" 形式兜底
 	// （"-" 前缀表示「这个标识是投影生成的，不是业务自然键」）。
-	// 格式的唯一生成点是 turnRowID / stepRowID / toolRowID / seqID——otel 的
-	// 父子关系复用同一组函数，另写一份格式父子就会连不上。
+	// 格式的唯一生成点是 turnRowID / stepRowID / toolRowID / sideeffectRowID /
+	// checkpointRowID / seqID——otel 的父子关系复用同一组函数，另写一份格式
+	// 父子就会连不上。
 	ID string
 	// Turn 所属轮次序号（1 起）；轮次之外的事件为 0。
 	Turn int
@@ -112,6 +124,26 @@ type Row struct {
 	CallID string
 	// Tool 工具名（仅工具行）。
 	Tool string
+	// SideEffectKey 幂等键（仅副作用行；同 Key 的授予段与对账段共用它配对）。
+	SideEffectKey string
+	// SideEffectPhase 副作用阶段（仅副作用行）。打开的授予段为 granted；
+	// 收口时写成终态（completed / abandoned / uncertain）；对账段收口时写成
+	// resolved_applied / resolved_cleared；点行为 replayed / contended。
+	SideEffectPhase SideEffectPhase
+	// SideEffectResource 目标资源标识（仅副作用行；租约的独占单位）。
+	SideEffectResource string
+	// SideEffectFence 栅栏令牌（仅副作用行；授予段/点行为观察到的代数）。
+	SideEffectFence uint64
+	// SideEffectSafety 重试安全性声明（仅副作用行；取值域 unknown/safe/unsafe，
+	// 与 sideeffect.RetrySafety 的 String() 形态逐字一致）。
+	SideEffectSafety string
+	// CheckpointRunID 编排运行标识（仅快照行）。
+	CheckpointRunID string
+	// CheckpointSeq 快照序号（仅快照行；「恢复点停在哪个序号」的答案）。
+	CheckpointSeq uint64
+	// CheckpointStatus 快照的编排状态（仅快照行；取值域见 contract 的状态常量集，
+	// 本包不复制那份词表——引用而不是抄写，才不会漂出第二份真相）。
+	CheckpointStatus string
 	// StartAt 起始时刻（取自事件时刻；缺失时零值）。
 	StartAt time.Time
 	// EndAt 结束时刻（取自事件时刻；未收口时零值）。
@@ -181,21 +213,25 @@ type Projector struct {
 	mu   sync.Mutex
 	opts Options
 
-	rows   []Row          // 按创建顺序追加；下标 + 1 即行序号
-	tools  map[string]int // call_id → 行下标（一个 call_id 最多一行）
-	opens  []int          // 仍打开的步骤行下标（按创建顺序）
-	turn   int            // 当前轮次行下标（-1 = 尚未开轮）
-	turnNo int            // 已开轮次计数
-	seq    int            // 行序号计数
-	issues []Issue
+	rows       []Row          // 按创建顺序追加；下标 + 1 即行序号
+	tools      map[string]int // call_id → 行下标（一个 call_id 最多一行）
+	opens      []int          // 仍打开的步骤行下标（按创建顺序）
+	grants     map[string]int // 幂等键 → 打开中的副作用授予段行下标
+	reconciles map[string]int // 幂等键 → 打开中的副作用对账段行下标
+	turn       int            // 当前轮次行下标（-1 = 尚未开轮）
+	turnNo     int            // 已开轮次计数
+	seq        int            // 行序号计数
+	issues     []Issue
 }
 
 // NewProjector 构造投影器。
 func NewProjector(opts Options) *Projector {
 	return &Projector{
-		opts:  opts,
-		tools: map[string]int{},
-		turn:  -1,
+		opts:       opts,
+		tools:      map[string]int{},
+		grants:     map[string]int{},
+		reconciles: map[string]int{},
+		turn:       -1,
 	}
 }
 
@@ -323,6 +359,13 @@ func defaultSummary(r Row) string {
 			return string(r.Kind)
 		}
 		return string(r.Kind) + ":" + r.Tool
+	case KindSideEffect:
+		if r.SideEffectKey == "" {
+			return string(r.Kind)
+		}
+		return string(r.Kind) + ":" + r.SideEffectKey
+	case KindCheckpoint:
+		return r.ID
 	default:
 		return string(r.Kind)
 	}
@@ -344,20 +387,3 @@ func stepIDOf(ev eventbus.Event) (uint64, bool) {
 	}
 	return *ev.StepID, true
 }
-
-// seqID 生成无自然键的行的标识（"-" 前缀 = 投影生成，不是业务自然键）。
-func seqID(kind Kind, seq int) string {
-	return fmt.Sprintf("%s#-%d", kind, seq)
-}
-
-// 行标识的**唯一生成点**（与 seqID 同族）。
-//
-// 三个格式各有一个第二处消费者：otel 的 ParentID 必须与投影写出的 Row.ID 逐字相同，
-// 否则父子连不上——而连不上**不会报错**，导出器只会把那一行当根，trace 少一段。
-// 故格式只在这里写一次，投影与映射都调这几个函数。
-//
-// 唯一性的范围是**轮内**：环节号由调用方给定，同一环节号在两轮里各出现一次是合法的
-// （故 step#7 会出现在两个轮次里）。trace 边界因此定在轮，见 otel.go 头注。
-func turnRowID(turn int) string      { return fmt.Sprintf("turn#%d", turn) }
-func stepRowID(id uint64) string     { return fmt.Sprintf("step#%d", id) }
-func toolRowID(callID string) string { return "tool#" + callID }

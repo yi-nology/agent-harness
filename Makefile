@@ -293,6 +293,13 @@ integration: ## PG 契约套件 + SIGKILL e2e（compose 起 PostgreSQL；起不�
 docsync: ## README 包表 ↔ 仓库实际（生产行数 / 外部依赖）一致性门禁
 	$(EXPORT) $(GOENV) go run ./cmd/docsync
 
+apilifecheck: ## API 生命周期门禁（清单 ↔ 包注释 ↔ 生产包覆盖 ↔ 错误登记表，issue #113/#104）
+	@# 与 architecture-check / docsync 同一条纪律：声明面（api-lifecycle.yaml +
+	@# 包注释标记 + 错误语义总表）必须有机器判据，否则「文档里写了但代码里
+	@# 没改」的漂移没有任何信号。挂进 check 而不是 ci.yml 新 job——门禁本体
+	@# 在本仓的 Makefile 里，推送后才说话的门禁等于没有门禁。
+	$(EXPORT) $(GOENV) go run ./cmd/apilifecheck
+
 site: ## 构建 VuePress 文档站到 site/docs/.vuepress/dist（gen.mjs 先生成机器事实页，解析失败即退出）
 	cd site && (test -d node_modules || npm ci --no-audit --no-fund) && npm run docs:build
 
@@ -338,7 +345,7 @@ modwork: ## go.work / go.work.sum 不得入库（只应存在于本机）
 # 不挂到 ci.yml 上变回「推送后门禁」。
 ## 提交前门禁聚合。versioncheck 排在最前：工具版本不符时后面每条门禁的绿都不
 ## 代表「本仓合规」，先让它说话，免得红在别处、人往别处查。
-check: versioncheck fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync modreplace modwork
+check: versioncheck fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync apilifecheck modreplace modwork
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy
