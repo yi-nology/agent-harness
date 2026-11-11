@@ -189,10 +189,25 @@ make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令�
    > **覆盖率与其余描述性行仍是散文**（覆盖率刻意不判：它随「跑的是哪个用例集合」变），
    > 那几格改前请手算，别信上一版。
 
-5. **验收**：
+5. **`api-lifecycle.yaml` 登记 + 包注释标记**（issue #113，`make apilifecheck` 判）：
+
+   ```yaml
+   - pkg: 新包名
+     level: Experimental      # 或 Stable，判定规则见 docs/api-compat.md
+     since: v0.33.0
+     reason: 为什么定这个级（每条必填）
+   ```
+
+   - 并在包注释（package doc）里加一行 `// 生命周期: <级别>（vX.Y.Z 定级）`，
+     与清单 level 一致——两处不一致、或新增生产包没登记，都当场红；
+   - 分级语义与「什么算 breaking」见 [docs/api-compat.md](api-compat.md)；
+   - 新包若声明错误哨兵 / 导出错误类型，**同一提交**里登记进
+     [docs/error-semantics.md](error-semantics.md)（同门禁双向判定）。
+
+6. **验收**：
 
    ```bash
-   make architecture-check && make docsync && make test
+   make architecture-check && make docsync && make apilifecheck && make test
    ```
 
 **新包必带测试**：覆盖率门槛 `COV_MIN=60` 是真阈值，内核包新增必须带测试。
@@ -382,6 +397,7 @@ make check
 | `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）| 按报告的 goroutine 栈修共享状态；别把该目标改成 `CGO_ENABLED=0` |
 | `crossbuild` | 声明支持的平台（linux/amd64、linux/arm64、darwin/arm64）编不过 | 看是否引入了平台专属符号；windows **不在**矩阵内（上游 `procx` 用 unix syscall）|
 | `docsync` | README **包表** ↔ 仓库实际（包名 / 行数 / 依赖列 / 职责列）+ **「工程底座」表的三项确定性量**（生产行数 / 文件数 / 测试文件数，判相等不留容差）| 按报错给的实测值改 README；**覆盖率与其余描述性行不在判定面内**，那几格要自己手算 |
+| `apilifecheck` | API 生命周期四方一致性：`api-lifecycle.yaml` ↔ 包注释标记 ↔ 生产包覆盖（漏登记/幽灵登记）↔ Deprecated 替代指向存在性；外加错误哨兵登记表 ↔ 代码双向判等（issue #113/#104）| 新包补登记 + 包注释 `// 生命周期:` 标记；改级别两处同步；Deprecated 补真实存在的 replacement；新增哨兵登记进 `docs/error-semantics.md`；口径见 `docs/api-compat.md` |
 | `modreplace` | go.mod 含 `replace` | 改用 `make devlink` |
 | `modwork` | go.work / go.work.sum 被跟踪 | `git rm --cached` |
 

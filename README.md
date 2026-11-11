@@ -25,6 +25,9 @@
 > | [AGENTS.md](AGENTS.md) | 在本仓干活的工作纪律（每条纪律的事故来源） | 活文档 |
 > | [architecture-policy.yaml](architecture-policy.yaml) | 门禁**声明面**：模块拓扑 / 规则 / 阈值 / 例外 | 活文档（机器判定）|
 > | [CHANGELOG.md](CHANGELOG.md) | 版本历史与破坏性变更 | 活文档（按 tag 切段生成）|
+> | [api-lifecycle.yaml](api-lifecycle.yaml) | **API 生命周期清单**：每个生产包的 Experimental/Stable/Deprecated 定级 + 理由（机器判定） | 活文档（机器判定）|
+> | [docs/api-compat.md](docs/api-compat.md) | API 兼容策略：分级判定规则（什么算 breaking）/ 破坏性变更流程 / 宿主升级须知 | 活文档 |
+> | [docs/error-semantics.md](docs/error-semantics.md) | 全仓错误哨兵语义总表：哪个包哪个哨兵、触发条件、调用方处置（机器判定） | 活文档（机器判定）|
 > | [docs/adr/README.md](docs/adr/README.md) | 决策记录（ADR）索引：每条设计取舍的编号 / 一句话结论 / 状态 | **决策记录**（ADR）｜设计推导与取舍的真相源 |
 > | [docs/OAGENTKIT-OVERLAP.md](docs/OAGENTKIT-OVERLAP.md) | 本仓与上游 `oagentkit` 的能力边界：哪些该做、哪些上游已有 | 活文档 |
 > | [docs/SANDBOX-DESIGN-20261021.md](docs/SANDBOX-DESIGN-20261021.md) | 执行沙箱的下一层：跨域执行与资源兜底（发现「内存无兜底」真缺陷 + 与上游 guardx 的分工）| 活文档 |
