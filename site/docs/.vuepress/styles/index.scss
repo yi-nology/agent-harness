@@ -51,26 +51,48 @@
   border-bottom: 1px solid var(--vp-c-divider);
 }
 
-/* 首页 hero：径向光晕 + 标题渐变字（旧站 hero/.grad 同款） */
+/* 首页 hero：科技网格底 + 三层光晕（旧站配色语言的加强版） */
 .vp-hero {
-  background:
-    radial-gradient(1100px 460px at 18% -12%, rgb(88 166 255 / 16%), transparent 62%),
-    radial-gradient(900px 420px at 88% -6%, rgb(163 113 247 / 13%), transparent 60%);
+  background-image:
+    linear-gradient(rgb(255 255 255 / 3%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 3%) 1px, transparent 1px),
+    radial-gradient(1000px 440px at 18% -12%, rgb(88 166 255 / 18%), transparent 62%),
+    radial-gradient(880px 400px at 86% -6%, rgb(163 113 247 / 16%), transparent 60%),
+    radial-gradient(700px 380px at 50% 122%, rgb(64 196 255 / 10%), transparent 65%);
+  background-size: 44px 44px, 44px 44px, auto, auto, auto;
   border-bottom: 1px solid var(--vp-c-divider);
 }
 
 #main-title {
-  background: linear-gradient(96deg, #58a6ff, #a371f7 45%, #58a6ff 90%);
-  background-size: 200% auto;
+  font-size: clamp(38px, 5.4vw, 66px);
+  letter-spacing: -0.02em;
+  background: linear-gradient(100deg, #58a6ff 0%, #a371f7 28%, #d0b3ff 44%, #a371f7 60%, #58a6ff 100%);
+  background-size: 220% auto;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  text-shadow: 0 0 60px rgb(88 166 255 / 25%);
-  animation: grad-flow 7s linear infinite;
+  text-shadow: 0 0 70px rgb(88 166 255 / 22%);
+  animation: hero-rise 0.7s ease both, grad-flow 8s linear infinite;
 }
 
 @keyframes grad-flow {
-  to { background-position: 200% center; }
+  to { background-position: 220% center; }
+}
+
+/* 入场动效：标题 → 标语 → 按钮 依次浮起 */
+@keyframes hero-rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+.vp-hero-description {
+  font-size: 18px;
+  letter-spacing: 0.02em;
+  animation: hero-rise 0.7s 0.12s ease both;
+}
+
+.vp-hero-actions {
+  animation: hero-rise 0.7s 0.22s ease both;
 }
 
 /* hero 双光晕球：缓慢漂移（只动 transform，不引起重排） */
@@ -154,12 +176,20 @@
   box-shadow: 0 8px 24px rgb(163 113 247 / 20%) !important;
 }
 
-/* 首页压轴一句 + 导航胶囊 */
+/* 首页压轴横幅（渐变描边）+ 安装条 + 导航胶囊 */
 .home-punch {
+  max-width: 880px;
+  margin: 36px auto 16px;
+  padding: 24px 30px;
   text-align: center;
-  font-size: 1.2rem;
+  font-size: 1.15rem;
   color: var(--vp-c-text-mute);
-  margin: 4px 0 26px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--vp-c-bg-alt), var(--vp-c-bg-alt)) padding-box,
+    linear-gradient(96deg, rgb(88 166 255 / 55%), rgb(163 113 247 / 55%)) border-box;
+  box-shadow: 0 18px 46px rgb(0 0 0 / 25%);
 }
 
 .home-punch strong {
@@ -167,7 +197,26 @@
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  font-size: 1.45rem;
+  font-size: 1.4rem;
+  margin-right: 6px;
+}
+
+.home-install {
+  max-width: 480px;
+  margin: 0 auto 18px;
+  padding: 11px 18px;
+  text-align: center;
+  border-radius: 10px;
+  border: 1px solid var(--vp-c-border);
+  background: var(--vp-c-bg-elv);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13.5px;
+  color: #58a6ff;
+  box-shadow: 0 0 26px rgb(88 166 255 / 10%);
+}
+
+.home-install .prompt {
+  color: var(--vp-c-text-subtle);
   margin-right: 6px;
 }
 
@@ -218,15 +267,43 @@
   .vp-features { grid-template-columns: 1fr !important; }
 }
 
+.vp-features {
+  counter-reset: feat;
+}
+
 .vp-feature {
   flex: none !important;
   width: auto !important;
   max-width: none !important;
+  position: relative;
+  counter-increment: feat;
   background: var(--vp-c-bg-elv);
   border: 1px solid var(--vp-c-border);
-  border-radius: 12px;
-  padding: 18px 20px;
+  border-radius: 14px;
+  padding: 22px 22px 20px;
   transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  animation: hero-rise 0.55s ease both;
+}
+
+.vp-feature:nth-child(2) { animation-delay: 0.07s; }
+.vp-feature:nth-child(3) { animation-delay: 0.14s; }
+.vp-feature:nth-child(4) { animation-delay: 0.21s; }
+.vp-feature:nth-child(5) { animation-delay: 0.28s; }
+.vp-feature:nth-child(6) { animation-delay: 0.35s; }
+
+/* 渐变编号 01–06：给卡片一个视觉锚点 */
+.vp-feature::before {
+  content: '0' counter(feat);
+  display: block;
+  margin-bottom: 10px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  background: linear-gradient(96deg, #58a6ff, #a371f7);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .vp-feature h2 {
@@ -246,18 +323,29 @@
   box-shadow: 0 14px 34px rgb(0 0 0 / 35%), 0 0 24px rgb(88 166 255 / 12%);
 }
 
-/* 按钮：主按钮蓝底深字，次按钮描边（旧站 .btn/.btn-ghost 同款） */
+/* 按钮：主按钮渐变蓝底深字泛光，次按钮渐变描边 */
 .vp-hero-action-button {
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid transparent;
   font-weight: 600;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .vp-hero-action-button.primary {
-  background: #58a6ff;
+  background: linear-gradient(135deg, #58a6ff, #6f8dff);
   color: #06121f;
 }
 .vp-hero-action-button.primary:hover {
-  box-shadow: 0 10px 30px rgb(88 166 255 / 35%);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgb(88 166 255 / 40%);
+}
+.vp-hero-action-button.secondary {
+  background: linear-gradient(var(--vp-c-bg), var(--vp-c-bg)) padding-box,
+              linear-gradient(96deg, rgb(88 166 255 / 70%), rgb(163 113 247 / 70%)) border-box;
+  border: 1px solid transparent;
+  color: var(--vp-c-text);
+}
+.vp-hero-action-button.secondary:hover {
+  transform: translateY(-2px);
 }
 
 /* 尊重系统的减弱动效偏好 */

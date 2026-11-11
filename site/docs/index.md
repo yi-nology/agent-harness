@@ -28,6 +28,8 @@ footer: MIT License · github.com/yi-nology/agent-harness
 
 <div class="home-punch"><strong>「这个包需要知道自己在给谁干活吗？」</strong>需要 → 属于宿主。</div>
 
+<div class="home-install"><span class="prompt">▸</span>go get github.com/yi-nology/agent-harness@latest</div>
+
 <div class="home-links">
   <a class="chip" href="./guide/introduction.html">介绍</a>
   <a class="chip" href="./guide/capabilities.html">能力详解</a>
