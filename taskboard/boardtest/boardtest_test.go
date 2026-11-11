@@ -1,8 +1,5 @@
-// boardtest_test.go —— 用一份内存实现把套件跑绿，再用一份**故意不原子**的实现
-// 证明套件真的会红。
-//
-// 第二半不可省：只跑「好实现通过」等于没钉住判据——把 ConcurrentClaim 改成
-// 永远返回 1 也能全绿。
+// boardtest_test.go —— 用一份内存实现把套件跑绿（正例）；
+// 变异实现与判据的牙齿验证在 mutation_test.go。
 package boardtest
 
 import (
@@ -22,16 +19,21 @@ type memBoard struct {
 	mu    sync.Mutex
 	tasks map[taskboard.TaskID]*taskboard.Task
 
-	// seq 令牌计数器。令牌由**存储**铸造（这是 v0.33.0 的要害：
-	// 调用方自带令牌的话，「凭令牌认人」名存实亡）。
+	// seq 令牌与接管代次的**共同铸造计数器**（同源：同一次认领的同一原子
+	// 操作里铸造两者，见 Lease.Fence）。令牌由**存储**铸造是 v0.33.0 的要害：
+	// 调用方自带令牌的话，「凭令牌认人」名存实亡。
 	seq uint64
 
 	// now 可注入时钟（过期判定必须读它，否则过期场景恒不触发）。
 	now func() time.Time
 }
 
-func newMemBoard(t *testing.T, clock *FakeClock) ClockedBoard {
-	t.Helper()
+func newMemBoard(_ *testing.T, _ *FakeClock) ClockedBoard {
+	return rawMemBoard()
+}
+
+// rawMemBoard 供变异实现包一层用。
+func rawMemBoard() *memBoard {
 	return &memBoard{tasks: map[taskboard.TaskID]*taskboard.Task{}}
 }
 
@@ -61,7 +63,7 @@ func (m *memBoard) Seed(tasks ...taskboard.Task) {
 	}
 }
 
-func (m *memBoard) List(ctx context.Context) ([]taskboard.Task, error) {
+func (m *memBoard) List(_ context.Context) ([]taskboard.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]taskboard.Task, 0, len(m.tasks))
@@ -73,7 +75,7 @@ func (m *memBoard) List(ctx context.Context) ([]taskboard.Task, error) {
 	return out, nil
 }
 
-func (m *memBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
+func (m *memBoard) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.tasks[id]
@@ -92,9 +94,12 @@ func (m *memBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboa
 			return taskboard.Task{}, errors.Wrap(taskboard.ErrBlocked, string(d))
 		}
 	}
-	// 令牌由存储铸造；到期时刻也由存储按**自己的**时钟算。
+	// 令牌与接管代次由存储铸造；到期时刻也由存储按**自己的**时钟算。
 	m.seq++
-	lease := taskboard.Lease{Token: fmt.Sprintf("tok-%d", m.seq)}
+	lease := taskboard.Lease{
+		Token: fmt.Sprintf("tok-%d", m.seq),
+		Fence: taskboard.Fence(m.seq),
+	}
 	if req.TTL > 0 {
 		lease.Until = m.clockLocked().Add(req.TTL)
 	}
@@ -105,7 +110,7 @@ func (m *memBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboa
 	return *t, nil
 }
 
-func (m *memBoard) Release(ctx context.Context, id taskboard.TaskID, token string) error {
+func (m *memBoard) Release(_ context.Context, id taskboard.TaskID, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.tasks[id]
@@ -122,7 +127,7 @@ func (m *memBoard) Release(ctx context.Context, id taskboard.TaskID, token strin
 	return nil
 }
 
-func (m *memBoard) Complete(ctx context.Context, id taskboard.TaskID, token string) error {
+func (m *memBoard) Complete(_ context.Context, id taskboard.TaskID, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.tasks[id]
@@ -139,13 +144,39 @@ func (m *memBoard) Complete(ctx context.Context, id taskboard.TaskID, token stri
 	return nil
 }
 
-func leaseExpired(l taskboard.Lease, now time.Time) bool {
-	return !l.Until.IsZero() && !now.Before(l.Until)
+// Renew 续期并确认持有资格（taskboard.RenewingBoard 的参考语义）。
+func (m *memBoard) Renew(_ context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.tasks[id]
+	if !ok {
+		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, string(id))
+	}
+	// 资格校验在前：令牌不是当前租约的、或租约已过期 ⇒ 拒且不改。
+	if t.State != taskboard.StateClaimed || t.Lease.Token != token {
+		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, string(id))
+	}
+	if leaseExpired(t.Lease, m.clockLocked()) {
+		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, string(id))
+	}
+	// 校验与延长同一把锁内完成（原子）；TTL 语义与 Claim 一致。
+	if req.TTL > 0 {
+		t.Lease.Until = m.clockLocked().Add(req.TTL)
+	} else {
+		t.Lease.Until = time.Time{}
+	}
+	t.Seq++
+	return *t, nil
 }
 
-// TestConformanceOnMemoryBoard 好实现必须全绿。
+// TestConformanceOnMemoryBoard 好实现必须全绿（缺省规模档：10 与 100）。
 func TestConformanceOnMemoryBoard(t *testing.T) {
 	Run(t, newMemBoard)
+}
+
+// TestConformanceWithCustomScale 宿主按自己的量级配置规模档也能跑。
+func TestConformanceWithCustomScale(t *testing.T) {
+	RunConfig(t, newMemBoard, Config{ClaimWorkers: 25})
 }
 
 // brokenBoard 故意把认领做成**读-判-写三段分离**：所有读者先读到 open，
@@ -184,9 +215,9 @@ func (b *brokenBoard) Claim(ctx context.Context, id taskboard.TaskID, agent task
 	return *cur, nil
 }
 
-// TestJudgeCatchesNonAtomicBoard 判据的**反向验证**：不原子的实现必须被抓住。
-//
-// 没有这一条，ConcurrentClaim 可能无论实现对错都返回 1，而套件照样全绿。
+// TestJudgeCatchesNonAtomicBoard ConcurrentClaim 判据的反向验证：
+// 不原子的实现必须被抓住。没有这一条，ConcurrentClaim 可能无论实现对错
+// 都返回 1，而套件照样全绿。
 func TestJudgeCatchesNonAtomicBoard(t *testing.T) {
 	const n = 4
 	base := &memBoard{tasks: map[taskboard.TaskID]*taskboard.Task{
@@ -195,7 +226,10 @@ func TestJudgeCatchesNonAtomicBoard(t *testing.T) {
 	b := &brokenBoard{memBoard: base, barrier: &sync.WaitGroup{}}
 	b.barrier.Add(n)
 
-	agents := []taskboard.AgentID{"a1", "a2", "a3", "a4"}
+	agents := make([]taskboard.AgentID, 0, n)
+	for i := range n {
+		agents = append(agents, taskboard.AgentID(fmt.Sprintf("a%d", i+1)))
+	}
 	winners, err := taskboard.ConcurrentClaim(context.Background(), b, "t1", agents, time.Minute)
 	if err != nil {
 		t.Fatalf("判据本身不该报错: %v", err)
