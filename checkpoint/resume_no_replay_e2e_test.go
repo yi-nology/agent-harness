@@ -43,6 +43,7 @@ type durable struct {
 	snaps map[string]checkpoint.Snapshot
 
 	done      map[sideeffect.Key]sideeffect.Result
+	uncertain map[sideeffect.Key]string
 	held      map[string]sideeffect.Lease
 	expiry    map[string]time.Time
 	maxFence  map[string]sideeffect.Fence
@@ -56,6 +57,7 @@ func newDurable() *durable {
 	return &durable{
 		snaps:     map[string]checkpoint.Snapshot{},
 		done:      map[sideeffect.Key]sideeffect.Result{},
+		uncertain: map[sideeffect.Key]string{},
 		held:      map[string]sideeffect.Lease{},
 		expiry:    map[string]time.Time{},
 		maxFence:  map[string]sideeffect.Fence{},
@@ -95,6 +97,10 @@ func (d *durable) Acquire(_ context.Context, act sideeffect.Action, ttl time.Dur
 	if res, ok := d.done[act.Key]; ok {
 		return sideeffect.OutcomeReplayed, sideeffect.Lease{}, res, nil
 	}
+	// 结果未知 → 不得再执行（否则就是重复施加）。
+	if _, ok := d.uncertain[act.Key]; ok {
+		return sideeffect.OutcomeUncertain, sideeffect.Lease{}, sideeffect.Result{}, nil
+	}
 	if lease, ok := d.held[act.Resource]; ok && time.Now().Before(d.expiry[act.Resource]) {
 		_ = lease
 		return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, nil
@@ -127,6 +133,35 @@ func (d *durable) Release(_ context.Context, act sideeffect.Action, lease sideef
 		delete(d.expiry, act.Resource)
 	}
 	return nil
+}
+
+func (d *durable) MarkUncertain(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, reason string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cur, ok := d.held[act.Resource]
+	if !ok || cur.Fence != lease.Fence {
+		return sideeffect.ErrFenceStale
+	}
+	d.uncertain[act.Key] = reason
+	return nil
+}
+
+func (d *durable) ResolveUncertain(_ context.Context, act sideeffect.Action, res sideeffect.Resolution) (sideeffect.Outcome, sideeffect.Result, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if prior, ok := d.done[act.Key]; ok {
+		return sideeffect.OutcomeReplayed, prior, nil
+	}
+	if _, ok := d.uncertain[act.Key]; !ok {
+		return sideeffect.OutcomeContended, sideeffect.Result{}, sideeffect.ErrNotUncertain
+	}
+	if res.Applied {
+		d.done[act.Key] = res.Result
+		delete(d.uncertain, act.Key)
+		return sideeffect.OutcomeApplied, res.Result, nil
+	}
+	delete(d.uncertain, act.Key)
+	return sideeffect.OutcomeContended, sideeffect.Result{}, nil
 }
 
 func (d *durable) Renew(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, ttl time.Duration) (sideeffect.Lease, error) {
@@ -172,7 +207,7 @@ func (d *durable) appliedCount(step string) int {
 // 用返回值或 Outcome 反推都可能把「没执行」误读成「执行了」。
 func apply(ctx context.Context, r *sideeffect.Runner, d *durable, runID, step, resource string) (sideeffect.Outcome, error) {
 	act := sideeffect.Action{Key: sideeffect.Key(runID + ":" + step), Resource: resource}
-	out, _, err := r.Execute(ctx, act, func(context.Context) (sideeffect.Result, error) {
+	out, _, err := r.Execute(ctx, act, func(context.Context, sideeffect.Lease) (sideeffect.Result, error) {
 		d.mu.Lock()
 		d.applied[step]++
 		d.mu.Unlock()

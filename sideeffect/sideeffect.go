@@ -59,9 +59,28 @@
 // 本包不提供：重试策略（宿主定）、补偿/回滚（副作用不可逆时无回滚可言）、
 // 分布式事务（跨资源 2PC 不在本仓职责内）。
 //
-// 本包也**不承诺 exactly-once**。它承诺的是「至多一次施加」——这是可达的上界；
-// exactly-once 需要下游也参与（幂等键要传到下游），那是宿主的接线责任。
-// 把上界说成 exactly-once 是本包明确拒绝的一种失真。
+// # 本包承诺什么、不承诺什么（v0.32.0 起收紧口径）
+//
+// **承诺**（机制面能独立保证的）:
+//
+//   - 同一 Key 的动作在同一时刻**至多一个持有者**（租约 + 栅栏）；
+//   - **已完成**的动作被重放而不是重做（幂等键 + 结果留存）。
+//
+// **不承诺**（需要下游参与才成立，本仓无权替它打包票）:
+//
+//   - 「至多一次施加」——远端动作是否生效由**远端**说了算。若远端已生效而
+//     响应在回程丢了，本仓能做的只是把它标成**结果未知**（OutcomeUncertain）
+//     并要求对账，**不能**替调用方判定「没生效」；
+//   - exactly-once——那需要幂等键一路传到远端，是宿主的接线责任。
+//
+// 把上界说成 exactly-once 是本包明确拒绝的一种失真；把「结果未知」说成
+// 「没生效」是同一种失真的另一个方向——后者会直接变成重复施加。
+//
+// # 「结果未知」是一等状态
+//
+// 遇到 OutcomeUncertain 的 Key，**禁止盲目重试**：必须先对账
+// （Runner.Reconcile）。这条不是建议，是判据——闸会拒绝把一个
+// 处于未知态的 Key 再授予执行权。
 package sideeffect
 
 import (
@@ -90,6 +109,18 @@ type Action struct {
 	// Payload 动作参数。内核不解释其内容（机制面不认识领域概念），
 	// 但**结果记录需要能把它与结果对应起来**，故由宿主定义序列化方式。
 	Payload []byte
+	// RetrySafety 该动作在**施加失败**后的重试安全性（缺省 = 未声明 = 按最弱处理）。
+	//
+	// 声明放在 Action 而不是执行体上：重试安全性是**这个逻辑动作**的属性
+	// （下游按不按幂等键去重），同一动作的多次重试必须是同一份声明——
+	// 放在执行体上就变成「每次调用各说各话」，重试与首次施加口径不一致，
+	// 于是「这次失败了能不能再来一次」的答案随调用点漂移。
+	//
+	// 零值 RetrySafetyUnknown 的含义：施加失败即**结果未知**，闸转入未知态，
+	// 这个 Key 必须先对账才能再动。声明 RetrySafetySafe 则是断言
+	// 「下游按幂等键去重，重试不会重复施加」——**断言错了就是重复施加**，
+	// 故它只能是宿主的显式选择。
+	RetrySafety RetrySafety
 }
 
 // Result 一次动作的结果。
@@ -192,6 +223,17 @@ const (
 	// 仍会得到 OutcomeApplied（动作尚未做过）。若宿主把它当成永久失败，
 	// 动作就永远丢掉了——这是本包明确要防的误用。
 	OutcomeContended
+	// OutcomeUncertain 该 Key 上一次尝试的**结果未知**：可能已生效，
+	// 也可能没有。本次**不得执行**，必须先对账裁决（Runner.Reconcile）。
+	//
+	// 这是 v0.32.0 新增的一态。此前「施加失败 → 释放闸 → 允许重试」是
+	// 唯一的失败出口，于是「远端已生效但响应丢了」这一形态会被下一次重试
+	// 变成**重复施加**——本包存在的理由（同一逻辑动作只施加一次）被绕过，
+	// 且失效是**静默**的：调用方拿到的是一个普通的错误。
+	//
+	// 与 OutcomeContended 的区别：contended 是「还没轮上我」（等一等再来），
+	// uncertain 是「上一次可能已经做过了」（来之前先查清楚）。
+	OutcomeUncertain
 )
 
 func (o Outcome) String() string {
@@ -202,6 +244,8 @@ func (o Outcome) String() string {
 		return "replayed"
 	case OutcomeContended:
 		return "contended"
+	case OutcomeUncertain:
+		return "uncertain"
 	default:
 		return "unknown"
 	}
@@ -235,14 +279,21 @@ type Store interface {
 	// 语义（存储侧必须保证）：
 	//  1. 若该 Key 的动作**已完成** → 返回 OutcomeReplayed 与既有结果，
 	//     不发放新令牌（已完成的动作不再需要令牌）。
-	//  2. 否则若该 Resource 正被他人持有且**租约未过期** → 返回
+	//  2. 否则若该 Key 处于**结果未知**态（MarkUncertain 标记的）→ 返回
+	//     OutcomeUncertain，不发放令牌。
+	//  3. 否则若该 Resource 正被他人持有且**租约未过期** → 返回
 	//     OutcomeContended，不发放令牌。
-	//  3. 否则 → 授予本次持有：令牌 = 该 Resource 上**已见过的最大值 + 1**
+	//  4. 否则 → 授予本次持有：令牌 = 该 Resource 上**已见过的最大值 + 1**
 	//     （单调递增，不回退），并返回 OutcomeApplied。
 	//
-	// 已完成（1）的判定**优先于**占用（2）：动作已做完时，后来者应当拿到
+	// 已完成（1）的判定**优先于**占用（3）：动作已做完时，后来者应当拿到
 	// 结果而不是被「资源正忙」挡住——否则调用方会把「早已完成」误判成
 	// 「没轮上我」，而真相是「早就做完了」。
+	//
+	// 结果未知（2）**优先于**占用（3），但**次于**已完成（1）：未知态是
+	// 这个 Key 头上的**硬阻塞**（再动它就是重复施加），而占用只是「等一等」。
+	// 顺序写反的后果是：调用方拿到 contended 就以为「晚点重试就行」，
+	// 而真相是「这个 Key 得先对账」——于是重试发生了，重复施加也就发生了。
 	//
 	// 第 3 条的令牌分配必须与「标记该 Key 已完成」同处一个原子操作面
 	// （可分两步但需同一事务/脚本内），否则会出现「发了令牌但没记住谁占着」。
@@ -293,4 +344,33 @@ type Store interface {
 	// 存储侧须保证：续期与资格校验在**同一次原子操作**里完成
 	// （否则「校验通过」与「续期生效」之间仍有窗口）。
 	Renew(ctx context.Context, act Action, lease Lease, ttl time.Duration) (Lease, error)
+
+	// MarkUncertain 把该 Key 标记为「结果未知」。
+	//
+	// 存储侧必须保证：
+	//  1. 该 Key 的下一次 Acquire 返回 OutcomeUncertain，**不得**返回
+	//     OutcomeApplied——否则会盲目重试一个可能已经生效的动作。
+	//  2. 标记是**按 Key** 的，与资源租约无关：闸可以释放（让别的动作用这个
+	//     资源），但这个 Key 在被裁决之前**不得再被执行**。
+	//  3. 幂等：重复标记同一 Key 不报错。
+	//  4. 若本次持有的令牌已不是最新代（ErrFenceStale）→ **拒绝标记**。
+	//     否则一个过期持有者会把新持有者刚做完的动作标成未知，
+	//     而新持有者那边的结果是确定的——事实被写反了。
+	MarkUncertain(ctx context.Context, act Action, lease Lease, reason string) error
+
+	// ResolveUncertain 裁决「结果未知」的 Key。
+	//
+	// 存储侧必须保证：
+	//  1. res.Applied == true → 把该 Key 记为已完成并留存 res.Result；
+	//     之后同一 Key 的 Acquire 返回 OutcomeReplayed + 该结果
+	//     （重放而不是重做）。
+	//  2. res.Applied == false → 清除未知标记，该 Key 重新可被执行
+	//     （之后同一 Key 的 Acquire 可返回 OutcomeApplied）。
+	//  3. **先到者为准**（幂等）：同一 Key 的二次裁决不覆盖首次裁决。
+	//  4. 该 Key 不在未知态时：若已完成 → 返回 OutcomeReplayed + 既有结果；
+	//     否则 → 返回 ErrNotUncertain。
+	//  5. 裁决**不校验栅栏**：它的依据是**下游事实**，不是持有权——
+	//     原持有者可能已经死亡、租约早已过期，而对账恰恰要在这种情况下进行。
+	//     （栅栏管的是「谁能写」，对账管的是「到底做没做」，两件事。）
+	ResolveUncertain(ctx context.Context, act Action, res Resolution) (Outcome, Result, error)
 }

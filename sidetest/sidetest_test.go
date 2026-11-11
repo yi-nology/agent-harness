@@ -26,9 +26,10 @@ import (
 type memStore struct {
 	mu sync.Mutex
 
-	done     map[sideeffect.Key]sideeffect.Result
-	holders  map[string]memHold
-	maxFence map[string]sideeffect.Fence
+	done      map[sideeffect.Key]sideeffect.Result
+	uncertain map[sideeffect.Key]string
+	holders   map[string]memHold
+	maxFence  map[string]sideeffect.Fence
 
 	nowFn func() time.Time
 }
@@ -40,9 +41,10 @@ type memHold struct {
 
 func newMemStore() *memStore {
 	return &memStore{
-		done:     map[sideeffect.Key]sideeffect.Result{},
-		holders:  map[string]memHold{},
-		maxFence: map[string]sideeffect.Fence{},
+		done:      map[sideeffect.Key]sideeffect.Result{},
+		uncertain: map[sideeffect.Key]string{},
+		holders:   map[string]memHold{},
+		maxFence:  map[string]sideeffect.Fence{},
 	}
 }
 
@@ -58,6 +60,11 @@ func (m *memStore) Acquire(_ context.Context, act sideeffect.Action, ttl time.Du
 
 	if res, ok := m.done[act.Key]; ok {
 		return sideeffect.OutcomeReplayed, sideeffect.Lease{}, res, nil
+	}
+
+	// 结果未知 → 拒绝执行（优先于占用）：这个 Key 得先对账。
+	if _, ok := m.uncertain[act.Key]; ok {
+		return sideeffect.OutcomeUncertain, sideeffect.Lease{}, sideeffect.Result{}, nil
 	}
 
 	now := m.nowLocked()
@@ -119,6 +126,37 @@ func (m *memStore) Renew(_ context.Context, act sideeffect.Action, lease sideeff
 	cur.lease.TTL = ttl
 	m.holders[act.Resource] = cur
 	return cur.lease, nil
+}
+
+func (m *memStore) MarkUncertain(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cur, ok := m.holders[act.Resource]
+	if !ok || cur.lease.Fence != lease.Fence {
+		return errors.Wrap(sideeffect.ErrFenceStale, "栅栏令牌已不是最新代", "resource", act.Resource)
+	}
+	m.uncertain[act.Key] = reason
+	return nil
+}
+
+func (m *memStore) ResolveUncertain(_ context.Context, act sideeffect.Action, res sideeffect.Resolution) (sideeffect.Outcome, sideeffect.Result, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if prior, ok := m.done[act.Key]; ok {
+		return sideeffect.OutcomeReplayed, prior, nil
+	}
+	if _, ok := m.uncertain[act.Key]; !ok {
+		return sideeffect.OutcomeContended, sideeffect.Result{}, sideeffect.ErrNotUncertain
+	}
+	if res.Applied {
+		m.done[act.Key] = res.Result
+		delete(m.uncertain, act.Key)
+		return sideeffect.OutcomeApplied, res.Result, nil
+	}
+	delete(m.uncertain, act.Key)
+	return sideeffect.OutcomeContended, sideeffect.Result{}, nil
 }
 
 // TestContract 跑共享契约套件：这份实现按契约写，应当全绿。
