@@ -25,7 +25,7 @@ func TestSideEffectStoreContract(t *testing.T) {
 
 // TestTaskBoardContract 跑任务认领面的共享契约套件。
 func TestTaskBoardContract(t *testing.T) {
-	boardtest.Run(t, func(_ *testing.T) taskboard.Board {
+	boardtest.Run(t, func(_ *testing.T, _ *boardtest.FakeClock) boardtest.ClockedBoard {
 		return newBoardStore()
 	})
 }
@@ -166,17 +166,29 @@ func TestBoardReleaseRequiresHolderToken(t *testing.T) {
 	s := newBoardStore()
 	s.Seed(taskboard.Task{ID: "t1", Title: "待领", State: taskboard.StateOpen})
 
-	if _, err := s.Claim(ctx, "t1", "a1", taskboard.Lease{Token: "tok-1"}); err != nil {
+	first, err := s.Claim(ctx, "t1", "a1", taskboard.ClaimRequest{TTL: time.Minute})
+	if err != nil {
 		t.Fatalf("首次认领应当成功: %v", err)
 	}
-	if err := s.Release(ctx, "t1", "tok-2"); !errors.Is(err, taskboard.ErrLeaseLost) {
+	if first.Lease.Token == "" {
+		t.Fatal("认领必须返回存储铸造的令牌")
+	}
+	if err := s.Release(ctx, "t1", "不是这一次的令牌"); !errors.Is(err, taskboard.ErrLeaseLost) {
 		t.Fatalf("非持有者释放应被拒为 ErrLeaseLost，实得 %v", err)
 	}
-	if err := s.Release(ctx, "t1", "tok-1"); err != nil {
+	if err := s.Release(ctx, "t1", first.Lease.Token); err != nil {
 		t.Fatalf("持有者释放应当成功: %v", err)
 	}
-	if _, err := s.Claim(ctx, "t1", "a2", taskboard.Lease{Token: "tok-3"}); err != nil {
+	second, err := s.Claim(ctx, "t1", "a2", taskboard.ClaimRequest{TTL: time.Minute})
+	if err != nil {
 		t.Fatalf("释放后应当可再认领: %v", err)
+	}
+	// 令牌不复用：上一轮的令牌无法再放掉这一轮的闸（ABA）。
+	if second.Lease.Token == first.Lease.Token {
+		t.Fatalf("重新认领必须换新令牌，实得仍是 %q", first.Lease.Token)
+	}
+	if err := s.Release(ctx, "t1", first.Lease.Token); !errors.Is(err, taskboard.ErrLeaseLost) {
+		t.Fatalf("旧令牌释放应被拒为 ErrLeaseLost，实得 %v", err)
 	}
 }
 
@@ -185,10 +197,11 @@ func TestBoardSnapshotPassesInvariants(t *testing.T) {
 	ctx := context.Background()
 	s := newBoardStore()
 	s.Seed(taskboard.Task{ID: "t1", Title: "待领", State: taskboard.StateOpen})
-	if _, err := s.Claim(ctx, "t1", "a1", taskboard.Lease{Token: "tok-1"}); err != nil {
+	task, err := s.Claim(ctx, "t1", "a1", taskboard.ClaimRequest{TTL: time.Minute})
+	if err != nil {
 		t.Fatalf("认领失败: %v", err)
 	}
-	if err := s.Complete(ctx, "t1", "tok-1"); err != nil {
+	if err := s.Complete(ctx, "t1", task.Lease.Token); err != nil {
 		t.Fatalf("完成失败: %v", err)
 	}
 	tasks, err := s.List(ctx)
@@ -197,5 +210,92 @@ func TestBoardSnapshotPassesInvariants(t *testing.T) {
 	}
 	if problems := taskboard.Check(tasks); len(problems) > 0 {
 		t.Fatalf("快照不变量被违反: %v", problems)
+	}
+}
+
+// TestRenewRejectedAfterRelease 钉住：闸释放之后，原租约不得再续期。
+//
+// 失效形态：只比栅栏令牌、不验持有者 ⇒ 释放后的租约仍能续期。
+// 栅栏只在**接管**时递增——没人接管时令牌没有变，于是「已经放手」这件事
+// 在令牌上完全看不出来，原持有者以为还拿着闸（其实闸是空的，随时可能
+// 被别人抢走）。
+func TestRenewRejectedAfterRelease(t *testing.T) {
+	ctx := context.Background()
+	s := newEffectStore()
+	a := sideeffect.Action{Key: "k1", Resource: "r1"}
+
+	_, lease, _, err := s.Acquire(ctx, a, time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	if err := s.Release(ctx, a, lease); err != nil {
+		t.Fatalf("Release 失败: %v", err)
+	}
+	if _, err := s.Renew(ctx, a, lease, time.Minute); !errors.Is(err, sideeffect.ErrFenceStale) {
+		t.Fatalf("释放后的租约不得再续期，应被拒为 ErrFenceStale，实得 %v", err)
+	}
+}
+
+// TestCompleteRejectedAfterRelease 钉住：闸释放之后，原租约不得再记账。
+//
+// 与上一条同因：闸已经不是自己的了，结果却还记在这个 Key 上。
+func TestCompleteRejectedAfterRelease(t *testing.T) {
+	ctx := context.Background()
+	s := newEffectStore()
+	a := sideeffect.Action{Key: "k1", Resource: "r1"}
+
+	_, lease, _, err := s.Acquire(ctx, a, time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	if err := s.Release(ctx, a, lease); err != nil {
+		t.Fatalf("Release 失败: %v", err)
+	}
+	if _, err := s.Complete(ctx, a, lease, sideeffect.Result{Payload: []byte("v")}); !errors.Is(err, sideeffect.ErrFenceStale) {
+		t.Fatalf("释放后的租约不得再记账，应被拒为 ErrFenceStale，实得 %v", err)
+	}
+}
+
+// TestMarkUncertainRejectedAfterRelease 钉住：闸释放之后，原租约不得再标未知。
+//
+// 失效形态：过期持有者把新持有者刚做完的动作标成「未知」，而新持有者那边的
+// 结果是确定的——事实被写反了，后续对账会裁决错。
+func TestMarkUncertainRejectedAfterRelease(t *testing.T) {
+	ctx := context.Background()
+	s := newEffectStore()
+	a := sideeffect.Action{Key: "k1", Resource: "r1"}
+
+	_, lease, _, err := s.Acquire(ctx, a, time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	if err := s.Release(ctx, a, lease); err != nil {
+		t.Fatalf("Release 失败: %v", err)
+	}
+	if err := s.MarkUncertain(ctx, a, lease, "迟到的标记"); !errors.Is(err, sideeffect.ErrFenceStale) {
+		t.Fatalf("释放后的租约不得再标未知，应被拒为 ErrFenceStale，实得 %v", err)
+	}
+}
+
+// TestSnapshotSaveIfNewerRejectsZeroSeq 钉住：序号为 0 的快照不得覆盖既有快照。
+//
+// 失效形态：单调判定只对 seq>0 生效 ⇒ seq=0 反而成了唯一能盖掉既有快照的写
+// ⇒ 恢复点静默回退（已有 Seq=10 时被 Seq=0 盖掉）。
+func TestSnapshotSaveIfNewerRejectsZeroSeq(t *testing.T) {
+	ctx := context.Background()
+	s := newSnapStore()
+	if err := s.SaveIfNewer(ctx, checkpoint.Snapshot{RunID: "r", Seq: 10, Status: "running"}); err != nil {
+		t.Fatalf("首次落库失败: %v", err)
+	}
+	err := s.SaveIfNewer(ctx, checkpoint.Snapshot{RunID: "r", Seq: 0, Status: "running"})
+	if !errors.Is(err, checkpoint.ErrStaleSeq) {
+		t.Fatalf("序号为 0 的快照必须被拒为 ErrStaleSeq，实得 %v", err)
+	}
+	snap, err := s.Load(ctx, "r")
+	if err != nil {
+		t.Fatalf("读取快照失败: %v", err)
+	}
+	if snap.Seq != 10 {
+		t.Fatalf("落库的序号应仍为 10（序号为 0 的快照不得覆盖），实得 %d", snap.Seq)
 	}
 }

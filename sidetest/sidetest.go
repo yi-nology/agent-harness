@@ -38,6 +38,7 @@
 //
 //  9. renew_extends_lease             Renew 延长有效期且不换令牌
 //  10. renew_after_takeover_rejected   闸已易主后 Renew 被拒（假续期的封口）
+//     10b. renew_after_release_rejected   闸已释放后 Renew 被拒（只比令牌会漏掉的那条）
 //
 // 「结果未知」一族五场景在 **uncertain.go**（v0.32.0 新增，判失败路径上的
 // 「至多一次」是否真的成立）：
@@ -48,6 +49,16 @@
 //  14. resolve_first_wins              同一 Key 的多次裁决先到者为准
 //  15. stale_fence_cannot_mark         过期持有者不得标记未知态
 //
+// 「执行意图」一族六场景在 **intent.go**（v0.33.0 新增，判「进程死在施加
+// 成功之后、记账之前」那条窗口是否真被封住）：
+//
+//  16. intent_blocks_reacquire        未裁决的尝试不得被重新授予执行权
+//  17. expired_intent_requires_reconcile 租约过期且未裁决 ⇒ 转入需对账态
+//  18. expired_intent_safe_may_retry  声明了可安全重试 ⇒ 过期后可重新授予
+//  19. abandon_allows_retry           显式放弃后该 Key 重新可执行
+//  20. release_keeps_intent           只放闸不撤销意图 ⇒ 仍不得重新执行
+//  21. abandon_requires_owner         放弃只认本次尝试的令牌
+//
 // # 时钟
 //
 // 租约过期需要可控时钟，否则只能靠 sleep（慢且 flaky）。
@@ -57,12 +68,9 @@
 package sidetest
 
 import (
-	"context"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
@@ -125,11 +133,18 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("release_does_not_done", func(t *testing.T) { runReleaseDoesNotDone(t, factory) })
 	t.Run("renew_extends_lease", func(t *testing.T) { runRenewExtendsLease(t, factory) })
 	t.Run("renew_after_takeover_rejected", func(t *testing.T) { runRenewAfterTakeoverRejected(t, factory) })
+	t.Run("renew_after_release_rejected", func(t *testing.T) { runRenewAfterReleaseRejected(t, factory) })
 	t.Run("uncertain_blocks_execution", func(t *testing.T) { runUncertainBlocksExecution(t, factory) })
 	t.Run("resolve_not_applied_allows_retry", func(t *testing.T) { runResolveNotAppliedAllowsRetry(t, factory) })
 	t.Run("resolve_applied_records_result", func(t *testing.T) { runResolveAppliedRecordsResult(t, factory) })
 	t.Run("resolve_first_wins", func(t *testing.T) { runResolveFirstWins(t, factory) })
 	t.Run("stale_fence_cannot_mark", func(t *testing.T) { runStaleFenceCannotMarkUncertain(t, factory) })
+	t.Run("intent_blocks_reacquire", func(t *testing.T) { runIntentBlocksReacquire(t, factory) })
+	t.Run("expired_intent_requires_reconcile", func(t *testing.T) { runExpiredIntentRequiresReconcile(t, factory) })
+	t.Run("expired_intent_safe_may_retry", func(t *testing.T) { runExpiredIntentSafeMayRetry(t, factory) })
+	t.Run("abandon_allows_retry", func(t *testing.T) { runAbandonAllowsRetry(t, factory) })
+	t.Run("release_keeps_intent", func(t *testing.T) { runReleaseKeepsIntent(t, factory) })
+	t.Run("abandon_requires_owner", func(t *testing.T) { runAbandonRequiresOwner(t, factory) })
 }
 
 // newStore 构造被测实现并注入假时钟。
@@ -147,223 +162,4 @@ func newStore(t *testing.T, factory Factory) (sideeffect.Store, *FakeClock) {
 // act 构造一个测试动作（合成数据，不含任何领域词面）。
 func act(key, resource string) sideeffect.Action {
 	return sideeffect.Action{Key: sideeffect.Key(key), Resource: resource, Payload: []byte("p")}
-}
-
-// runApplyOnce 钉住：同一 Key 第二次 Acquire → replayed，且取回**同一**结果。
-//
-// 失效形态：实现把「已完成」当成「没做过」→ 同一动作被施加两次，
-// 而这正是本包存在的全部理由。
-func runApplyOnce(t *testing.T, factory Factory) {
-	st, _ := newStore(t, factory)
-	ctx := context.Background()
-	a := act("k1", "res-a")
-
-	outcome, lease, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("首次 Acquire 失败: %v", err)
-	}
-	if outcome != sideeffect.OutcomeApplied {
-		t.Fatalf("首次 Acquire 应为 applied，实得 %v", outcome)
-	}
-	want := sideeffect.Result{Payload: []byte("v1")}
-	if _, err := st.Complete(ctx, a, lease, want); err != nil {
-		t.Fatalf("Complete 失败: %v", err)
-	}
-
-	outcome2, _, got, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("二次 Acquire 失败: %v", err)
-	}
-	if outcome2 != sideeffect.OutcomeReplayed {
-		t.Fatalf("同一 Key 二次 Acquire 应为 replayed，实得 %v", outcome2)
-	}
-	if string(got.Payload) != "v1" {
-		t.Fatalf("应取回既有结果 v1，实得 %q", got.Payload)
-	}
-}
-
-// runCompletedWins 钉住：已完成**优先于**「资源正忙」。
-//
-// 失效形态：优先级写反 → 调用方把「早就做完了」误判成「没轮上我」。
-func runCompletedWins(t *testing.T, factory Factory) {
-	st, _ := newStore(t, factory)
-	ctx := context.Background()
-	a := act("k1", "res-a")
-
-	_, lease, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("Acquire 失败: %v", err)
-	}
-	if _, err := st.Complete(ctx, a, lease, sideeffect.Result{Payload: []byte("v")}); err != nil {
-		t.Fatalf("Complete 失败: %v", err)
-	}
-	// 同一资源上另开一个不同 Key 的持有（模拟资源正忙）。
-	other := act("k2", "res-a")
-	if _, _, _, err := st.Acquire(ctx, other, time.Minute); err != nil {
-		t.Fatalf("另一 Key 的 Acquire 失败: %v", err)
-	}
-
-	outcome, _, got, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("Acquire 失败: %v", err)
-	}
-	if outcome != sideeffect.OutcomeReplayed {
-		t.Fatalf("已完成应优先返回 replayed（哪怕资源正忙），实得 %v", outcome)
-	}
-	if string(got.Payload) != "v" {
-		t.Fatalf("应取回既有结果 v，实得 %q", got.Payload)
-	}
-}
-
-// runContendedWhileHeld 钉住：租约未过期时，第二个持有者拿到 contended
-// 且**不发放令牌**（发了令牌就等于承认了它）。
-func runContendedWhileHeld(t *testing.T, factory Factory) {
-	st, _ := newStore(t, factory)
-	ctx := context.Background()
-	a := act("k1", "res-a")
-
-	if _, _, _, err := st.Acquire(ctx, a, time.Minute); err != nil {
-		t.Fatalf("首次 Acquire 失败: %v", err)
-	}
-	outcome, lease, _, err := st.Acquire(ctx, act("k2", "res-a"), time.Minute)
-	if err != nil {
-		t.Fatalf("二次 Acquire 失败: %v", err)
-	}
-	if outcome != sideeffect.OutcomeContended {
-		t.Fatalf("租约未过期时第二个持有者应为 contended，实得 %v", outcome)
-	}
-	if lease.Fence != 0 {
-		t.Fatalf("被拒时不该发放令牌（发了等于承认它），实得 Fence=%d", lease.Fence)
-	}
-}
-
-// runTakeoverAfterExpiry 钉住：租约过期后可被接管，且**新令牌更大**。
-//
-// 失效形态：过期后接管但令牌不递增 → 过期持有者的迟到写入认不出是过期的。
-func runTakeoverAfterExpiry(t *testing.T, factory Factory) {
-	st, clock := newStore(t, factory)
-	ctx := context.Background()
-	a := act("k1", "res-a")
-
-	_, lease1, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("首次 Acquire 失败: %v", err)
-	}
-	clock.Advance(2 * time.Minute)
-
-	outcome, lease2, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("过期后 Acquire 失败: %v", err)
-	}
-	if outcome != sideeffect.OutcomeApplied {
-		t.Fatalf("租约过期后应可接管（applied），实得 %v", outcome)
-	}
-	if lease2.Fence <= lease1.Fence {
-		t.Fatalf("接管令牌应更大：old=%d new=%d", lease1.Fence, lease2.Fence)
-	}
-}
-
-// runFenceMonotonic 钉住：同一 Resource 上令牌单调递增，不回退。
-func runFenceMonotonic(t *testing.T, factory Factory) {
-	st, clock := newStore(t, factory)
-	ctx := context.Background()
-
-	var prev sideeffect.Fence
-	for i := range 3 {
-		outcome, lease, _, err := st.Acquire(ctx, act("k", "res-a"), time.Minute)
-		if err != nil {
-			t.Fatalf("第 %d 轮 Acquire 失败: %v", i, err)
-		}
-		if outcome != sideeffect.OutcomeApplied {
-			t.Fatalf("第 %d 轮应 granted，实得 %v", i, outcome)
-		}
-		if lease.Fence <= prev {
-			t.Fatalf("第 %d 轮令牌应严格递增：prev=%d cur=%d", i, prev, lease.Fence)
-		}
-		prev = lease.Fence
-		clock.Advance(2 * time.Minute)
-	}
-}
-
-// runStaleCompleteRejected 钉住：过期持有者的 Complete 被拒。
-//
-// 这是「更新的状态被旧状态覆盖」那道洞的直接封口。
-func runStaleCompleteRejected(t *testing.T, factory Factory) {
-	st, clock := newStore(t, factory)
-	ctx := context.Background()
-	a := act("k1", "res-a")
-
-	_, lease1, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("首次 Acquire 失败: %v", err)
-	}
-	clock.Advance(2 * time.Minute)
-	_, lease2, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("接管 Acquire 失败: %v", err)
-	}
-
-	_, err = st.Complete(ctx, a, lease1, sideeffect.Result{Payload: []byte("stale")})
-	if !errors.Is(err, sideeffect.ErrFenceStale) {
-		t.Fatalf("过期持有者的 Complete 应被拒为 ErrFenceStale，实得 %v", err)
-	}
-	if _, err := st.Complete(ctx, a, lease2, sideeffect.Result{Payload: []byte("fresh")}); err != nil {
-		t.Fatalf("当前持有者的 Complete 应被接受: %v", err)
-	}
-}
-
-// runStaleReleaseRejected 钉住：过期持有者的 Release 被拒
-// （不能放掉新持有者的闸）。
-func runStaleReleaseRejected(t *testing.T, factory Factory) {
-	st, clock := newStore(t, factory)
-	ctx := context.Background()
-	a := act("k1", "res-a")
-
-	_, lease1, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("首次 Acquire 失败: %v", err)
-	}
-	clock.Advance(2 * time.Minute)
-	if _, _, _, err := st.Acquire(ctx, a, time.Minute); err != nil {
-		t.Fatalf("接管 Acquire 失败: %v", err)
-	}
-
-	if err := st.Release(ctx, a, lease1); !errors.Is(err, sideeffect.ErrFenceStale) {
-		t.Fatalf("过期持有者的 Release 应被拒为 ErrFenceStale，实得 %v", err)
-	}
-	// 新持有者的闸必须仍在：再抢应仍是 contended。
-	outcome, _, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("Acquire 失败: %v", err)
-	}
-	if outcome != sideeffect.OutcomeContended {
-		t.Fatalf("新持有者的闸应仍在（未被过期持有者放掉），实得 %v", outcome)
-	}
-}
-
-// runReleaseDoesNotDone 钉住：Release 不把 Key 标记为已完成。
-//
-// 失效形态：Release 时顺手标完成 → 动作被记成做过，实际没做，
-// 后续谁都不会再做它。
-func runReleaseDoesNotDone(t *testing.T, factory Factory) {
-	st, _ := newStore(t, factory)
-	ctx := context.Background()
-	a := act("k1", "res-a")
-
-	_, lease, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("Acquire 失败: %v", err)
-	}
-	if err := st.Release(ctx, a, lease); err != nil {
-		t.Fatalf("Release 失败: %v", err)
-	}
-
-	// 动作仍可被施加（未被标成做过）。
-	outcome, _, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("Acquire 失败: %v", err)
-	}
-	if outcome != sideeffect.OutcomeApplied {
-		t.Fatalf("释放后应仍能获得执行权（未被标成已完成），实得 %v", outcome)
-	}
 }

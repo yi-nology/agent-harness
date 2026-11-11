@@ -269,6 +269,18 @@ func TestCompleteFailureMarksUncertain(t *testing.T) {
 // TestMarkUncertainFailureStillBlocksRetry 钉住 fail-closed：
 // 连「标记未知」都写不进去（存储侧不可用）时，判据**不得**放宽成
 // 「可以重试」——失败形态必须是变红，不能是变绿。
+//
+// # 为什么必须做**第二次** Acquire
+//
+// 此前这条用例只断言「当前调用返回未知态」。那只证明了**编排层**没放行，
+// 没证明**存储侧**真挡住了重试——而存储侧此刻可能压根没写进任何东西
+// （标记失败 + 此前没有执行意图 ⇒ 存储侧一片空白）。
+//
+// 那样一来，下一次 Acquire 会重新授予执行权 ⇒ 重复施加，而调用方全程
+// 只看到一句「结果未知，请勿重试」。失效是**静默**的。
+//
+// v0.33.0 起存储侧有「执行意图」这条兜底：标记写不进去时，意图还在，
+// 同一个 Key 仍拿不到执行权。故这里必须做第二次 Acquire 来证明它。
 func TestMarkUncertainFailureStillBlocksRetry(t *testing.T) {
 	boom := errors.New("存储不可用")
 	st := newFakeStore()
@@ -288,6 +300,42 @@ func TestMarkUncertainFailureStillBlocksRetry(t *testing.T) {
 	}
 	if !errors.Is(err, boom) {
 		t.Fatalf("存储故障应留在错误链里，实得 %v", err)
+	}
+
+	// 第二次尝试：**不得**再执行动作体。
+	//
+	// 存储侧此刻既没有「完成」也没有「未知」（标记写失败了）——
+	// 挡住重试的只剩执行意图。这条断言钉的就是那个兜底。
+	calls := 0
+	outcome, _, _ = r.Execute(ctx, a, func(context.Context, Lease) (Result, error) {
+		calls++
+		return Result{Payload: []byte("second")}, nil
+	})
+	if calls != 0 {
+		t.Fatalf("存储侧未写入未知标记时，执行意图仍必须挡住重试（否则就是重复施加），实得执行 %d 次", calls)
+	}
+	if outcome == OutcomeApplied {
+		t.Fatalf("存储侧未写入未知标记时不得重新授予执行权，实得 %v", outcome)
+	}
+	// 租约还没过期：判「这次尝试还在进行中」（contended，正常判据、不带 error）。
+	if outcome != OutcomeContended {
+		t.Fatalf("租约未过期时应判 contended（这次尝试还在进行中），实得 %v", outcome)
+	}
+
+	// 租约过期：意图转入未知态 ⇒ 重试必须先对账。
+	st.advance(2 * time.Minute)
+	outcome, _, err = r.Execute(ctx, a, func(context.Context, Lease) (Result, error) {
+		calls++
+		return Result{Payload: []byte("third")}, nil
+	})
+	if calls != 0 {
+		t.Fatalf("租约过期后仍不得执行（须先对账），实得执行 %d 次", calls)
+	}
+	if outcome != OutcomeUncertain {
+		t.Fatalf("租约过期后该 Key 应转入未知态（须先对账），实得 %v", outcome)
+	}
+	if !errors.Is(err, ErrOutcomeUnknown) {
+		t.Fatalf("重试仍应判结果未知（须先对账），实得 %v", err)
 	}
 }
 

@@ -34,6 +34,16 @@
 // 「失败 → 释放 → 重试」这条推荐路径都会撞上，于是输家放掉赢家的闸、
 // 上一轮的迟到释放放掉新一轮的闸。故 @Lease@ 里的 token 由存储**铸造**，
 // @@Release@@ / @@Complete@@ 只认 token。
+//
+// # 令牌必须由存储铸造（v0.33.0 起）
+//
+// 此前 @Claim@ 收的是调用方自带的 @Lease@（含 token）——契约写着
+// 「token 由存储铸造」，实现却让调用方造 token。两者对不上时，**实现赢**：
+// 调用方能造出任意 token，于是「输家的迟到释放放掉赢家的闸」这条失效形态
+// 又回来了，而报告里一切正常。
+//
+// 故 @Claim@ 改收 @ClaimRequest@（只说「要多长的租约」），token 由存储铸造
+// 并随返回的 @@Task@ 给出。契约与实现从此一致，且不可能被调用方绕过。
 package taskboard
 
 import (
@@ -86,11 +96,36 @@ func (s State) valid() bool {
 // Lease 一次认领的凭证。
 type Lease struct {
 	// Token 由存储**铸造**的唯一令牌（释放与完成的唯一凭据）。
+	//
+	// 它**不由调用方提供**——见 ClaimRequest 的注释：调用方能造令牌，
+	// 「凭令牌认人」就名存实亡。
 	Token string
 	// Until 租约到期时刻（零值 = 不限期，由宿主自担）。
 	//
 	// 到期后其他 agent 可以接管：进程崩掉时没有它会留下一把永久占用。
 	Until time.Time
+}
+
+// ClaimRequest 认领请求：调用方给出**想要多长的租约**，不给出令牌。
+//
+// # 为什么请求里没有令牌
+//
+// 令牌必须由**存储**铸造。调用方自带令牌时，「释放/完成只认 token」
+// 这条契约就名存实亡：调用方能造出任意 token，于是
+// 「同名 agent 的输家迟到释放放掉赢家的闸」这条失效形态又回来了
+// （commitgate 同源教训：凭令牌释放、不认内容）。
+//
+// # 为什么给的是「多长」而不是「到什么时候」
+//
+// 到期时刻归存储算：调用方的时钟与存储的时钟可能对不上，跨进程时更不能
+// 假设一致。给 TTL，存储按**自己的**当前时刻推算，两边不会各算一套。
+type ClaimRequest struct {
+	// TTL 本次认领的租约有效期。
+	//
+	// 正数 ⇒ 存储按「自己的当前时刻 + TTL」算出到期时刻。
+	// 零值 ⇒ 不限期（到期时刻为零值，由宿主自担）——持有着崩了会留下一把
+	// 永久占用，故宿主通常应给一个正的 TTL。
+	TTL time.Duration
 }
 
 // Task 一个子任务（值类型，可安全复制与比较）。
@@ -124,9 +159,12 @@ type Board interface {
 	List(ctx context.Context) ([]Task, error)
 	// Claim 认领一个任务。
 	//
+	// **令牌由存储铸造**并随返回的 Task 一起给出（Task.Lease.Token）；
+	// 调用方只给「要多长的租约」（ClaimRequest），不给令牌。
+	//
 	// 以下情形必须报错而不是「尽力而为」：不存在（ErrNotFound）/
 	// 被别人活着持有（ErrTaken）/ 依赖未完成（ErrBlocked）/ 已是终态（ErrTerminal）。
-	Claim(ctx context.Context, id TaskID, agent AgentID, lease Lease) (Task, error)
+	Claim(ctx context.Context, id TaskID, agent AgentID, req ClaimRequest) (Task, error)
 	// Release 归还认领（凭 token）。
 	Release(ctx context.Context, id TaskID, token string) error
 	// Complete 标记完成（凭 token）。

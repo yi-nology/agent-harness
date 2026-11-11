@@ -132,11 +132,9 @@ func claimRace(ctx context.Context, board *boardStore) (int, error) {
 		Title: "待领任务",
 		State: taskboard.StateOpen,
 	})
+	// 令牌由存储铸造：认领请求里只给「要多长的租约」。
 	winners, err := taskboard.ConcurrentClaim(ctx, board, "demo-claim",
-		[]taskboard.AgentID{"worker-a", "worker-b"},
-		func(a taskboard.AgentID) taskboard.Lease {
-			return taskboard.Lease{Token: "tok-" + string(a)}
-		})
+		[]taskboard.AgentID{"worker-a", "worker-b"}, time.Minute)
 	if err != nil {
 		return 0, errors.Wrap(err, "并发认领判定失败")
 	}

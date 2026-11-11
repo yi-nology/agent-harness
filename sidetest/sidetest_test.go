@@ -29,6 +29,7 @@ type memStore struct {
 	done      map[sideeffect.Key]sideeffect.Result
 	uncertain map[sideeffect.Key]string
 	holders   map[string]memHold
+	intents   map[sideeffect.Key]memIntent
 	maxFence  map[string]sideeffect.Fence
 
 	nowFn func() time.Time
@@ -36,7 +37,15 @@ type memStore struct {
 
 type memHold struct {
 	lease   sideeffect.Lease
+	holder  sideeffect.Key
 	expires time.Time
+}
+
+// memIntent 一次未裁决的执行意图。
+type memIntent struct {
+	resource string
+	fence    sideeffect.Fence
+	expires  time.Time
 }
 
 func newMemStore() *memStore {
@@ -44,6 +53,7 @@ func newMemStore() *memStore {
 		done:      map[sideeffect.Key]sideeffect.Result{},
 		uncertain: map[sideeffect.Key]string{},
 		holders:   map[string]memHold{},
+		intents:   map[sideeffect.Key]memIntent{},
 		maxFence:  map[string]sideeffect.Fence{},
 	}
 }
@@ -68,6 +78,20 @@ func (m *memStore) Acquire(_ context.Context, act sideeffect.Action, ttl time.Du
 	}
 
 	now := m.nowLocked()
+
+	// 执行意图未裁决 → 不得重新授予执行权。
+	if it, ok := m.intents[act.Key]; ok {
+		if now.Before(it.expires) {
+			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, nil
+		}
+		// 租约过期 ⇒ 这次尝试的结果未知。
+		m.dropIntent(act, it)
+		if act.RetrySafety != sideeffect.RetrySafetySafe {
+			m.uncertain[act.Key] = "上一次尝试的租约已过期，结果未知"
+			return sideeffect.OutcomeUncertain, sideeffect.Lease{}, sideeffect.Result{}, nil
+		}
+	}
+
 	if h, ok := m.holders[act.Resource]; ok && now.Before(h.expires) {
 		return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, nil
 	}
@@ -75,8 +99,20 @@ func (m *memStore) Acquire(_ context.Context, act sideeffect.Action, ttl time.Du
 	next := m.maxFence[act.Resource] + 1
 	m.maxFence[act.Resource] = next
 	lease := sideeffect.Lease{Resource: act.Resource, Fence: next, TTL: ttl}
-	m.holders[act.Resource] = memHold{lease: lease, expires: now.Add(ttl)}
+	m.holders[act.Resource] = memHold{lease: lease, holder: act.Key, expires: now.Add(ttl)}
+	m.intents[act.Key] = memIntent{resource: act.Resource, fence: next, expires: now.Add(ttl)}
 	return sideeffect.OutcomeApplied, lease, sideeffect.Result{}, nil
+}
+
+// dropIntent 撤销一条执行意图，并把它自己的资源闸一并作废。
+func (m *memStore) dropIntent(act sideeffect.Action, it memIntent) {
+	delete(m.intents, act.Key)
+	if it.resource == "" {
+		return
+	}
+	if h, ok := m.holders[it.resource]; ok && h.holder == act.Key && h.lease.Fence == it.fence {
+		delete(m.holders, it.resource)
+	}
 }
 
 func (m *memStore) nowLocked() time.Time {
@@ -86,18 +122,31 @@ func (m *memStore) nowLocked() time.Time {
 	return time.Now()
 }
 
+// holdOwned 资源闸是否仍由本次尝试持有（只比令牌不够：释放后令牌没变）。
+func (m *memStore) holdOwned(act sideeffect.Action, lease sideeffect.Lease) bool {
+	h, ok := m.holders[act.Resource]
+	return ok && h.lease.Fence == lease.Fence && h.holder == act.Key
+}
+
+// intentOwned 本次尝试是否仍归该令牌所有。
+func (m *memStore) intentOwned(act sideeffect.Action, lease sideeffect.Lease) bool {
+	it, ok := m.intents[act.Key]
+	return ok && it.fence == lease.Fence
+}
+
 func (m *memStore) Complete(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, res sideeffect.Result) (sideeffect.Result, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cur, ok := m.holders[act.Resource]
-	if !ok || cur.lease.Fence != lease.Fence {
-		return sideeffect.Result{}, errors.Wrap(sideeffect.ErrFenceStale, "栅栏令牌已不是最新代", "resource", act.Resource)
-	}
 	if prior, ok := m.done[act.Key]; ok {
 		return prior, nil
 	}
+	if !m.holdOwned(act, lease) || !m.intentOwned(act, lease) {
+		return sideeffect.Result{}, errors.Wrap(sideeffect.ErrFenceStale, "本次持有已失效", "resource", act.Resource)
+	}
 	m.done[act.Key] = res
+	delete(m.intents, act.Key)
+	delete(m.holders, act.Resource)
 	return res, nil
 }
 
@@ -105,11 +154,25 @@ func (m *memStore) Release(_ context.Context, act sideeffect.Action, lease sidee
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cur, ok := m.holders[act.Resource]
-	if !ok || cur.lease.Fence != lease.Fence {
-		return errors.Wrap(sideeffect.ErrFenceStale, "栅栏令牌已不是最新代", "resource", act.Resource)
+	if !m.holdOwned(act, lease) {
+		return errors.Wrap(sideeffect.ErrFenceStale, "本次持有已失效", "resource", act.Resource)
 	}
 	delete(m.holders, act.Resource)
+	// 释放只放闸，不撤销执行意图。
+	return nil
+}
+
+func (m *memStore) Abandon(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.intentOwned(act, lease) {
+		return errors.Wrap(sideeffect.ErrFenceStale, "本次尝试已不属于该令牌", "resource", act.Resource)
+	}
+	delete(m.intents, act.Key)
+	if m.holdOwned(act, lease) {
+		delete(m.holders, act.Resource)
+	}
 	return nil
 }
 
@@ -117,14 +180,18 @@ func (m *memStore) Renew(_ context.Context, act sideeffect.Action, lease sideeff
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cur, ok := m.holders[act.Resource]
-	if !ok || cur.lease.Fence != lease.Fence {
-		// 资格校验与续期在同一次原子操作里：校验不过就不续期。
-		return sideeffect.Lease{}, errors.Wrap(sideeffect.ErrFenceStale, "栅栏令牌已不是最新代", "resource", act.Resource)
+	// 资格校验与续期在同一次原子操作里：校验不过就不续期。
+	if !m.holdOwned(act, lease) || !m.intentOwned(act, lease) {
+		return sideeffect.Lease{}, errors.Wrap(sideeffect.ErrFenceStale, "本次持有已失效", "resource", act.Resource)
 	}
-	cur.expires = m.nowLocked().Add(ttl)
+	now := m.nowLocked()
+	cur := m.holders[act.Resource]
+	cur.expires = now.Add(ttl)
 	cur.lease.TTL = ttl
 	m.holders[act.Resource] = cur
+	it := m.intents[act.Key]
+	it.expires = now.Add(ttl)
+	m.intents[act.Key] = it
 	return cur.lease, nil
 }
 
@@ -132,11 +199,11 @@ func (m *memStore) MarkUncertain(_ context.Context, act sideeffect.Action, lease
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cur, ok := m.holders[act.Resource]
-	if !ok || cur.lease.Fence != lease.Fence {
-		return errors.Wrap(sideeffect.ErrFenceStale, "栅栏令牌已不是最新代", "resource", act.Resource)
+	if !m.holdOwned(act, lease) || !m.intentOwned(act, lease) {
+		return errors.Wrap(sideeffect.ErrFenceStale, "本次持有已失效", "resource", act.Resource)
 	}
 	m.uncertain[act.Key] = reason
+	delete(m.intents, act.Key)
 	return nil
 }
 
@@ -150,6 +217,7 @@ func (m *memStore) ResolveUncertain(_ context.Context, act sideeffect.Action, re
 	if _, ok := m.uncertain[act.Key]; !ok {
 		return sideeffect.OutcomeContended, sideeffect.Result{}, sideeffect.ErrNotUncertain
 	}
+	delete(m.intents, act.Key)
 	if res.Applied {
 		m.done[act.Key] = res.Result
 		delete(m.uncertain, act.Key)

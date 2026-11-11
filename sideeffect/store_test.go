@@ -24,12 +24,16 @@ func act(key, resource string) Action {
 func TestFenceIsMonotonicPerResource(t *testing.T) {
 	st := newFakeStore()
 	ctx := context.Background()
-	a := act("k1", "res-a")
 
 	// 三轮「占用 → 过期 → 再占用」，令牌须严格递增。
+	//
+	// ⚠️ 三轮必须用**不同的 Key**：同一 Key 的执行意图在租约过期后会把那个
+	// Key 转入未知态（v0.33.0 新判据），那不是资源级接管。这里判的是
+	// **资源级**的令牌单调性，与 Key 级的意图判据是两回事。
+	keys := []string{"k1", "k2", "k3"}
 	var prev Fence
-	for i := range 3 {
-		outcome, lease, _, err := st.Acquire(ctx, a, time.Minute)
+	for i, k := range keys {
+		outcome, lease, _, err := st.Acquire(ctx, act(k, "res-a"), time.Minute)
 		if err != nil {
 			t.Fatalf("第 %d 轮 Acquire 失败: %v", i, err)
 		}
@@ -45,7 +49,10 @@ func TestFenceIsMonotonicPerResource(t *testing.T) {
 	}
 
 	// 不同资源各自独立计数（互不影响，但各自单调）。
-	_, leaseB, _, err := st.Acquire(ctx, act("k2", "res-b"), time.Minute)
+	//
+	// 用一个**没参与上面三轮**的 Key：k2 的执行意图在上面的轮次里已过期，
+	// 它再来一次会先撞上「意图未裁决」的判据，测不到资源级的独立性。
+	_, leaseB, _, err := st.Acquire(ctx, act("k9", "res-b"), time.Minute)
 	if err != nil {
 		t.Fatalf("另一资源 Acquire 失败: %v", err)
 	}
@@ -72,7 +79,12 @@ func TestStaleLeaseCannotComplete(t *testing.T) {
 	// 它过期了。
 	st.advance(2 * time.Minute)
 	// 第二代接管。
-	_, lease2, _, err := st.Acquire(ctx, a, time.Minute)
+	//
+	// ⚠️ 接管者用**另一个 Key**：同一 Key 的执行意图在租约过期后会把那个 Key
+	// 转入未知态（而不是重新授予执行权）——那是 Key 级判据，这里判的是
+	// 「旧持有者的迟到 Complete 被拒」这条资源级判据。
+	second := act("k2", "res-a")
+	_, lease2, _, err := st.Acquire(ctx, second, time.Minute)
 	if err != nil {
 		t.Fatalf("接管 Acquire 失败: %v", err)
 	}
@@ -87,7 +99,7 @@ func TestStaleLeaseCannotComplete(t *testing.T) {
 	}
 
 	// 第二代 Complete → 接受。
-	res, err := st.Complete(ctx, a, lease2, Result{Payload: []byte("fresh")})
+	res, err := st.Complete(ctx, second, lease2, Result{Payload: []byte("fresh")})
 	if err != nil {
 		t.Fatalf("当前持有者的 Complete 应被接受: %v", err)
 	}
@@ -108,13 +120,14 @@ func TestStaleLeaseCannotRelease(t *testing.T) {
 
 	_, lease1, _, _ := st.Acquire(ctx, a, time.Minute)
 	st.advance(2 * time.Minute)
-	_, lease2, _, _ := st.Acquire(ctx, a, time.Minute)
+	// 另一个 Key 接管同一个资源（真正的接管：栅栏令牌前进一位）。
+	_, lease2, _, _ := st.Acquire(ctx, act("k2", "res-a"), time.Minute)
 
 	if err := st.Release(ctx, a, lease1); !errors.Is(err, ErrFenceStale) {
 		t.Fatalf("过期持有者的 Release 应被拒，实得 %v", err)
 	}
 	// 新持有者的闸仍在（未被放掉）：再 Acquire 应是 Contended 而非 Applied。
-	outcome, _, _, err := st.Acquire(ctx, a, time.Minute)
+	outcome, _, _, err := st.Acquire(ctx, act("k3", "res-a"), time.Minute)
 	if err != nil {
 		t.Fatalf("Acquire 失败: %v", err)
 	}
@@ -181,13 +194,18 @@ func TestReleaseDoesNotMarkDone(t *testing.T) {
 		t.Fatalf("释放不该标记完成，实得 done=%v", st.done)
 	}
 
-	// 动作仍可被施加。
+	// 动作未被标记为已完成：再抢**不是** replayed。
 	outcome, _, _, err := st.Acquire(ctx, a, time.Minute)
 	if err != nil {
 		t.Fatalf("Acquire 失败: %v", err)
 	}
-	if outcome != OutcomeApplied {
-		t.Fatalf("释放后应仍能获得执行权，实得 %v", outcome)
+	if outcome == OutcomeReplayed {
+		t.Fatalf("释放不该把动作标记为已完成（replayed），实得 %v", outcome)
+	}
+	// 而这次尝试**仍未裁决**（执行意图还在）⇒ 不得重新授予执行权。
+	// 释放只放资源闸；要让这个 Key 重新可执行，得显式放弃（Abandon）。
+	if outcome != OutcomeContended {
+		t.Fatalf("释放只放闸、不撤销执行意图：同 Key 再来应 contended，实得 %v", outcome)
 	}
 }
 
