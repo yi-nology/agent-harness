@@ -315,9 +315,19 @@ func (r *Runner) ExecuteWith(ctx context.Context, act Action, eff Effect) (Outco
 //   - res.Applied == true → 该 Key 记为已完成并留存结果；
 //     之后同一 Key 的 Execute 返回 OutcomeReplayed + 该结果。
 //   - res.Applied == false → 清除未知标记，该 Key 重新可被执行。
+//     **例外**：动作声明 RetrySafetyUnsafe 时，「未生效」不解除阻塞
+//     （ErrUnsafeNotRetryable）——不可重试的动作要重新开门，必须
+//     res.ForceRetryable == true 的显式决策。
 //
 // 裁决**不校验栅栏**：它的依据是下游事实，不是持有权——原持有者可能已经
 // 死亡、租约早已过期，而对账恰恰要在这种情况下进行。
+//
+// # 长对账先认领（Store.BeginReconcile，v0.33.0 起）
+//
+// 查下游可能要几分钟。不认领就对账，两个对账者会同时查同一个 Key、同时
+// 提交裁决——「先到者为准」只是把冲突结果掩盖掉。长对账应先 BeginReconcile
+// 占住对账权（同一 Key 同一时刻至多一个对账者，占用过期可重新认领），
+// 查完再裁决。短对账（进程内一次查询）可以直接裁决。
 //
 // 同一 Key 的多次裁决**先到者为准**（幂等）：后到的裁决不会覆盖先到的结论。
 func (r *Runner) Reconcile(ctx context.Context, act Action, res Resolution) (Outcome, Result, error) {
