@@ -112,12 +112,27 @@ package sideeffect
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"time"
 
 	"github.com/oekit/pkg/errors"
 )
+
+// HashPayload 动作 Payload 的身份摘要（sha256 hex，v0.33.0 后新增）。
+//
+// 存储实现用它把「同 Key 必须同 Payload」落成可持久化、可比对的定长值
+// （Action 身份三元组之一，见 ErrActionConflict）。统一在本包给出：
+// 两个参考实现与宿主各自实现哈希算法的话，比对口径会漂——而身份比对
+// 恰恰是「同一份事实」的判据，判据本身不能有两份。
+//
+// nil 与空切片同值（都哈希为空输入）——Payload 缺省即空，不制造
+// 「没传」与「传了空」的身份分裂。
+func HashPayload(p []byte) string {
+	sum := sha256.Sum256(p)
+	return hex.EncodeToString(sum[:])
+}
 
 // MintHolder 铸造一份持有者身份（Lease.Holder / Reconcile.Holder 的参考
 // 铸造原语，v0.33.0）。
@@ -216,6 +231,30 @@ var ErrNotHolder = errors.New("持有者身份不匹配：本次尝试不归该�
 // 而不是各自按自己那份判（「判据共享一个真相」的另一面：**两个真相
 // 等于没有真相**）。
 var ErrResourceMismatch = errors.New("租约与动作的资源不一致")
+
+// ErrActionConflict 同一 Key 的**动作身份**与首次登记的不一致（v0.33.0 后新增）。
+//
+// # 为什么身份必须在首次 Acquire 时钉死
+//
+// Key 声明「这是同一个逻辑动作」，但 Resource / Payload / RetrySafety
+// 才是这个动作**做什么、失败了怎么办**的定义。三者若可被后续调用改写：
+//
+//   - RetrySafety：首次 Unsafe（明确不幂等）的尝试过期后，重试方换传
+//     Safe 就能拿到执行权——「不可重试」被后到的声明推翻，重复施加的
+//     入口重新打开（评审第三轮 P0 场景）；
+//   - Resource：同 Key 换资源不是重试，是两个动作——租约与意图的登记
+//     会张冠李戴；
+//   - Payload：同 Key 换参数重放的是**另一个请求**，重放旧结果给新请求
+//     是把 A 的答案当 B 的答案。
+//
+// 故身份不一致时的处置是**拒绝且什么都不做**：不授予、不重放既有结果
+// （重放 = 把旧身份的结果交给新身份的调用方）、不转未知态（未知态属于
+// 上一次尝试的事实，与这次调用的矛盾身份无关）。判定优先于已完成重放。
+//
+// 遇到它怎么办：这不是可重试的错误——调用方要么使用与登记一致的
+// 身份，要么承认 Key 撞号了（同一个 Key 被两条不同逻辑动作使用，
+// 是调用方的构造错误），换一个 Key。
+var ErrActionConflict = errors.New("同 Key 的动作身份与首次登记不一致（Resource/Payload/RetrySafety 不是同一个动作）")
 
 // FencedSink 下游资源的「拒收陈旧写入」边界。
 //

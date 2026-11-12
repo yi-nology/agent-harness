@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
@@ -21,14 +22,14 @@ func lockPair(ctx context.Context, tx pgx.Tx, act sideeffect.Action) (*resourceR
 	if err := ensureResourceRow(ctx, tx, act.Resource); err != nil {
 		return nil, nil, err
 	}
-	if err := ensureActionRow(ctx, tx, act.Key); err != nil {
+	if err := ensureActionRow(ctx, tx, act); err != nil {
 		return nil, nil, err
 	}
 	rr, err := lockResource(ctx, tx, act.Resource)
 	if err != nil {
 		return nil, nil, err
 	}
-	a, err := lockAction(ctx, tx, act.Key)
+	a, err := lockAction(ctx, tx, act)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -122,10 +123,9 @@ func (s *EffectStore) Abandon(ctx context.Context, act sideeffect.Action, lease 
 	return err
 }
 
-// Renew 续期并**同时确认持有资格**：闸已易主或尝试已失效则拒绝续期
-// （假续期是重复施加的入口）。
+// Renew 续期并**同时确认持有资格**：闸已易主、尝试已失效**或租约已过期**
+// 则拒绝续期（假续期是重复施加的入口）。
 func (s *EffectStore) Renew(ctx context.Context, act sideeffect.Action, lease sideeffect.Lease, ttl time.Duration) (sideeffect.Lease, error) {
-	now := s.clock()
 	return withinTx(ctx, s.pool, func(tx pgx.Tx) (sideeffect.Lease, error) {
 		rr, a, err := lockPair(ctx, tx, act)
 		if err != nil {
@@ -136,6 +136,19 @@ func (s *EffectStore) Renew(ctx context.Context, act sideeffect.Action, lease si
 		}
 		if err := intentOwnerErr(act, lease, a); err != nil {
 			return sideeffect.Lease{}, err
+		}
+		// 过期即资格终止：租约已过期而无人接管时，旧持有者不得复活它。
+		// 判定读**行锁之后**的当前时刻（nowIn），拿锁期间的时间流逝不被
+		// 计入租约寿命；过期的尝试本该由 Acquire 转入未知态先对账，
+		// 续期放行就绕开了那条判据（Store.Renew 契约「过期即资格终止」）。
+		now, err := s.nowIn(ctx, tx)
+		if err != nil {
+			return sideeffect.Lease{}, err
+		}
+		if rr.until == nil || !rr.until.After(now) {
+			return sideeffect.Lease{}, errors.Wrap(sideeffect.ErrFenceStale,
+				"租约已过期且无人接管——到期即资格终止（要继续做请重新 Acquire）",
+				"key", string(act.Key), "resource", act.Resource)
 		}
 		until := now.Add(ttl)
 		rr.until = &until

@@ -39,6 +39,18 @@
 | `ErrPlanInconsistent` | 计划字段互不自洽（非 BuildPlan 产物） | 修声明：计划只能由 BuildPlan 造，手搓矛盾字段一律拒绝 |
 | `ErrNotWired` | 归档/摘要接口未装配 | 修声明：装配宿主接口后再压实 |
 
+### backend
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrNotSatisfied` | 要求未被该后端满足（隔离不够强 / 出站档低于要求 / 自报兜不住预算） | 换后端或降要求；报错文案带两侧值，重试无意义 |
+| `ErrNoBackend` | 登记簿里没有能满足要求的后端 | **绝不降级**：补登记能满足的后端，或改要求；重试无意义 |
+| `ErrBadSpec` | 要求自身不合法（越界档位 / 负预算） | 修声明：改调用方参数 |
+| `ErrSilent` | 后端未声明该能力面（沉默按最弱处理） | 补声明或换后端——「没声明」与「声明了但不够强」修法不同，两类报错分得开 |
+| `ErrDuplicateID` | 同一 ID 被登记两次 | 修声明：登记簿去重 |
+| `ErrBadBackend` | 登记的后端不合法（nil / 空 ID） | 修声明 |
+| `ErrUnknownProgram` | 兜底后端没有登记这个名字的处理函数 | 修声明：先 `Inline.Register` 再执行；不静默跑空 |
+
 ### checkpoint
 
 | 哨兵 | 触发条件 | 调用方处置 |
@@ -79,6 +91,14 @@
 |---|---|---|
 | `errEnvCannotEnforce`（包内） | 禁网档位无法靠环境变量兑现（必须由带能力声明的后端强制） | 修声明：区分「档位声明写错」与「执行环境缺能力」，后者换带能力声明的后端 |
 
+### eval
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrNoChecks` | 评估清单为空（零判项不给「全过」的假绿） | 修声明：显式列出判项；「没有检查」与「检查通过」必须分得开 |
+| `ErrBadSpec` | 评估清单不自洽（判项不在词表内 / 重复列出 / 期望清单缺失） | 修声明 |
+| `ErrBadRecord` | 录制文件不合法（编码失败 / 行解码失败） | 修数据：按行号定位坏行 |
+
 ### gatecheck
 
 | 哨兵 | 触发条件 | 调用方处置 |
@@ -96,6 +116,18 @@
 | `ErrUnknownGuard` | 撤销一个不存在的守卫 | 修声明：不静默忽略，核对宿主的守卫账本 |
 | `ErrNilMutate` | 换份的改写函数为 nil | 修声明：静默无动作比报错更难查 |
 | `ErrNilSubscriber` | 换份订阅回调为 nil | 修声明：装配订阅回调 |
+
+### handoff
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrUnknownKey` | 交接单不存在 | 修声明：先 `Offer` 再动作；首交前的查询走它属正常态 |
+| `ErrTaken` | 交接单已被领取（并发 Take 的输家 / 已领取后 Cancel） | 输家属正常结果：放弃本次领取；收回方按「已被接手」改走对账 |
+| `ErrExpired` | 交接单已超时限（迟到领取 / 迟到回执） | 重新交接 = 新一代；先对账（工作可能已被做了或没人做） |
+| `ErrNotAddressee` | 领取者不是指定接收方 | 修声明：只有 To 能领取 |
+| `ErrNotSource` | 收回者不是交接发起方 | 修声明：收回权只在 From |
+| `ErrLeaseLost` | 领取令牌不匹配（凭令牌认人，不凭内容） | 对账：责任期已易主或已收口，迟到动作一律放弃 |
+| `ErrAlreadySettled` | 交接单已是终态 | 放弃本次动作；重新交接开新一代 |
 
 ### netguard
 
@@ -155,6 +187,9 @@
 | `ErrResourceMismatch` | 租约与动作的资源不一致（A 资源的租约被拿去做 B 资源的操作） | 修声明：Complete/Renew/MarkUncertain 的 act 与 lease 必须同资源，两个真相等于没有真相 |
 | `ErrReconcileTaken` | 该 Key 已有未过期的对账占用（同一时刻至多一个对账者） | 等待或放弃：占用过期后可重新认领（BeginReconcile 可重入）；不要并发抢对账 |
 | `ErrUnsafeNotRetryable` | 动作声明为不可重试（Unsafe）——对账判「未生效」也不解除阻塞 | 二选一：承认查询不可信重新对账；或确认结论可靠并接受风险后，带 `ForceRetryable=true` **显式**重新裁决 |
+| `ErrActionConflict` | 同一 Key 的动作身份（Resource/Payload/RetrySafety）与首次登记不一致——判定优先于「已完成 → 重放」 | 不可重试：要么用与登记一致的身份，要么承认 Key 撞号（两条逻辑动作共用一个 Key），换 Key |
+| `ErrReconcileLost` | 出示的对账占用凭据不是当前有效的一份（已过期 / 已被接管 / 从未认领） | 迟到的对账者：放弃本次裁决；要提交就重新 BeginReconcile 认领后再查（旧查询窗口跨越了状态变化，不可信） |
+| `ErrInvalidTTL` | BeginReconcile 的 ttl ≤ 0（出生即过期的认领 = 没有占用） | 修正入参：给正时长的认领窗口（对账查询的预估耗时 + 余量） |
 
 ### spill
 
@@ -177,6 +212,14 @@
 | `ErrBlocked` | 依赖未完成 | 等：依赖完成后再来认领（可稍后重试） |
 | `ErrTerminal` | 任务已是终态 | 放弃：读既有结论，不重开 |
 | `ErrLeaseLost` | 令牌不匹配（租约已易主或被释放过） | 对账：本次操作作废，重新 `Claim` |
+
+### examples/containerbackend
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrEngineCall` | Docker Engine 调用失败（创建 / 启动 / 等待 / 读取任一步） | 重试或查引擎侧（不可达 / 镜像不存在 / 参数被拒）；作业没跑起来属基础设施故障 |
+| `ErrNotWired` | K8s Job 适配尚未接入（占位） | 修声明：按包注释四步接入后再登记进登记簿 |
+| `errWallClock`（包内） | 墙钟预算到点（context.Cause 的标记；对外呈现为 `Result{OK:false, Detail:{budget_exceeded: wall_clock}}`，不是 error 返回） | 无需处置：预算被强制兑现是契约行为；作业没跑完按作业失败对待 |
 
 ### tooldisclose
 
