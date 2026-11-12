@@ -48,7 +48,7 @@ package cmdpolicy
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/oekit/pkg/errors"
@@ -303,7 +303,7 @@ func (p *Policy) Rules() []Rule {
 	for _, c := range p.rules {
 		out = append(out, c.rule)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b Rule) int { return strings.Compare(a.Name, b.Name) })
 	return out
 }
 

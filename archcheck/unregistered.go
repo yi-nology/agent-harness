@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -80,7 +80,7 @@ func packageDirs(root string, ignore map[string]bool) ([]string, error) {
 	if walkErr != nil {
 		return nil, fmt.Errorf("扫描包目录失败（未登记包判据给不出结论）: %w", walkErr)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 

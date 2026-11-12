@@ -19,7 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -153,7 +153,7 @@ func List(root, sessionID string) ([]Item, error) {
 		}
 		items = append(items, Item{Name: e.Name(), Bytes: info.Size(), ModTime: info.ModTime()})
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].ModTime.After(items[j].ModTime) })
+	slices.SortFunc(items, func(a, b Item) int { return b.ModTime.Compare(a.ModTime) })
 	return items, nil
 }
 
@@ -245,7 +245,7 @@ func Prune(dir string, keepNewest int, ttl time.Duration) {
 		}
 		files = append(files, mf{e.Name(), info.ModTime()})
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].mod.Before(files[j].mod) }) // 最旧在前
+	slices.SortFunc(files, func(a, b mf) int { return a.mod.Compare(b.mod) }) // 最旧在前
 
 	// 按龄：超龄即删（keepNewest 数护栏另算，不互相豁免——量纲不同各管各）
 	if ttl > 0 {

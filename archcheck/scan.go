@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -273,6 +273,6 @@ func longFilesReport(root string, scanRoots []string, limit int) ([]string, erro
 			return nil, fmt.Errorf("阈值扫描 %s 失败（该子树未被判定，门禁给不出结论）: %w", sr, walkErr)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }

@@ -46,7 +46,7 @@
 package budget
 
 import (
-	"sort"
+	"slices"
 	"sync"
 )
 
@@ -181,7 +181,7 @@ func (m *Meter) Segments() []SegmentUsage {
 			extra = append(extra, s)
 		}
 	}
-	sort.Slice(extra, func(i, j int) bool { return extra[i] < extra[j] })
+	slices.Sort(extra)
 	for _, s := range extra {
 		out = append(out, SegmentUsage{Segment: s, Tokens: m.seg[s]})
 	}
@@ -253,7 +253,7 @@ func (m *Meter) Snapshot(cap int) Report {
 			extra = append(extra, s)
 		}
 	}
-	sort.Slice(extra, func(i, j int) bool { return extra[i] < extra[j] })
+	slices.Sort(extra)
 	for _, s := range extra {
 		rep.Segments = append(rep.Segments, SegmentUsage{Segment: s, Tokens: m.seg[s]})
 		rep.Input += m.seg[s]

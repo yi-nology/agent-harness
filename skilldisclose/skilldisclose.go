@@ -32,7 +32,8 @@
 package skilldisclose
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/oekit/pkg/errors"
@@ -141,7 +142,7 @@ func New(skills []Skill) (*Catalog, error) {
 		})
 		c.byName[name] = s
 	}
-	sort.Slice(c.skills, func(i, j int) bool { return c.skills[i].skill.Name < c.skills[j].skill.Name })
+	slices.SortFunc(c.skills, func(a, b entry) int { return strings.Compare(a.skill.Name, b.skill.Name) })
 	return c, nil
 }
 
@@ -216,11 +217,11 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 		}
 		scored = append(scored, Scored{Skill: e.skill, Score: score})
 	}
-	sort.SliceStable(scored, func(i, j int) bool {
-		if scored[i].Score != scored[j].Score {
-			return scored[i].Score > scored[j].Score
+	slices.SortStableFunc(scored, func(a, b Scored) int {
+		if c := cmp.Compare(b.Score, a.Score); c != 0 {
+			return c
 		}
-		return scored[i].Skill.Name < scored[j].Skill.Name
+		return strings.Compare(a.Skill.Name, b.Skill.Name)
 	})
 
 	res := Result{Scored: scored}

@@ -12,7 +12,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -66,7 +66,7 @@ func measure(pkg string) (int, []string, error) {
 	for d := range depSet {
 		deps = append(deps, d)
 	}
-	sort.Strings(deps)
+	slices.Sort(deps)
 	return loc, deps, nil
 }
 
@@ -176,7 +176,7 @@ func listPackages() ([]string, error) {
 		}
 		out = append(out, e.Name())
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 

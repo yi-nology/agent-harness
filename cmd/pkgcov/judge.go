@@ -7,7 +7,7 @@ package main
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/oekit/pkg/stringx"
@@ -164,6 +164,6 @@ func splitList(s string) []string {
 	// 拆逗号 + 去空白 + 丢空项是上游 stringx.SplitCSVNonEmpty 的逐字语义；
 	// 排序是本函数自己的要求（清单出口一律有序，免得两次输出两种顺序）。
 	out := stringx.SplitCSVNonEmpty(s)
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
