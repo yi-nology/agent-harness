@@ -1,668 +1,872 @@
 # goagent-kernel CHANGELOG
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
-> （v0.31.0 起项目由 `agent-harness` 更名 `goagent-kernel`；历史条目保留旧名不改写。）
 
-## [v0.33.0] — 2026-11-11
+## [v0.34.1] — 2026-11-12
 
-> ⚠️ **早鸟 tag**：v0.33.0 在评审第二轮修复（PR #120，#116-#119）合入时即被
-> 打在 `59b7e31` 上（go proxy 已缓存该快照，tag 不可重推）。它的内容是本节
-> 所述改动的一个**子集**——完整的清零轮（十一车道）随后以 **v0.34.0** 发布，
-> 见下一节。按 v0.33.0 的宿主只需再升级一次 v0.34.0。
+### 重构(errors)：全仓 errors.Errorf → fmt.Errorf——解除 oekit/pkg 钉回的本仓侧前置
+
+pkg v0.45.0 起删除 errors.Errorf（BREAKING #378：普通错误包装统一 stdlib
+fmt.Errorf，本包只留 stdlib 没有的能力 Wrap kv/Recovered/MultiError 等）。
+本仓此前把 pkg 钉回 v0.44.0 正是为了避开它，钉回条件写明「上游 guardx
+适配新 errors 口径 + 本仓 delegate 迁移后解除」。
+本提交是本仓侧的迁移：13 个文件 70 处 errors.Errorf → fmt.Errorf，
+逐处等价——
+- 70 处全部不含 %w（grep 验证），纯格式化消息，fmt.Errorf 输出逐字相同；
+- 没有一处是 sentinel（哨兵一律 errors.New，迁移未触碰）；
+- 不依赖 Errorf 的 nil 旧习（Errorf("") → nil 那条 quirk，本仓无此输入）。
+9 个文件补 "fmt" import（生产代码 +9 行，README 工程底座同步 35457 → 35466，
+docsync 判相等）。旧地板（pkg v0.44.0）下 go vet ./... 全绿——本提交可独立存在。
+
+- 杂务(deps)：依赖地板追平上游——guardx/toolgate/concurrency/pkg，解除 pkg 钉回
+
+| 依赖 | 旧 | 新 | 该 tag 的内容 |
+|---|---|---|---|
+| oagentkit/guardx | v0.24.4 | v0.24.5 | logredact reflect.Ptr→Pointer（go 1.26 govet）+ 地板追 pkg v0.46.0 |
+| oagentkit/toolgate | v0.17.2 | v0.17.3 | 纯地板追平（pkg v0.46.0 / concurrency v0.34.0），零行为变更 |
+| oekit/concurrency | v0.33.0 | v0.34.1 | Go 1.26 现代化清扫（range N / wg.Go / range-int），纯等价重构零行为变更 |
+| oekit/pkg | v0.44.0 | v0.46.0 | **解除钉回**：v0.45.0 删 errors.Errorf（本仓已在上一提交迁完）；v0.46.0 单源收敛 + PanicError/Recovered 新增 |
+钉回解除的两个条件至此都满足：上游 guardx v0.24.5 已适配新 errors 口径
+（require pkg v0.46.0、全仓零 Errorf 使用），本仓 delegate 等 13 文件已迁移。
+验收：make check 全绿（fmt/vet/lint/test/cover-gate/vuln/race/crossbuild/
+archcheck/docsync/apilifecheck/卫生），make integration（真实 PostgreSQL 16）
+全绿。三个上游 tag 的 release notes 均声明零行为变更（除 pkg 的 Errorf 删除，
+本仓已消化）。
+
+- 杂务：高版本 Go 现代化——sort→slices/cmp、range-over-int、slices.Sorted(maps.Keys)、b.Loop（零行为变更）
+
+- sort.Strings/sort.Slice 自然序 → slices.Sort；sort.Slice(SliceStable) 比较器 → slices.SortFunc/SortStableFunc（cmp.Compare/strings.Compare/time.Compare）
+- 计数循环 for i := 0; i < N; i++ → for i := range N（pii/checkpoint/parse/worktree）
+- toolgate.namesOf 收集+排序 → slices.Sorted(maps.Keys(set))
+- 干净 benchmark 的 b.N 循环 i 不用 → for b.Loop()（ptc 两处因 StopTimer/ReportMetric 交互保守用 for range b.N）
+- 不动 go.mod、不动生成代码；gofmt/vet/build/test 与 -race 抽查全绿
+
+
+- CI：check job 名改短并加长度门禁——GitHub 截断会让分支保护的 context 永远失配
+
+症状：PR 显示 BLOCKED，三个检查全绿，合并被拒「the base branch policy prohibits the merge」。根因：ci.yml 的 check job 名超过 GitHub 的 100 字节上限被截断（记下的名字以 ... 结尾），而分支保护的 required context 是未截断的全名 ⇒ 两者永远匹配不上 ⇒ 本仓此后每个 PR 都卡住。
+修法：job 名改短（≤ 90 字节，GitHub 不再截断）；新增 make cijobname 门禁：任一 job 名超 90 字节即红并指出该改哪一行。改 job 名仍须同步更新分支保护的 required contexts（逐字相同）——那条关系在 GitHub 侧，离线判不了，已写进门禁注释。
+
+
+- 文档(readme)：工程底座表行数同步——现代化净删 6 行（35463→35457，docsync 门禁）
+
+- 测试(examples)：跨进程快照单调——两个真实进程同时提交（#131）
+
+评审第三节的场景表要求「两个进程同时提交快照 ⇒ 持久化 Seq 严格单调」。
+逐条核对后，其余六条在真实 PostgreSQL 上都有实证，唯独这一条只到
+「进程内并发」为止：TestSnapshotConcurrentSaveIfNewer 并发的是同一个
+进程里的 8 个 goroutine——共享同一个连接池、同一个运行时、同一份内存。
+它证明的是「一个进程内的并发提交不会写坏单调性」，没有证明「两个互不
+相识的进程同时提交也不会写坏单调性」。
+单调闸（checkpoint.StoreCAS 的 SaveIfNewer）承诺的是存储侧判定：只有
+已持久化的序号严格小于本次序号时才写入。这条承诺要跨进程成立，前提是
+判据不依赖任何进程内状态——而这一点只能由真实进程证明。
+新增 examples/pgstore/pg_e2e_snapshot_test.go（unix build tag），复用既有
+的 re-exec 子进程夹具：
+- TestPGE2ETwoProcessSnapshotSameSeq：两个真实子进程经同一绝对时刻屏障
+  同时提交同一 (RunID, Seq) ⇒ 恰好一个 SAVED、恰好一个 STALE；
+- TestPGE2ETwoProcessSnapshotDifferentSeq：两个真实子进程同时提交不同 Seq
+  ⇒ 落库的必然是较大的那个（只进不退，不是「不越界」）；且竞争结束后闸
+  依然立着，较小序号补交仍被拒。
+配套：pg_e2e_child_test.go 新增 childModeSnapshotSave 剧本（等屏障 → 提交
+一次快照 → 报告 SAVED/STALE）；pg_e2e_env_test.go 的 e2eEnv 增 snaps 字段
+与 startSnapshotChild（屏障时刻用 Unix 纳秒绝对值）。
+反向验证：把 SaveIfNewer 的单调闸条件改成恒真后，两条用例当场变红——同
+序号那条 saved=2 stale=0，不同序号那条竞争结束后较小序号被接受；改回
+原实现复跑恢复绿。
+只加示例侧的跨进程验证，不改内核包、不加生产依赖。
+
+- 测试(examples)：PG 集成补两处缺口——标记真写失败与事务中间死亡（#129）
+
+评审第五节交付目标③（真实 PostgreSQL + 双 Worker + SIGKILL 验证）已由 PR #125 落地
+（`examples/pgstore` + `sidetest`/`boardtest` 契约套件 + 三条 SIGKILL e2e + compose +
+CI `integration-pg` job），本地实测全绿（`make integration`：29 条契约 + 栅栏套件 +
+三条 e2e，9.9s）。本提交补齐该车道尚未覆盖的两处缺口——两处都直接对着评审第二节
+的结论，不是「顺手加的测试」。
+缺口①：真实 PG 上「标记**真写失败**」没有断言（评审问题 A 的另一半）
+共享契约套件（`sidetest/markfail.go`）注入的是**调用面**故障：底层写成功、调用方拿到
+错误。那是最坏的一种，却**没有**真的让写失败。真实 PG 上的写失败走的是另一条路：
+语句报错 ⇒ **事务整体回滚** ⇒ 意图原封不动。内存实现用 mutex 模拟原子性，它的
+「回滚」只是「写了一半」的镜像；真库的回滚语义（一个事务里既有撤销意图、又有置未知、
+又有写意图）得由真库自己证明。
+补法：给动作行加一条 CHECK 约束，让 `MarkUncertain` 写进去的 `reason` 违反约束 ⇒
+UPDATE 报错 ⇒ 事务回滚（约束只加在本用例自己的 schema 里，用完即删，不碰生产代码）。
+断言链：意图仍在 + 未知标记没被写上 ⇒ 同一 Key 的下一次 `Acquire` 拿不到执行权 ⇒
+租约过期且仍未裁决 ⇒ 转入需对账态。
+缺口②：SIGKILL 发生在**事务中间**的路径没被走过
+已有三条 e2e 的 SIGKILL 都发生在**没有未提交事务**的时刻（子进程挂在动作体里，
+动作体的事务早已提交）⇒ 库侧本来就干净，「回滚」这件事没被走过。若将来有人把
+`Acquire` 的事务拆成两次提交，被杀的进程就会在库里留下半截状态——而这个形态只有在
+「进程死在事务中间」时才会显形（正常路径下事务都会提交或回滚）。
+补法：子进程加一个「只抢闸」模式（`pg_e2e_child_test.go`），让它卡在父进程持有的
+行锁上（事务已开、未提交），父进程在它卡住时 SIGKILL 它 ⇒ 断言：库里不留它插入的
+资源行（事务整体回滚）、父进程的行锁不被拖住、同一个 Key 之后照常能拿到执行权、
+动作体一次都没执行。
+一个必须说清的技术前提：SIGKILL 之后，PG 侧的后端要等到「下一次从 socket 读」
+才发现对端已经没了，而它此刻正卡在行锁上（不读 socket）⇒ 事务与锁会滞留一段时间，
+库里暂时是「已死进程留下的未提交事务」。断言它什么时候消失就成了时序赌博。
+故用例在 SIGKILL 之后**显式回收**那个后端（PG 回收后端时回滚其事务）——与 PG 自己
+发现对端死亡后的处置是同一条路径，只是把时机变成确定的。
+反向验证（两条各注入一处坏实现，验完即删）：
+  - `MarkUncertain` 先在**独立事务**里清掉意图 ⇒ 新用例在「意图必须仍在」那条变红；
+  - `Acquire` 的「登记资源行」拆成独立一次提交 ⇒ 新用例在「资源行不该残留」那条变红。
+「好实现能过」不等于「判据有分辨力」——只有「坏实现会红」才钉得住。
+配套：README「工程底座」表的测试文件数 220 → 222（docsync 对这三项判相等、不留容差）。
+
 
 ## [v0.34.0] — 2026-11-12
 
+### 新增(examples)：PostgreSQL 参考存储 + 真实进程故障恢复 + compose 部署案例（#94 #95 #84 #105）
 
+把「跨进程判据归存储，不归进程」从单进程内存验证推进到真实数据库与真实进程：
+- #94：examples/pgstore 落 sideeffect.Store（Acquire 三判合一一个事务：FOR UPDATE
+  行锁 + 契约顺序判定 + 令牌/MintHolder 持有者身份/执行意图同事务落库；五条凭据
+  方法同事务三项联查，校验失败整体回滚——「标记写失败必须保住执行意图」由此成立）、
+  taskboard.Board（含 RenewingBoard，令牌随机铸造、代次同源）、checkpoint.StoreCAS
+  （条件 upsert 拒陈旧拒零）。sidetest 29 条 + boardtest 全家族在真实 PostgreSQL
+  上与内存版跑同一段套件，套件不为任何实现开后门。
+- #84：sideeffect.FencedSink 的 PG 下游参考实现——栅栏预占是一条带条件的
+  INSERT … ON CONFLICT DO UPDATE（0 行即陈旧、零写入），写入体经 ExecWithin 走
+  同一事务（不得部分写落成事务语义）。判据收编为共享套件 sidetest.RunSinkContract
+  6 条，内存替身与 PG 跑同一段断言；三步非原子反面教材保留作确定性负对照。
+- #95：SIGKILL e2e（unix tag，re-exec 模式）——子进程执行动作 → SIGKILL → 等 TTL
+  过期 → 同一 Key 转需对账不被重放；对账「已生效」后只重放结果（动作体恰 1 次）；
+  双进程竞争恰好一个 OutcomeApplied、下游恰好一代令牌。
+- #105：docker compose 一套环境服务两件事——默认 profile 起 postgres + pgsmoke
+  部署冒烟（一条命令跑通），verify profile 容器里跑全部契约套件 + e2e；Kubernetes
+  为可选形态（README 说明映射），不作默认路径。make integration 为本地等价入口，
+  compose 起不来明确报错不静默跳过。
+配套：CI 新增 integration-pg job（postgres service container）；go.mod 注明
+github.com/jackc/pgx/v5 v5.13.0（仅 examples/pgstore 引用，内核依赖图无驱动，
+policy 登记 ext:github.com/jackc 判着）；PKG_COV_EXEMPT/PKG_NO_TEST_EXEMPT 登记
+结构性豁免（理由与边界见 Makefile）；docsync 口径重算（sidetest 行、工程底座
+三数、USAGE policy 登记数 45）；CHANGELOG 补 v0.33.0 小节。
 
-> **本版的三处契约变更同批落库（一个提交）**：`sideeffect.Store` 新增 `Abandon`、
-> `taskboard.Board.Claim` 改签名、`checkpoint.StoreCAS.SaveIfNewer` 拒收 `Seq == 0`。
-> 而仓内有两处实现它们的地方——`examples/reference-runtime` **同时**实现前两个接口，
-> `checkpoint` 的 e2e 测试存储实现 `sideeffect.Store`：接口一改它们就编不过，
-> 而测试存储按新契约写、它在旧接口下也编不过。⇒ 「改接口」与「改实现」**互为前提**，
-> 只能同批落库，否则中间提交是红的。宿主升级仍按下面各节逐条迁移。
+### 新增(api)：API 生命周期分级与机器判据——api-lifecycle.yaml + apilifecheck + 全仓 44 包标注（#113 #104）
+
+* docs(api): API 兼容策略与全仓错误哨兵语义总表（#104）
+- docs/api-compat.md：分级判定规则（什么算 breaking：改签名/改语义/改默认值/
+  删导出符号）、三个级别的承诺、破坏性变更五步流程、Experimental→Stable 晋级
+  条件、清单与标记格式说明；
+- docs/error-semantics.md：全仓 57 个哨兵 + 5 个结构化错误类型按包成表
+  （哨兵 / 触发条件 / 调用方处置三档口径：重试/对账/修声明），含未导出哨兵
+  的间接判定说明；本表后续由 apilifecheck 与代码双向判等（#113 同批）；
+- README 文档一览、USAGE 口径表（三个口径 → 四个口径，新增「生命周期登记」
+  机器校验行）、AI-GUIDE 任务 A 清单与门禁速查表同步。
+* feat(api): API 生命周期分级——api-lifecycle.yaml 清单 + apilifecheck 门禁 + 全仓 44 包标注（#113）
+全仓此前无任何稳定性标记，BREAKING 全靠单篇 CHANGELOG 承担迁移说明，没有
+机器可判的机制。本批落三件套（声明 + 判据 + 文档已在 #104 落 docs/）：
+- api-lifecycle.yaml：全部 44 个生产包定级（Stable 26 / Experimental 18 /
+  Deprecated 0），逐包必填 reason；门面包用 follows_upstream 注明跟随上游；
+- cmd/apilifecheck（挂 make check 链，architecture-check/docsync 同级，
+  不进 ci.yml 新 job）：判清单↔包注释标记一致、覆盖全部生产包（漏登记与
+  幽灵登记双红）、Deprecated 替代指向真实存在、门面上游在 import 面内、
+  错误登记表↔代码双向判等、两份文档机器口径块判等；测试覆盖 90.1%；
+- 全仓 44 个包的包注释（package doc）打「生命周期: <级别>」标记；
+- CHANGELOG v0.33.0 补机制落地小节（#113 #104）。
+分级判定规则成文于 docs/api-compat.md；错误语义总表见 docs/error-semantics.md。
+* docs(api): 合并对账——登记 #121 车道四个新哨兵 + 重算工程底座实测
+- #121（sideeffect 第二轮）新增 ErrNotHolder / ErrResourceMismatch /
+  ErrReconcileTaken / ErrUnsafeNotRetryable，按契约注释补进
+  docs/error-semantics.md——apilifecheck 的「新增错误必须登记」判据在
+  合并现场当场命中四处，判据是活的；
+- 工程底座三项确定性量按合并后实测重算（33,428 行 / 181 文件 / 215 测试文件）。
+* fix(apilifecheck): 包目录键统一斜杠形态——windows 的 filepath.Rel 返回反斜杠，与清单键对不上（windows CI 真跑测试抓到）
+* docs(readme): 工程底座行数重算——windows 路径修复提交 +3 行后同步实测值
+
+### 新增：五处缺陷修复——恢复对账/逃逸口赋值路径/压力矩阵/故障注入/轨迹补面（#90 #92 #93 #98 #99）
+
+下游要做什么：零 API 删除、零依赖地板变化、零调用面改动；本版新增的
+`checkpoint.Reconcile` 与 `checkpoint.AnomalySideEffectConflict`、trajectory 的
+两个新行类目与 8 个 OTel 属性、eventbus 的 8 个新事件词表均为增量——
+不接线即不影响既有行为，接了才生效。
+#90 checkpoint：恢复判定与副作用记录协调。此前 BuildPlan 只看快照、sideeffect
+闸只看自己的账，「快照说已完成、闸说结果未知」可以同时成立——恢复按快照跳过，
+那个副作用既没对账也没重做，失效静默。新增 `Reconcile(plan, views)` 纯函数
+（判据落 checkpoint 侧，不 import sideeffect）：计划要跳过的步骤，闸侧必须是
+settled/absent 才放行；uncertain/in_flight/unrecorded/unknown 四种坏组合一律
+判快照不可信 ⇒ 阻塞（Blocked() 为真、Skip/Run 清空、逐冲突点名+可读原因）。
+宿主接线口径（Store.Acquire 唯一观察口按 Outcome 映射 GateState）写在
+reconcile.go 头注。用例：判据负例逐格必红 + 端到端两条弧（乐观落库→崩溃→
+重启→阻塞→裁决→解阻；裁决「未生效」后仍阻塞直到真正重做）。
+#92 archcheck：AllowUnmanaged 逃逸口补上赋值路径。字面量判据判不出
+`opts.AllowUnmanaged = cfg.Unmanaged`（变量赋值/配置驱动）——生产代码最常见
+的写法恰好全盲。新增第二道判据（unmanaged_assign.go/unmanaged_types.go，同一
+规则 harness-ptc-unmanaged-escape）：三趟 AST 追踪（go/types 的等价手段，不引
+其整仓类型检查成本）——类型层（谁是谁、谁带着，嵌入同判）→ 变量层（var/短
+声明/取址/容器/参数/接收者，包级跨文件收齐）→ 赋值层（对持有者的字段赋值即
+报）。按赋值路径判不按值判（=cfg.X 与 =false 都报）；反向验证六形态注入必红、
+宿主自建同名字段不误伤；残余盲区（接口/无类型返回值/深层容器）写明在头注与
+违规文案，不假装覆盖。
+#93 ptc：执行预算压力测试矩阵。每格断言资源回收而非只看结果：进程内三格
+（墙钟耗尽/取消/预算耗尽 → goroutine 回落）+ 子进程四格（启动即异常退出→
+有限时间内干净报错无残留；运行中被外部 SIGKILL——OOM killer 同形态注入→
+错误可读、PID 被收割、宿主继续可用；真 OOM cgroup 兜底→补回收断言；FD 回收
+→linux 多轮执行后描述符数不涨）。阈值可配置防 flaky
+（GAK_STRESS_TOLERANCE/SETTLE_MS/FD_TOL），goroutine 基线取多次采样最小值，
+到点未回落即红附全量栈快照。矩阵进 CI（ubuntu 上 FD/真 OOM 真跑）。
+#98 checkpoint：故障注入矩阵，逐格写明期望失败形态。写库失败注入→显式失败+
+闸回滚⇒同序号可重试不卡死；并发 Seq 冲突（8 闸抢同序号）⇒恰好 1 赢家、
+7 输家 ErrStaleSeq 变红不静默覆盖、输家重灌后有序推进；恢复中断⇒可再次恢复
+且已生效副作用不重放（含「中断在快照之前」半格：快照落后于副作用账时重跑被
+闸拦成 replayed）；双 Worker 同任务恢复⇒恰好一个施加、另一个被有序拒绝
+（Contended/Replayed），副作用计数为 1。并发格过 -race。
+#99 trajectory：SideEffect 与 Checkpoint 的 OTel 语义。新增两类行：副作用行
+（授予段 granted→completed/abandoned/uncertain 起止相减实测时长；对账段
+uncertain→resolved_applied/resolved_cleared；点观察 replayed/contended 落孤儿行）
+与快照行（checkpoint_committed 点事件落孤儿行——没有实测时长就不写时长，
+不拿 0 冒充）。span 状态语义：uncertain=error（Key 被硬阻塞必须对账）、对账
+挂起=unset、结论=ok。eventbus 词表新增 8 个事件常量（单源管理）；契约表
+AttrSpecs 同步 8 条属性（harness.sideeffect.*/harness.checkpoint.*，命名与既有
+类目同构），既有双向对拍判据全适用（属性名唯一/取值域一致/Go 类型对拍/无界
+不进 metric label）；「内核只给映射、宿主负责投递」边界不变——发布接线归宿主，
+sideeffect 侧事件化留给副作用车道收口。
+配套：trajectory 按行族重新分组（词表/标识/payload/投影各自成文件，
+Projector 方法数回阈值内）；README 包表与工程底座三数按 docsync 口径重算；
+CHANGELOG v0.33.0 段补五节。
+
+### 新增(sideeffect)!：持有者身份/对账占用/Unsafe 裁决分离/标记失败判据（#82 #83 #88 #89 #96）
+
+三项联查（#83）：Lease 新增 Holder（存储侧铸造，MintHolder 参考原语）——
+栅栏令牌经下游流转可被冒充，持有者身份不经下游流转；新增 ErrNotHolder /
+ErrResourceMismatch 哨兵；Complete/Renew/MarkUncertain/Abandon/Release 五口
+三项联查进契约硬要求第 3 条；sidetest 新增持有者身份一族三条（铸造 / 冒充
+被拒 / 跨资源被拒）。
+对账占用（#88）：Store 新增 BeginReconcile——同一时刻至多一个对账者
+（ErrReconcileTaken），占用过期可重入（对账者死亡不永久占住），认领期间
+Key 仍是未知态；新增 Reconcile 类型。sidetest 新增对账占用一族两条。
+Unsafe 裁决分离（#89）：Resolution 新增 ForceRetryable + ErrUnsafeNotRetryable——
+RetrySafetyUnsafe 的动作裁决「未生效」不解除阻塞，放行必须显式签字
+（此前与 Unknown 同路，「不可重试」只是注释）；裁决「已生效」返回值钉为
+OutcomeReplayed（三份实现此前各说各话）。sidetest 新增重试安全三档两条。
+标记失败恢复判据（#82）：Store.MarkUncertain 契约新增第 5 条硬要求——标记
+写失败时执行意图必须原样留在存储里；sidetest 新增标记失败一族：套件内置
+故障注入装饰器（先走宿主实现再替换返回值，模拟最坏形态），负对照钉
+「先撤意图、标记没落地」的坏实现必红。
+sidetest 22→29 条场景，每族配负对照；三处 Store 实现（参考内存版 /
+fakeStore / checkpoint e2e durable）同批升级。BREAKING：宿主需实现
+BeginReconcile 并铸造 Holder。
+
+### 新增(taskboard)：租约续期与接管代次 + boardtest 竞争测试规模与场景补齐（#87 #97）
+
+taskboard 子车道两单（基线 59b7e31，含三个提交：契约 / 套件 / 文档）。
+#87（无租约续期与接管代次——长任务必然被接管，旧持有者迟到提交无判据）：
+- RenewingBoard（新接口，非 BREAKING）：Renew 是资格检查不是心跳——令牌
+  不是当前租约的或租约已过期 ⇒ ErrLeaseLost 且不做任何修改；通过才推后
+  到期时刻（TTL 语义与 Claim 一致，到期时刻归存储算），校验与延长同一
+  原子操作。过期租约不可续期，想继续做走重新认领。单独成接口不并进
+  Board：不破坏既有实现，boardtest 套件对缺失硬失败；
+- Lease.Fence（新字段，接管代次）：与令牌同一次铸造（同源），同一任务上
+  严格递增（Renew 不递增——续期不是接管）；下游资源可凭「代次比已见过的
+  最大值小」拒收迟到写入（与 sideeffect.FencedSink 同一形态）；
+- 迟到提交的判据：接管必然铸造新令牌 ⇒ 迟到的 Release/Complete/Renew
+  凭「令牌不匹配 ⇒ ErrLeaseLost」必然被拒，且不波及新持有者；
+- DuplicateTokenSubmit（新并发判据）：同一令牌的并发提交者正面相撞，
+  成功者必须恰好 1 个；
+- Check 的「非认领态残留」不变量并上 Lease.Fence。
+#97（boardtest 竞争测试规模与场景不足）：
+- 并发规模参数化：RunConfig + Config{ClaimWorkers}，缺省跑 10 与 100 两档
+  （4 并发撞不出「读-判-写」窗口）；判据强度不变——仍是「恰好一个赢家」，
+  非 ErrTaken 失败按基础设施故障显式报出；
+- 新增场景（套件 16 条）：跨任务令牌复用被拒、重复令牌并发提交恰好一人
+  成功、过期接管后旧持有者提交被拒、接管代次严格递增、长任务续期后可
+  继续持有、旧令牌续期被拒（接管/释放/过期三路径）；
+- 每条新增场景配负对照（mutation_test.go 四个变异实现各精确命中）：
+  摘掉判据必红；
+- 套件硬要求 RenewingBoard（不跳过——跳过等于把「没测过」伪装成「通过」）。
+下游动作（非 BREAKING，编译期不破）：实现 taskboard.RenewingBoard（套件
+硬要求）；存储为每次认领铸造 Lease.Fence（与令牌同一次原子操作）。
+越界声明（经确认）：examples/reference-runtime/board_store.go 属 taskboard
+参考实现，随契约同批最小更新（铸代次 + 实现 Renew）——该目录名义上属
+sideeffect 车道禁区，不修则本仓参考实现跑不过扩严后的套件。
+门禁：make check 本地全绿；taskboard 包覆盖率 61.5% → 98.5%；
+taskboard 61 条测试（20 个测试函数 + 41 条子测试）。依赖地板无变化。
+PR: https://github.com/yi-nology/goagent-kernel/pull/122
+
+- 杂务(deps)：v0.33.0 依赖地板——oagentkit 系全线追平 + pkg 钉回 v0.44.0（#126）
+
+## [v0.33.0] — 2026-11-12
+
+### 新增：评审第二轮五处缺陷全量修复（#116 #117 #118 #119）
 
 * feat!: 三处契约一次落库——执行意图 / 令牌铸造 / 持有者校验（#116 #117 #118）
-
-### BREAKING：副作用闸引入「执行意图」——封住「进程死在记账之前」的重复施加缺口（sideeffect）
-
-v0.32.0 给副作用闸加了一等状态「结果未知」，但它有个前提：**存储侧得先知道
-「结果未知」这件事**。而恰恰有两条路径让存储侧什么都不知道：
-
-* **标记本身失败**：`MarkUncertain` 写不进去（存储故障）⇒ 存储侧既没有「完成」
-  也没有「未知」，下一次 `Acquire` 重新授予执行权；
-* **进程死在标记之前**：施加成功、记账之前进程没了 ⇒ 没有 `Complete`、
-  没有 `MarkUncertain`、没有 `Release` ⇒ 存储侧**一片空白**。
-
-共同形态：**「不知道」这件事本身没有被记下来**。于是同一 Key 的下一次
-`Acquire` 把它当成「没做过」⇒ **同一动作被施加两次**，而调用方全程只拿到
-一个普通错误。失效是**静默**的。
-
-本版把「意图」持久化（推导见 ADR-0007）：
-
-* **`Acquire` 原子登记「本次尝试还在」**（Key 级 IN_FLIGHT）：它不是结果，
-  是**意图**——只回答「这个 Key 上有一次尝试尚未裁决」；
-* **意图未裁决 ⇒ 同一 Key 不得被重新授予执行权**；租约过期且未裁决 ⇒
-  转入**需对账态**（`OutcomeUncertain`）而**不是**重新授予执行权——
-  声明了 `RetrySafetySafe` 的除外（那种情况下下游按幂等键去重，重做安全）；
-* **两条出口拆开**（**BREAKING**：`Store` 接口**新增一个方法** `Abandon`，
-  且 **`Release` 的语义收窄**）：
-  - `Abandon`（**动 Key 级**：撤销意图 + 顺带放闸）= 「确定没生效 / 下游会去重」
-    ⇒ 该 Key 重新可执行；
-  - `Release`（**只动资源级**：放闸，**不动**意图）= 「可能已生效」那条路的
-    配套动作（`MarkUncertain` 转未知态）。
-
-  拆开是必需的：在「可能已生效」那条路上误用 `Abandon` ⇒ 意图被撤 ⇒
-  该 Key 重新变成「可被执行」⇒ **重复施加的入口重新打开**，且失效仍是静默的。
-
-编排层的四条失败出口随之各归其位：准备失败 / 可安全重试 ⇒ `Abandon`；
-施加失败且无法判定 / 记账失败 ⇒ `MarkUncertain` + `Release`。
-
-共享契约套件 `sidetest` 同步扩到 **22 条场景**（新增「执行意图」一族六条 +
-「闸已释放后续期被拒」一条），并配**负对照**：摘掉意图判据的实现必红。
-
-### BREAKING：任务认领的令牌改由存储铸造（taskboard）
-
-`taskboard.Lease` 的注释写着「Token 由存储**铸造**」，而 `Board.Claim` 收的是
-**调用方自带的** `Lease`（含 token）。契约与实现对不上时**实现赢**：调用方能造出
-任意令牌，于是「释放/完成只认 token」这条契约名存实亡——同名 agent 的输家
-迟到释放照样放掉赢家的闸，而报告里一切正常。
-
-* **`Claim` 改收 `ClaimRequest{TTL}`**（**BREAKING**）：认领请求只说「要多长的
-  租约」，**令牌由存储铸造**并随返回的 `Task` 给出；
-* **到期时刻也归存储算**（调用方的时钟与存储的时钟可能对不上，跨进程更不能
-  假设一致）；
-* **`ConcurrentClaim` 的租约参数改为 TTL**（**BREAKING**）；
-* 契约套件 `boardtest` 补「令牌由存储铸造」「旧令牌重用被拒（ABA）」两条，
-  并接上可注入时钟（`ClockedBoard`，与 `sidetest` 同范式）。
-
-### 修复：参考存储的持有者校验 + checkpoint 拒收序号为 0 的快照
-
-* **释放后的租约仍能续期**：`examples/reference-runtime` 的 `effectStore.Renew` /
-  `Complete` / `MarkUncertain` 只比栅栏令牌、**不验持有者**。栅栏只在**接管**时
-  递增——没人接管时令牌没有变，于是「释放」这件事在令牌上完全看不出来：
-  闸已经空了，它却能拿同一枚令牌继续续期、继续记账。参考存储与共享契约套件
-  现在统一校验「令牌 + 持有者 + 意图归属」；
-* **序号为 0 的快照能覆盖既有快照**：`checkpoint.StoreCAS.SaveIfNewer` 的契约
-  写的是「Seq == 0 不参与单调判定」，实现把它读成了「跳过判定照写」⇒ 已有
-  Seq=10 时，一份 Seq=0 的快照照样落库 ⇒ **恢复点静默回退**，且不报错。
-  本版起 `SaveIfNewer` **拒收 Seq == 0**（ErrStaleSeq 且不写入），契约文档同步收口。
-
-### egress：后端「自报能力」与「实测强度」分开
-
-`egress.StrengthEnforced` 此前仍是**自我声明**：后端 `Egress()` 自报一档，就判
-enforced。而自报与实测之间必须有信号，否则「代理档已兑现」会被读成「出站已被
-强制隔离」——后端自报恰恰是最容易被读成事实的那种声明。
-
-* 强度四档：`not_required` / `advisory`（环境变量，永远只是建议）/ `declared`
-  （后端**自报**，未经实测）/ `enforced`（**实测**通过）；
-* 新增 `egress.EgressVerifier`（`VerifyEgress() (Mode, error)`）：后端能实测并
-  给出证据时才判 `enforced`；同一后端同时实现两个接口时**实测证据优先**。
-
+评审第二轮的四处缺陷落在**三套契约**上，且必须与仓内两处实现**同批落库**——
+理由见文末「为什么必须同批」。
+一、sideeffect：「至多一次」有两个漏洞，都是同一个形态——「不知道」这件事本身没有被记下来。
+  - MarkUncertain 写失败（存储故障）⇒ 存储侧既没有「完成」也没有「未知」，
+    下一次 Acquire 重新授予执行权；
+  - 进程死在施加成功之后、记账之前 ⇒ 没有 Complete、没有 MarkUncertain、
+    没有 Release ⇒ 存储侧一片空白。
+两者都让同一动作被施加两次，而调用方全程只拿到一个普通错误——失效是**静默**的。
+修法（BREAKING，推导见 docs/adr/ADR-0007）：
+  - Acquire 原子登记「本次尝试还在」（Key 级 IN_FLIGHT）：它是**意图**不是结果，
+    只回答「这个 Key 上有一次尝试尚未裁决」；
+  - 判定顺序改为「已完成 > 结果未知 > 执行中 > 资源被占 > 授予」：意图未过期
+    ⇒ contended；租约过期且未裁决 ⇒ 转 uncertain（须先对账），声明了
+    RetrySafetySafe 的除外（下游按幂等键去重，重做安全）；
+  - 两条出口拆开：Abandon（撤销意图 + 放闸＝确定没生效）与 Release（**只**放资源闸、
+    不动意图＝可能已生效）——在「可能已生效」那条路上误用 Abandon ⇒ 意图被撤 ⇒
+    重复施加的入口重新打开，且失效仍是静默的；
+  - Runner 的失败出口重排：准备失败 / Renew 失败 / RetrySafetySafe ⇒ Abandon；
+    施加失败未知 / 记账失败 ⇒ MarkUncertain + Release；标记失败时连 Release 也不调
+    （此刻释放多半被拒，意图必须留着——它是唯一挡重试的东西）。
+契约套件 sidetest 扩到 22 条场景（新增「执行意图」一族六条 + 「闸已释放后续期被拒」
+一条），每族配**负对照**：摘掉判据的实现必红。
+二、taskboard：令牌改由存储铸造。
+  - taskboard.Lease 的注释写着「Token 由存储**铸造**」，而 Claim 收的是调用方自带的
+    Lease（含 token）——契约与实现对不上时实现赢：调用方能造出任意令牌，于是
+    「释放/完成只认 token」名存实亡：同名 agent 的输家迟到释放照样放掉赢家的闸；
+  - Claim 改收 ClaimRequest{TTL}，令牌由存储铸造并随返回的 Task 给出；到期时刻也归
+    存储算（调用方的时钟与存储的时钟可能对不上，跨进程更不能假设一致）；
+    ConcurrentClaim 末参改 TTL（BREAKING）；
+  - boardtest 补「令牌由存储铸造」「旧令牌重用被拒（ABA）」两条，接上可注入时钟
+    （ClockedBoard，与 sidetest 同范式）。
+三、参考实现（examples/reference-runtime）：释放后的租约仍能续期。
+  - effectStore.Renew / Complete / MarkUncertain 只比栅栏令牌、**不验持有者**——栅栏
+    只在接管时递增，没人接管时令牌没有变，于是「释放」这件事在令牌上完全看不出来：
+    闸已经空了，它却能拿同一枚令牌继续续期、继续记账；
+  - 现在统一校验「令牌 + 持有者 + 意图归属」，并补齐 Abandon。
+四、checkpoint：序号为 0 的快照能覆盖既有快照。
+  - StoreCAS.SaveIfNewer 的契约写的是「Seq == 0 不参与单调判定」，实现把它读成了
+    「跳过判定照写」——已有 Seq=10 时，一份 Seq=0 的快照照样落库 ⇒ 恢复点静默回退，
+    且不报错。序号为 0 的快照不是一次真实提交（提交序列由 Committer 抢号），
+    放它落库等于给了它**唯一能覆盖既有快照的写**；
+  - 现在 SaveIfNewer 一律拒收 Seq == 0（返回 ErrStaleSeq 且**不写入**），契约文档
+    （checkpoint/cas.go）同步收口——原先那句「不参与单调判定」正是被读错的地方；
+  - e2e 用例里的「持久化存储」实现（按契约写，不写宽松版——把契约抄松就等于把被测
+    对象换掉）随之更新，并拆成独立文件 checkpoint/durable_store_test.go（原文件
+    447 行，超本仓 400 行结构阈值）。
+为什么这几处必须在同一个提交里：sideeffect.Store 与 taskboard.Board 是**接口**，
+而仓内有两处实现它们的地方——examples/reference-runtime（同时实现这两个接口）与
+checkpoint 的 e2e 测试存储（实现 sideeffect.Store）。接口一改，这两处就编不过；
+反过来，测试存储按新契约写，它在旧接口下也编不过。⇒ 「改接口」与「改实现」互为
+前提，只能同批落库，否则中间提交是红的（宿主那边同理：接口变更与宿主迁移必须同批）。
+另含 ADR-0007《执行意图：把「已经打算做」也持久化》——推导与取舍从 CHANGELOG
+下沉到决策记录。
 * fix(egress): 自报能力与实测强度分离——StrengthDeclared 与 EgressVerifier（#119）
-
-### 契约套件与文档
-
-* `sidetest` 22 条场景（四族：结果判据 / 续期 / 结果未知 / 执行意图），每族配
-  **负对照**——摘掉判据的实现必红；
-* 新增 ADR-0007《执行意图：把「已经打算做」也持久化》（`docs/adr/`），
-  推导与取舍从 CHANGELOG 下沉到决策记录；
-* README 版本表补 v0.33.0 的「下游要做什么」清单（逐条列明宿主要改的调用面），
-  `docs/USAGE.md` 同步四处 API 口径。
-
-### BREAKING：持有者身份入租约——三项联查封住「冒充」与「跨资源」两条洞（sideeffect）
-
-「同时验证 Fence、Holder、Resource」此前只兑现了 Fence 一项：`Lease` 只有
-`Resource` / `Fence` / `TTL`，存储侧无法区分「同一个 Key 上不同持有者」；
-`Complete` / `Renew` / `MarkUncertain` 同时收 `act`（含 `Resource`）与 `lease`
-（含 `Resource`），契约却没有要求存储侧断言两者一致。
-
-修法（**BREAKING**）：
-
-* `Lease` 新增 `Holder` 字段——**存储侧在授予时铸造**（`sideeffect.MintHolder()`
-  提供参考铸造原语：256 位随机）。为什么栅栏令牌不够：令牌要传给下游
-  （`FencedSink`），凡是参与过那次写入的组件都见过它——见过 ≠ 可以冒充；
-  持有者身份不经任何下游接口流转，持令牌者拿不出它。
-* 新增两个哨兵：`ErrNotHolder`（出示的凭据不是本次授予铸造的那份）与
-  `ErrResourceMismatch`（A 资源的租约被拿去做 B 资源的操作）。
-  三项联查的完整要求写进 `Store` 契约的硬要求第 3 条。
-* `sidetest` 新增「持有者身份」一族三条：身份由存储铸造（非空、授予间不重合）、
-  **偷到令牌的组件冒充持有者被拒**、跨资源凭据被拒；参考实现（内存版）同步三项联查。
-
-### BREAKING：对账有了认领与显式决策——RECONCILING 占用 + Unsafe 裁决不自动放行（sideeffect）
-
-对账此前是裸奔的：两个对账者可以同时对同一个 Key 查下游并同时提交裁决
-（「先到者为准」只是把冲突结果掩盖掉，不是判据）；对账中途进程死亡，
-Key 停在未知态，与「从未开始对账」不可区分。三档重试安全性里，
-`Unsafe` 与 `Unknown` 在行为上完全相同——「不可重试」只是注释里的一句意图。
-
-修法（**BREAKING**）：
-
-* `Store` 新增 `BeginReconcile`：认领对账权（同一时刻至多一个对账者，
-  `ErrReconcileTaken`；占用过期可重新认领——对账者死亡不永久占住这个 Key；
-  认领期间该 Key 仍是未知态，Acquire 继续拒绝）。新增 `Reconcile` 类型
-  （认领者身份 + 到期时刻）。宿主约定：**长对账先认领再查下游**，
-  短对账可直接裁决（`ResolveUncertain` 仍是唯一裁决入口）。
-* `Resolution` 新增 `ForceRetryable` 字段 + 新哨兵 `ErrUnsafeNotRetryable`：
-  `RetrySafetyUnsafe` 的动作，裁决「未生效」**不解除阻塞**——那句结论来自
-  宿主的一次查询，查询可能出错，查错的代价是重复施加。放行必须显式签字。
-  `Unknown`（未声明）维持原语义。
-* 裁决「已生效」的返回值钉为 `OutcomeReplayed` + 既有结果（与之后的 Acquire
-  同一口径——三份实现此前各说各话，套件没钉，这次收口）。
-* `sidetest` 新增「重试安全三档」两条（Unsafe 裁决未生效仍阻塞 / 显式决策
-  才放行）与「对账占用」两条（占用挡住第二个对账者 / 过期可重入且不放行），
-  每族配负对照。
-
-### 修复：标记写失败后的恢复判据进契约与套件（sideeffect）
-
-`MarkUncertain` 写失败时（存储故障），调用方拿到的 error 只在**本次调用的
-栈上**成立——存储侧此刻既没有「完成」也没有「未知」，另一个 worker 再来一次
-`Acquire` 看到的是「未完成、未占用」⇒ 重放一个可能已生效的动作。
-
-修法：契约把这条钉成硬要求（`Store.MarkUncertain` 第 5 条）——**标记写失败时，
-该 Key 的执行意图必须原样留在存储里**（标记与撤销意图不得「先撤后标」分两步
-写），后续 `Acquire` 必须被意图挡住。`sidetest` 新增「标记失败」一族：
-套件内置**故障注入装饰器**（先走宿主实现、再把返回值替换成失败——模拟
-「调用方看到失败，但状态未必没动过」的最坏形态），场景断言失败后不得授予
-执行权，负对照钉「先撤意图、标记没落地」的坏实现必红。
-
-### 契约套件与文档（第二轮）
-
-* `sidetest` 22 → **29 条场景**（新增持有者身份 / 标记失败 / 重试安全三档 /
-  对账占用四族），每族配负对照；
-* README 包表与工程底座数字按新树重算。
-
+egress.StrengthEnforced 此前仍是**自我声明**：后端 Egress() 自报一档，就判 enforced。
+而自报与实测之间必须有信号，否则「代理档已兑现」会被读成「出站已被强制隔离」——
+后端自报恰恰是最容易被读成事实的那种声明，两者在威胁模型里差着一整个量级。
+修法：强度改为四档，按「我们有多确定」排序——
+  - not_required：未要求限制，无从兑现；
+  - advisory：环境变量等建议手段，可被绕过（永远只是建议型）；
+  - declared：后端**自报**能力（实现 Enforcer），未经实测；
+  - enforced：**实测**通过——后端实现 EgressVerifier（VerifyEgress() (Mode, error)），
+    且真的去探测出站是否被挡住。
+SatisfiedVerdict 对仅实现 Enforcer 的后端返回 declared 而非 enforced；同一后端同时
+实现两个接口时**实测证据优先**。
+declared 单独成档而不是并进 enforced：只看 Strength 的读者仍会把「后端自称」读成
+「已经强制」——档位名本身就是契约。判据方向保持保守：拿不到实测证据时最强只能说
+declared，与本仓「沉默按最弱处理」同源（没证据 ≠ 已强制）。实测证据必须由后端
+真的探测得出——本包不代它发请求，也不接受「我保证我拦得住」这种断言当证据。
+反向验证：strength_test.go 配了负对照——只实现 Enforcer（自报）的后端，在任何输入下
+都不得判 enforced；把判据改回「自报即 enforced」时该用例当场变红。
 * docs: v0.33.0 迁移指引落进 README 版本表 / USAGE / CHANGELOG
-
-### 任务板：租约续期与接管代次——长任务不再必然被接管（taskboard）
-
-`Board` 只有认领/释放/完成，**没有续期入口**：执行时长超过 `Until` 的任务
-**必然**被接管，宿主只能在「估一个很大的租约」与「永久占用」之间二选一。
-更要害的是接管后的世界：旧持有者（GC 停顿、网络分区后恢复）迟到的提交，
-此前只能靠「新旧令牌恰好不同」保安全——那是碰巧，不是判据。
-
-* **`RenewingBoard` 接口（新增）**：`Renew(ctx, id, token, ClaimRequest{TTL}) (Task, error)`
-  ——**资格检查不是心跳**：校验令牌仍是该任务当前租约的、且租约未过期，
-  通过才把到期时刻推后（TTL 语义与 `Claim` 完全一致，到期时刻归存储算），
-  校验与延长须在**同一次原子操作**里完成。只延长不校验是**假续期**：租约已
-  易主时延长的其实是**别人的闸**，持有者却以为延长的是自己的，于是两份闸
-  同时开着，同一份工作被做两遍。过期租约不可续期（资格在到期时刻终止——
-  存储不能既承诺「过期随时可接管」又给死者续命），想继续做走重新认领；
-* **`Lease.Fence`（新增字段，接管代次）**：与令牌**同一次铸造**（同源），
-  同一任务上**严格递增**（`Renew` 不递增——续期不是接管）。两条用途：
-  判据（接管后的新代必须大于旧代）与栅栏（宿主的下游资源可凭「代次比已见过的
-  最大值小」拒收过期持有者的迟到写入，与 `sideeffect.FencedSink` 同一形态）；
-* **迟到提交的判据**：接管必然铸造新令牌 ⇒ 旧持有者迟到的 `Release` /
-  `Complete` / `Renew` 凭「令牌不匹配 ⇒ `ErrLeaseLost`」必然被拒，且不波及
-  新持有者（套件把「旧令牌被拒」与「新持有者照常」成对钉住）；
-* **并发判据新增 `DuplicateTokenSubmit`**：让多个 worker 同时用**同一个**
-  令牌提交，成功者必须**恰好 1 个**——各拿各的令牌的并发认领撞不出
-  「校验与写入分离」，必须让同一令牌的使用者正面相撞。
-
-**宿主动作（非 BREAKING，编译期不破）**：实现 `taskboard.RenewingBoard`
-（`RenewingBoard` 单独成接口，不并进 `Board`——不破坏既有实现，但
-**boardtest 套件对缺失硬失败**，不跳过）；存储为每次认领铸造 `Lease.Fence`
-（与令牌同一次原子操作）。`examples/reference-runtime` 的 `boardStore`
-已同步补齐（铸代次 + 实现 `Renew`）——该文件属 taskboard 参考实现，
-随本节同批更新。
-
-* feat(taskboard): 租约续期与接管代次——RenewingBoard 契约 + Fence 同铸严格递增（#87 #97）
-
-### 契约套件：boardtest 扩到 16 条 + 并发规模参数化（boardtest）
-
-「并发认领只有一个赢家」此前只用 **4 个** agent 跑一次：存储实现过 4 并发
-就能过套件，与生产并发量差一个量级——「读-判-写不可分割」这条要求在
-4 并发下几乎撞不出来；过期接管、重复令牌更是完全没有判据。
-
-* **并发规模参数化（issue #97）**：`RunConfig(t, factory, Config{ClaimWorkers})`
-  ——缺省跑 **10 与 100** 两档，宿主按自己的生产量级调那一档；
-  判据强度不变：仍是「**恰好一个赢家**」（不是「至少一个」也不是「至多一个」，
-  非 `ErrTaken` 的失败按基础设施故障显式报出，不算进输家）；
-* **新增场景**（issue #87 #97）：跨任务令牌复用被拒、重复令牌并发提交恰好
-  一人成功、过期接管后旧持有者提交被拒、接管代次严格递增、长任务续期后
-  可继续持有、旧令牌续期被拒（接管/释放/过期三路径）；
-* **每条新增场景配负对照**：变异实现必红（校验与写入分离 / 不校验令牌 /
-  假续期 / 代次恒不递增，各精确命中对应场景）——只测「好实现能过」等于
-  没钉住判据；
-* `Check` 的「非认领态残留」不变量并上 `Lease.Fence`（残留代次同样报出）。
-
-* test(boardtest): 竞争测试规模与场景补齐——16 条套件 + 规模参数化（#97 #87）
-
-### 参考存储车道：PostgreSQL 参考实现 + 真实进程故障恢复 + compose 部署案例（#84 #94 #95 #105）
-
-此前「跨进程判据归存储，不归进程」的全部主张，只在**单进程内存实现**里被
-验证过：参考存储的原子性来自一把进程内互斥锁，`FencedSink` 只有契约与测试
-替身，「进程死掉」与「函数返回错误」在持久化语义上的差别没有任何用例触碰。
-本小节把这三块都落到真实数据库与真实进程上。
-
-* **新增依赖 `github.com/jackc/pgx/v5 v5.13.0`**（本版唯一的依赖地板变化）：
-  纯 Go（`CGO_ENABLED=0` 交叉构建不受影响），v5 原生 API 自带连接池与事务
-  骨架。**边界不动**：它只被 `examples/pgstore` import，内核各包的依赖图里
-  没有驱动——policy 的 `dependency_direction.ext_prefixes` 登记
-  `github.com/jackc`，内核包若 import 它依赖方向门禁当场红。
-* **`examples/pgstore`：三套契约的 PostgreSQL 参考实现**（issue #94，它是
-  参考实现不是内核依赖）：`sideeffect.Store` 的 **Acquire 三判合一在一个
-  事务里**（`SELECT … FOR UPDATE` 行锁，锁序恒为资源行 → 动作行；判定顺序
-  逐字对齐契约：已完成 > 结果未知 > 执行中 > 资源被占 > 授予；授予时令牌、
-  `sideeffect.MintHolder()` 铸造的持有者身份、执行意图**同一事务**落库）；
-  Complete / Release / Abandon / Renew / MarkUncertain 同事务**三项联查**，
-  校验失败即整体回滚（「标记写失败必须保住执行意图」由此成立）；
-  `taskboard.Board`（含 `RenewingBoard`）认领是事务内读-判-写，令牌随机铸造、
-  代次同一次落库；`checkpoint.StoreCAS` 条件 upsert 拒陈旧拒零。
-  **验收：`sidetest` 29 条 + `boardtest` 全家族在真实 PostgreSQL 上跑通，
-  与内存版跑同一段套件——套件不为任何实现开后门。**
-* **`sideeffect.FencedSink` 的 PostgreSQL 下游参考实现**（issue #84）：栅栏
-  预占是一条带条件的 `INSERT … ON CONFLICT DO UPDATE … WHERE seen_fence <=
-  presented`（影响行数为 0 即陈旧，此刻零写入），写入体经 `ExecWithin` 走
-  **同一事务**，报错即整体回滚——**不得部分写**落成事务语义而不是注释。
-  判据收编为共享套件 `sidetest.RunSinkContract`（6 条：新令牌接受 / 等于也
-  接受 / 陈旧拒收零写入 / 新先旧后保最大 / 并发陈旧被拒 / **写入体失败不
-  部分写**），内存替身与 PG 实现跑同一段断言；三步非原子实现的反面教材
-  （`TestNonAtomicSinkIsCaught`）保留在 sideeffect 包内作确定性负对照。
-* **真实进程故障恢复 e2e**（issue #95，unix build tag，re-exec 模式）：
-  父进程起子进程执行动作 → `SIGKILL` → 等 TTL 过期 → 断言同一 Key 转入
-  **需对账态而不被重放**；死在施加之后记账之前的形态，对账「已生效」后同一
-  Key 只**重放**既有结果（动作体累计恰 1 次）；**双进程竞争**同一 Key，
-  恰好一个 `OutcomeApplied`、下游恰好一代令牌。跨进程共享状态只有
-  PostgreSQL——SIGKILL 后内存里的一切消失，留下的只有库里的行。
-* **docker compose 集成环境**（issue #105，`examples/docker-compose.yml`）：
-  一套 compose 同时服务契约验证与参考部署——默认 profile 起
-  `postgres` + 参考宿主冒烟（`cmd/pgsmoke`：幂等重放 / 栅栏拒陈旧 / 双宿主
-  竞争恰好一个 applied / 双 agent 认领恰好一个赢家，一条命令
-  `docker compose -f examples/docker-compose.yml up --abort-on-container-exit
-  --exit-code-from smoke`）；`verify` profile 在容器里跑全部契约套件 +
-  SIGKILL e2e。Kubernetes 作为可选形态在 README 说明映射（StatefulSet /
-  Deployment / Job），**不作为默认路径**。
-* **CI**：新增 `integration-pg` job（postgres service container）每次推送
-  真跑同一批用例；本地等价入口 `make integration`（compose 起 postgres →
-  go test → down，compose 起不来明确报错不静默跳过）。无 PostgreSQL 时
-  用例在**环境入口**显式 `t.Skipf`（写明原因与起法），套件场景本身仍硬失败
-  ——跳过只发生在环境依赖入口，不给任何实现开洞。
-* **门禁配套**：`examples/pgstore` 登记 `PKG_COV_EXEMPT`（结构性豁免：全部
-  用例是环境依赖的 integration 用例，无库时覆盖率恒 0%，判据由 integration
-  层承担，理由与边界见 Makefile）；policy 登记 `pgrefstore` 模块并进
-  `thresholds.scan_roots`（超长文件 / god object 照判）；docsync 口径随
-  实测重算（包表 `sidetest` 行 + 工程底座三数 + USAGE policy 登记数 45）。
-
-* feat(examples): PostgreSQL 参考存储 + 真实进程故障恢复 + compose 部署案例（#94 #95 #84 #105）
-
-**依赖地板变化**：+`github.com/jackc/pgx/v5 v5.13.0`（仅 `examples/pgstore`
-引用；宿主若不用 PG 参考实现则无感知）。
-
-### 恢复判定与副作用记录协调：恢复前三方对账（checkpoint，#90）
-
-此前 `checkpoint.BuildPlan` 只看快照、`sideeffect` 闸只看自己的账，两者互不
-感知——「快照说已完成、闸说结果未知」可以同时成立：宿主在副作用的结论落定
-**之前**乐观落了快照、然后进程死了。恢复按快照跳过该步 ⇒ 那个「结果未知」的
-副作用**既没对账也没重做**，悬在中间，而恢复判定认为一切正常。失效是**静默**的。
-
-修法：新增 `checkpoint.Reconcile(plan, views)`（纯函数，判据落 checkpoint 侧）。
-把计划要**跳过**的步骤逐个对上闸侧视图（宿主从 `sideeffect.Store.Acquire` 这个
-唯一观察口探出，按 Outcome 映射成 `GateState`——映射口径写在 `reconcile.go`
-接线说明里）：
-
-* 闸侧 `settled`（已结算）/ `absent`（无副作用动作）→ 与快照一致，放行；
-* `uncertain`（结果未知）/ `in_flight`（有未裁决尝试）/ `unrecorded`（闸认为
-  没做过）/ `unknown`（查询失败，判不了按冲突处理）→ 冲突 ⇒ 快照不可信 ⇒
-  **阻塞**（`Plan.Blocked()` 为真，`Skip`/`Run` 清空，逐冲突点名并回显宿主写的
-  观测依据），不得静默跳过；
-* Run 侧的闸态不构成冲突——执行时闸自己会拒绝（`OutcomeUncertain` /
-  `Contended`），两种判据各管各的执行点。
-
-新增异常类别 `AnomalySideEffectConflict`。用例两族：判据负例（「快照说完成、
-闸说未知/未裁决/没做过/判不了」的坏组合逐格必红）+ 端到端两条弧（乐观落库 →
-崩溃 → 重启 → 对账阻塞 → 裁决 → 解阻；裁决「未生效」后仍阻塞，直到宿主真正
-重做该步或修正快照）。宿主接线无需改任何 sideeffect 接口面。
-
-### AllowUnmanaged 逃逸口补上赋值路径：AST 级类型追踪（archcheck，#92）
-
-字面量判据按「复合字面量里的字段出现」判，`opts.AllowUnmanaged = true`
-（变量赋值）与 `opts.AllowUnmanaged = cfg.Unmanaged`（配置驱动）从它眼里
-溜过去——而那恰是生产代码最常见的写法（「另有一套管控，开关在配置里」）。
-盲区等于没有判。
-
-修法：新增第二道判据（`archcheck/unmanaged_assign.go`，同一规则
-`harness-ptc-unmanaged-escape`）：三趟 AST 追踪（go/types 的等价手段，不引
-go/types 的整仓类型检查成本）——类型层（谁**是** `ptc` 逃逸类型、谁的字段
-**带着**它，`type Cfg struct { ptc.Options }` 嵌入同判）→ 变量层（带类型的
-var / 短声明含取址与容器 / 函数参数与接收者；包级变量跨文件收齐）→ 赋值层
-（对持有者的 `….AllowUnmanaged = …` 即报）。**按赋值路径判、不按值判**（与
-字面量判据同一条纪律）：`= cfg.X` 与 `= false` 都报——逃逸口的开与关不该由
-数据流决定。反向验证：注入赋值 / 配置驱动 / 字段链 / 嵌入 / 容器 / 跨文件
-六种形态 ⇒ 红；宿主自建同名结构体字段 ⇒ 不误伤（类型感知换「报得准」）。
-残余盲区（经接口 / 无类型返回值 / 深层容器流转的接收方）写明在执行体头注与
-违规文案里，不假装覆盖。
-
-### PTC 执行预算压力测试矩阵：每格断言资源回收（ptc，#93）
-
-现有覆盖到的是「预算到点结果对不对」，**没有**「资源收回来了没有」——泄漏
-会累积成宿主的慢性故障（goroutine 数只增不减），功能测试看不见。新增矩阵
-（`ptc/stress_recovery_test.go` + `ptc/stress_subprocess_recovery_test.go`）：
-
-* 进程内三格（工具阻塞→墙钟耗尽 / 调用方取消 / 调用数预算耗尽）：
-  Run 收口后 goroutine 数回落到「基线 + 容差」；
-* 子进程四格：启动即异常退出（有限时间内干净报错、无残留）、运行中被外部
-  SIGKILL（OOM killer 的同形态注入：错误信息可读、PID 被收割、宿主继续可用）、
-  真 OOM（cgroup `memory.max`，能建的环境真跑，补上既有用例缺的回收断言）、
-  FD 回收（linux 上多轮执行后父侧描述符数不涨——管道每轮都要关干净）；
-* **阈值可配置**防慢机器 flaky：`GAK_STRESS_TOLERANCE`（goroutine 容差）、
-  `GAK_STRESS_SETTLE_MS`（回落窗口）、`GAK_STRESS_FD_TOL`（FD 容差）；
-  goroutine 基线取**多次采样的最小值**（负载抬高的是均值，最小值是
-  最不受干扰的那次），到点未回落即红并附全量栈快照。
-
-矩阵进 CI（ubuntu 上 FD 格与真 OOM 格真跑；darwin 上按环境跳过并写明理由）。
-
-### checkpoint 故障注入矩阵：恢复路径的失败形态可复跑（checkpoint，#98）
-
-新增 `checkpoint/faultinjection_test.go`，逐格写明期望的失败形态（不是
-「不报错就行」）：写库失败注入（显式失败 + 闸回滚 ⇒ 同序号可重试，run 不
-卡死）；并发 Seq 冲突（8 个独立闸抢同一序号 ⇒ 恰好 1 个赢家、7 个输家
-`ErrStaleSeq` 变红不静默覆盖，输家重灌后有序推进）；恢复中断（恢复到一半
-进程死掉 ⇒ 可再次恢复，已生效的副作用**不重放**——中断在快照之前的那半格
-同样钉住：快照落后于副作用账时重跑被闸拦成 replayed）；双 Worker 恢复同一
-任务（同时 Load + BuildPlan + 抢同一动作 ⇒ 恰好一个施加，另一个被有序拒绝
-`Contended`/`Replayed`，副作用计数为 1）。并发格过 `-race`。
-
-### trajectory 补上 SideEffect 与 Checkpoint 的 OTel 语义（trajectory，#99）
-
-排障最该问的两问此前在轨迹里查不到：「这个副作用到底施加了吗」与「恢复点
-停在哪个序号」。新增两类行与 8 个属性（命名与既有 turn/step/tool 同构，
-`harness.sideeffect.*` / `harness.checkpoint.*` 命名空间）：
-
-* **副作用行**：授予段（granted 起，completed / abandoned / uncertain 止，
-  起止相减即实测时长）+ 对账段（uncertain 起，resolved_applied /
-  resolved_cleared 止）+ 点观察（replayed / contended，孤儿行）；span 状态
-  语义：uncertain = error（已发生的问题：Key 被硬阻塞必须对账），对账挂起中
-  = unset，裁决 / 完成 / 放弃 / 点观察 = ok；
-* **快照行**：`checkpoint_committed` 点事件落孤儿行——提交没有括号段，
-  没有实测时长就不写时长，不拿 0 冒充；
-* eventbus 词表新增 `sideeffect_granted` / `sideeffect_completed` /
-  `sideeffect_abandoned` / `sideeffect_uncertain` / `sideeffect_resolved` /
-  `sideeffect_replayed` / `sideeffect_contended` / `checkpoint_committed`
-  （单源管理，投影器与宿主发布面共用同一词表）；
-* 契约表（`AttrSpecs`）同步 8 条，既有双向对拍判据全部适用（属性名唯一、
-  取值域一致、Go 类型逐条对上、无界不进 metric label）；**"内核只给映射、
-  宿主负责投递"边界不变**——发布接线归宿主（sideeffect 侧的事件化接线
-  留给副作用车道收口）。
-
-### API 生命周期机制落地：分级 + 机器判据 + 错误语义总表（#113 #104）
-
-本版之前全仓**没有任何**稳定性标记，BREAKING 全靠单篇 CHANGELOG 承担迁移
-说明；错误语义散在各包注释里，没有总表。本版把两件事补成**机器可判的机制**
-（判定逻辑进 `make check` 的 `apilifecheck`，不挂 ci.yml 新 job——门禁本体
-在本仓，推送后才说话的门禁等于没有门禁）：
-
-* **`api-lifecycle.yaml` 清单 + 包注释标记**（#113）：全部 **44 个生产包**
-  定级完毕——Stable 26 / Experimental 18 / Deprecated 0。核心契约面
-  （sideeffect/taskboard/checkpoint/commitgate/contract/protocol）与五个
-  门面（dispatch/policy/reminder/toolfail/sandbox，注明「跟随上游」）标
-  Stable；仍在演进或无对外承诺的（ptc/budget/trajectory/egress/netguard、
-  2026-11-06 批次新包、archcheck/internal/示例）标 Experimental 并逐包写明
-  理由。分级判定规则（什么算 breaking：改签名 / 改语义 / 改默认值 /
-  删导出符号）成文于 `docs/api-compat.md`；
-* **`cmd/apilifecheck` 门禁**（挂在 `make check`，与 architecture-check/docsync
-  同级）：判四件事——清单 ↔ 包注释标记一致；清单覆盖**全部**生产包
-  （漏登记与幽灵登记都红）；Deprecated 条目的替代指向必须真实存在；
-  门面包 `follows_upstream` 的上游必须真的出现在 import 面里；
-* **`docs/error-semantics.md` 错误哨兵语义总表**（#104）：全仓 **57 个哨兵 +
-  5 个结构化错误类型**按包成表（哨兵 / 触发条件 / 调用方处置），同一门禁
-  双向判等——代码新增哨兵不登记即红，表里出现已删哨兵（幽灵条目）也红；
-  判定方式与三档处置口径（重试 / 对账 / 修声明）见该文档头注；
-* **兼容策略文档**（#104）：版本承诺（v0.y 阶段 patch 不 breaking、minor
-  breaking 必须走流程）、破坏性变更五步流程（先改声明 → Deprecated 过渡 →
-  同批落库 → CHANGELOG BREAKING 段 → minor 边界删除）、Experimental→Stable
-  晋级条件，全在 `docs/api-compat.md`；
-* 同步：README 文档一览、`docs/USAGE.md` 口径表（三个口径 → 四个口径，
-  新增「生命周期登记 44」机器校验行）、AI-GUIDE 任务 A 清单与门禁速查表。
-
-宿主升级本版**无需改任何调用面**——本节全部是声明面与门禁增量，
-不改变任何包的导出符号与行为。
-
-### 依赖地板
-
-- **地板抬升**（发版批统一动作，2026-11-12）：`oagentkit/agent v0.14.10`、`oagentkit/guardx
-  v0.24.4`、`oagentkit/runtime v0.12.9`、`oagentkit/toolgate v0.17.2`、`oagentkit/tools
-  v0.14.5`、`oagentkit/mcpkit v0.13.2`、`oekit/concurrency v0.33.0`、`oekit/logx v0.10.0`、
-  `dop251/goja`（新快照）。
-- **钉回**：`oekit/pkg 钉在 v0.44.0`——pkg v0.45.0 起移除 `errors.Errorf`，`guardx
-  v0.24.x`（上游 go.mod 地板旧 pkg）与本仓 `delegate` 各有一处 `Errorf` 使用，
-  pkg v0.45+ 编不过。上游 guardx 适配新 errors 口径 + 本仓 delegate 迁移后解除钉回。
-- **go 1.27.4**（安全地板，随 2026-11-10 官方安全发布；govulncheck 无命中）。
+README 版本表补 v0.33.0 一行，「下游要做什么」逐条列明——
+  - 实现 sideeffect.Store 的宿主：新增 Abandon（编译期即红），Release 语义收窄
+    （只放闸、不动意图），Acquire 判定顺序改为「已完成 > 结果未知 > 执行中 >
+    资源被占 > 授予」，过期且未裁决转需对账态（RetrySafetySafe 除外）；
+  - 实现 taskboard.Board 的宿主：Claim 改收 ClaimRequest{TTL}，ConcurrentClaim
+    末参改 TTL，令牌与到期时刻都归存储算；
+  - 契约套件升级：sidetest 22 条（须实现 ClockedStore）、boardtest 8 条
+    （须实现 ClockedBoard + Seed）——宿主实现跑一遍即知是否合规；
+  - checkpoint 宿主：SaveIfNewer 须拒收 Seq == 0（ErrStaleSeq 且不写入）；
+  - egress 宿主：要判 enforced 须实现 EgressVerifier 给出实测证据，自报只到 declared。
+docs/USAGE.md 同步四处 API 口径（执行意图与两条出口的分工、sidetest 22 条、
+taskboard Claim、egress 四档强度与 checkpoint 拒收 Seq == 0）。
+CHANGELOG 补 v0.33.0 段，并写明「三处契约同批落库」的原因（仓内两处实现互为前提，
+拆开则中间提交是红的）。
+另：README「工程底座」三个数（29,370 行 / 160 文件 / 196 个测试文件）是按**每个提交
+当时的树状态**逐次重算的，不是最后一次性手抄——docsync 对这三项**判相等、不留容差**，
+手抄一次只保证末态正确，中间提交会红。
 
 ## [v0.32.1] — 2026-11-11
 
-### 修复：PTC 未受管逃逸口的豁免登记路径，此前是「照着指引做就红」
+### 修复(archcheck)：例外登记可指向恒开规则——PTC 逃逸口的豁免路径不再红-on-arrival
 
 v0.32.0 给 PTC 加了安全默认（缺判定环即拒）与配套护栏
-（`harness-ptc-unmanaged-escape`：生产代码里出现 `AllowUnmanaged` 字段即报违规），
-护栏的违规文案里明确写着「确需逃逸时在 policy 的 `exceptions` 里显式登记豁免与拆除条件」。
-
-**但那条路径当时走不通**：自校验的「规则存在」口径只看 policy `rules` 段里的规则 id，
-而逃逸门禁是**恒开**的——它由执行体自己实现，不在 `rules` 段里。于是宿主按指引登记时：
-
-* 自校验报「例外登记指向不存在的规则 "harness-ptc-unmanaged-escape"」⇒ 门禁红；
-* 逃逸违规本身**也没被豁免**（豁免键压根没匹配上）。
-
-即：**任何需要这个逃逸口的宿主**（典型形态：PTC 是本层工具的批量调用面，
-而每个绑定工具**已由别处逐笔审计**），**照着内核自己的指引做就被拦**。
+（harness-ptc-unmanaged-escape：生产代码里出现 AllowUnmanaged 字段即报违规），
+护栏的违规文案里明确写着「确需逃逸时在 policy 的 exceptions 里显式登记豁免与拆除条件」。
+**但那条路径当时走不通。** 自校验的「规则存在」口径只看 policy rules 段里的规则 id，
+而逃逸门禁是恒开的——它由执行体自己实现，不在 rules 段里。实测：宿主按指引登记时，
+  - 自校验报「例外登记指向不存在的规则 "harness-ptc-unmanaged-escape"」⇒ 门禁红；
+  - 逃逸违规本身也没被豁免（豁免键压根没匹配上）。
+即：任何需要这个逃逸口的宿主（典型形态：PTC 只是本层工具的批量调用面，
+而每个绑定工具已由别处逐笔审计），照着内核自己的指引做就被拦。
 指引说可以、机制不让——这是门禁自己的缺陷，不是宿主的写法问题。
-
-修法与配套收紧（**无 API 变更、无依赖地板变化**）：
-
-* **「规则存在」的口径并上内置规则 id**（新文件 `archcheck/builtinrules.go`）：
-  policy `rules` 段的 id ∪ 内置规则 id（未受管逃逸门禁、门包门禁、依赖方向门禁、
-  档位登记门禁、执行路径门禁、子进程出口门禁）。豁免**真的生效**：
-  违反计入 `excused`、不再进阻断集，`until` 到期即失效（债到期重新欠账）；
-* **自校验本身不可豁免**：豁免它等于让任何声明都能静音（含「这条豁免本身不合法」），
-  故 `rule: harness-policy-self-check` 的例外登记直接报出；
-* **例外不得指向当前不在判的规则**：那条豁免今天什么都没豁免，却会在将来那条规则
-  被启用时**无声地**开始生效（与 `ignore_dirs`「豁免必须指向真实存在的目录」同纪律）；
-* **policy 规则 id 与内置规则重名即报出**：两条判定共用一个豁免键，豁免不再精确。
-
-* fix(archcheck): 例外登记可指向恒开规则——PTC 逃逸口的豁免路径不再红-on-arrival
+修法与配套收紧：
+  - 「规则存在」的口径并上内置规则 id（新文件 archcheck/builtinrules.go）：
+    policy rules 段的 id ∪ 内置规则 id（未受管逃逸门禁、门包门禁、依赖方向门禁、
+    档位登记门禁、执行路径门禁、子进程出口门禁）。豁免真的生效：违反计入 excused、
+    不再进阻断集，until 到期即失效（债到期重新欠账）。
+  - 自校验本身不可豁免：豁免它等于让任何声明都能静音（含「这条豁免本身不合法」），
+    故 rule: harness-policy-self-check 的例外登记直接报出。
+  - 例外不得指向当前不在判的规则：那条豁免今天什么都没豁免，却会在将来那条规则
+    被启用时无声地开始生效（与 ignore_dirs「豁免必须指向真实存在的目录」同纪律）。
+  - policy 规则 id 与内置规则重名即报出：两条判定共用一个豁免键，豁免不再精确。
+反向验证：把「内置规则 id 并入已知规则集」这一处改回修复前的形态 ⇒ 正例用例
+（豁免真的生效、违反计入 excused）当场变红，报出的正是修复前的那条文案。
+另含两处文档同步：docs/USAGE.md 补「宿主怎么合法用逃逸口」的登记形态与本版修掉的那条
+缺陷；README 补 v0.32.1 的「下游升级须知」行 + 工程底座基线三数（docsync 判相等）。
+无 API 变更、无依赖地板变化。
 
 ## [v0.32.0] — 2026-11-11
 
-### BREAKING：副作用闸引入「结果未知」一等状态（sideeffect）
+### 新增(examples)：Reference Runtime——端到端可创建/中断/恢复的参考实现（#75）
 
-此前 `sideeffect.Runner` 的失败出口只有一条：释放闸 → 允许重试。于是
-「远端已生效但响应丢了」这一形态会被下一次重试变成**重复施加**——
-而调用方全程只拿到一个普通错误，没有任何信号说「这个动作可能已经做过了」。
-本包存在的理由（同一逻辑动作只施加一次）被绕过，且失效是**静默**的。
+- 216a828
 
-本版把「不知道」变成一等状态与一条对账路径：
+### 新增(egress)：声明强度与实际强度对齐——兑现强度落到判据面（#74）
 
-* **`OutcomeUncertain`**（新枚举值）：该 Key 上一次尝试的结果未知，
-  **禁止再执行**，必须先对账。闸在 `Acquire` 时按「已完成 > 结果未知 >
-  资源被占 > 授予执行权」的优先级判；
-* **`Store` 接口新增两个方法**（**BREAKING**，所有宿主都要改）：
-  `MarkUncertain(ctx, act, lease, reason)` 把 Key 转入未知态、
-  `ResolveUncertain(ctx, act, res)` 由宿主对账后裁决（已生效 → 记为完成；
-  未生效 → 清除未知标记、允许重试）。裁决**先到者为准**（幂等）、
-  **不校验栅栏**（它的依据是下游事实，不是持有权）；
-* **`Action.RetrySafety`**（新字段）：声明该动作在施加失败后能否安全重试。
-  零值（未声明）按**最弱**处理 ⇒ 结果未知 + 对账；只有显式声明
-  `RetrySafetySafe`（断言下游按幂等键去重）才允许直接重试；
-* **执行器拿得到栅栏令牌**（**BREAKING**：`Effect.Apply` 与 `Runner.Execute`
-  的执行体签名新增 `lease Lease` 参数），下游才能拒收过期持有者的迟到写；
-* **记账失败也归入未知态**：动作已生效但没记上账时，放行重试就是重复施加。
+- fbfac53
 
-「至多一次」的承诺口径同步收紧：**承诺**的是「同一 Key 同一时刻至多一个持有者」
-+「已完成的动作被重放而不是重做」；**不承诺**「远端至多被施加一次」——
-那需要下游参与（幂等键传到远端，或下游按栅栏拒收迟到写）。
-共享契约套件 `sidetest` 同步扩到 **15 条场景**（新增「结果未知」一族五条），
-宿主实现跑一遍即知是否合规。
+### 新增(ptc)!：安全默认装配——无判定环即拒，Unsafe 必须显式 + 门禁（#73）
 
-* feat(sideeffect)!: Store 接口强制「未知结果」语义 + Fence 传入 Apply + 对账路径（#72）
+- f514be6
 
-### BREAKING：PTC 缺省即拒绝（无判定环 ⇒ 不执行）
+### 新增(sideeffect)!：Store 接口强制「未知结果」语义 + Fence 传入 Apply + 对账路径（#72）
 
-此前 `ptc.Options.Stages` / `Provider.Stages` 允许为 nil，此时程序里的
-`host.<tool>(...)` 直达宿主工具，**披露门、审计门、权限门一个都不经过**，
-而没有任何信号——本包恰是对外推荐的批量调用路径，于是**看起来更安全的路径
-反而最不安全**。
+- 180e4fb
 
-* **缺省即拒绝**（fail-closed）：装配了工具绑定却没装判定环 ⇒ 拒绝执行，
-  `ErrorKind=unmanaged`；
-* 两个例外：**不装配任何绑定**（纯计算程序）不需要判定环（风险在**能力**，
-  不在程序）；确需裸执行时显式声明 `Options.AllowUnmanaged`；
-* **逃逸口有门禁盯着**：新增 `harness-ptc-unmanaged-escape` 规则，
-  生产代码里出现 `ptc.Options/Provider/SubprocessOptions` 的 `AllowUnmanaged`
-  字段即报违规（按**字段出现**判，配置驱动的写法也逃不掉）；
-* 判定面覆盖三条执行路径：裸入口、登记簿路径、子进程后端（子进程形态尤其
-  不能放过：判定在父侧做，父侧不判就等于没人判）。
+- CI：启用分支保护（必须 PR + 必过检查，管理员可 bypass）（#77）
 
-* feat(ptc)!: 安全默认装配——无判定环即拒，Unsafe 必须显式 + 门禁（#73）
-
-### egress：声明强度与实际强度对齐（兑现强度落到判据面）
-
-`egress.ModeProxy` 的兑现面是**环境变量**，而环境变量拦不住静态链接二进制、
-UDP 与原始 socket——「代理档已兑现」不等于「出站已被强制隔离」。判据此前只给
-「成立/不成立」，调用方拿不到「以什么强度成立」。
-
-* 新增 `VerifyVerdict` / `SatisfiedVerdict`：返回 `Verdict{Mode, Strength, Detail}`，
-  `Strength` 三档（`not_required` / `advisory` / `enforced`）——
-  **环境变量兑现出来的永远是建议型**，只有后端 `Enforcer` 能力声明才是强制型；
-* `Verify` / `SatisfiedBy` 保留为薄封装（同一份实现，结论不会打架）。
-
-* feat(egress): 声明强度与实际强度对齐——兑现强度落到判据面（#74）
-
-### 新增：参考运行时示例（examples/reference-runtime）
-
-机制之间的事务边界、事件落库、Worker 认领与恢复循环此前都得宿主自己拼装，
-外部使用者无法验证整套能力。新增一个**端到端可跑**的参考实现：
-创建任务 → 多步骤执行 → 中断 → 恢复续跑 → 并发认领 → 副作用对账。
-
-* **纯 stdlib 内存存储，零新依赖**——本仓「依赖面窄」是既有优势，不为示例牺牲；
-  真实 SQLite/PostgreSQL 的接入形态写成契约（README + `sidetest` 套件）；
-* 演示的是**接线**不是新能力：机制面仍在 checkpoint/commitgate/sideeffect/
-  taskboard 里；
-* 存储实现跑通 `sidetest`（15 条）与 `taskboard/boardtest`（并发认领）两套共享契约。
-
-* feat(examples): Reference Runtime——端到端可创建/中断/恢复的参考实现（#75）
-
-### docs：README 收敛 + ADR 归档 + 文档数字纳入机器校验
-
-README 曾 106KB / 747 行，AGENTS.md 88KB，USAGE.md 118KB，且 USAGE 的包数
-口径漂了几个月（写着「27 个能力包」「modules 段登记 24 个」，实际 41 / 44）
-——**没人判**。
-
-* **README 收敛**为「是什么 / 边界 / 包清单 / 特性 / 工程底座 / 怎么用 / 怎么改」，
-  大段设计推导下沉到 `docs/adr/`（6 篇 ADR + 索引）；
-* **USAGE 事实修正**：包数口径三个数各说一件事（文档取舍 / 仓库事实 / policy 登记），
-  安装行改为 `@latest`；`sideeffect` 与 `ptc` 的章节同步到 v0.32.0 的新语义；
-* **数字要有主**：`make docsync` 新增 USAGE 判据——包数、policy 登记数、安装行版本
-  三处机器判（漂了即红）；「本文覆盖哪几个包」是文档取舍，机器判不了，不硬判。
-
-* docs: 文档体系重构——README 收敛 + ADR 归档 + USAGE 事实修正 + docsync 机器校验（#76）
-
-### 工程门禁：分支保护
-
-`main` 此前**完全无保护**（`protected: false`，无 ruleset），CI 通过与否与
-能不能直接推 main 无关。现已开启：合并必须走 PR，且必须通过
-Linux 综合质量门禁与 Windows 真跑测试两条检查（strict：需与 main 同步）；
-管理员保留 bypass（直推 main 的应急通道）。
-
-* ci: 启用分支保护（必须 PR + 必过检查，管理员可 bypass）（#77）
+- 文档：文档体系重构——README 收敛 + ADR 归档 + USAGE 事实修正 + docsync 机器校验（#76）
 
 ## [v0.31.0] — 2026-11-11
 
-### BREAKING：项目整体更名 `agent-harness` → `goagent-kernel`
+### 修复(security)!：go 指令 1.27.3 → 1.27.4——安全地板随 Go 2026-11-10 安全发布抬升
 
-旧名在语境里三头撞车（实测搜索前排全是本仓明确不做的东西）：① agent harness =
-模型外面的运行时外壳（Codex/DeepSeek harness 语义）；② harness = 评测工具
-（lm-evaluation-harness 语义）；③ harness.io 占着词。名字把读者引向错误预期，
-故整体更名：
+Go 1.27.4 / 1.26.11 安全发布（修复标准库 CVE-2026-97033…97054）后，govulncheck 当天即报本仓命中其中 1 条标准库漏洞。按 go.mod 里立的家规抬 go 指令（不抬 toolchain）：依赖模块的 toolchain 指令会被忽略，只有 go 指令把下游的主模块工具链顶上去（GOTOOLCHAIN=auto 自动取新版）。对下游是隐式 breaking：go mod tidy 后自动对齐 1.27.4。已记入 README「下游升级须知」v0.31.0 行④。验证：go build 绿、govulncheck 仅剩「引用了但未调用」提示级、make check 全链绿。
 
-* **GitHub 仓**：`yi-nology/agent-harness` → `yi-nology/goagent-kernel`（旧 URL /
-  旧 remote 自动 301）；
-* **Go module path**：`github.com/yi-nology/agent-harness` → `…/goagent-kernel`——
-  编译期身份，下游 import 机械替换 + `go mod tidy`（迁移指引见 README
-  「下游升级须知」v0.31.0 行）；**API 逐字不变**，调用面零改动；
-* **文档站**：`yi-nology.github.io/agent-harness/` → `yi-nology.github.io/goagent-kernel/`
-  （vuepress base 与站内绝对链接同步换；旧站 URL 不重定向）；
-* 仓内 94 个文件全局替换（import / 活文档 / 站点 / llms.txt 生成器）。
-  **历史不改写**：本 CHANGELOG 的历史条目与 docs/ 历史快照保留旧名；
-  门禁规则 ID（`harness-*`）为内部标识符，不在更名范围。
+### 重构：项目更名 agent-harness → goagent-kernel（BREAKING）
 
-另含两笔站点打磨（纯文档，无 API 影响）：介绍 / 设计初衷 / 怎么用三页
-图解化（六张手绘 SVG，「先看图再看字」），首页视觉升级（网格光晕 hero、
-流光渐变标题、编号特性卡、渐变描边横幅）。
+旧名在语境里三头撞车（实测搜索前排全是本仓明确不做的东西）：
+① agent harness = 模型外面的运行时外壳（Codex/DeepSeek harness 语义）；
+② harness = 评测工具（lm-evaluation-harness 语义）；③ harness.io 占着词。
+名字把读者引向错误预期，故整体更名：
+- GitHub 仓：yi-nology/agent-harness → yi-nology/goagent-kernel
+  （旧 URL / 旧 remote 自动 301，git 协议同然）；
+- Go module path：github.com/yi-nology/agent-harness → …/goagent-kernel
+  （编译期身份；下游 import 机械替换 + go mod tidy——已记入 README
+  「下游升级须知」v0.30.0 行，含完整迁移指引）；
+- 文档站：yi-nology.github.io/agent-harness/ → …/goagent-kernel/
+  （vuepress base 与站内全部绝对链接同步换；旧站 URL 不重定向）；
+- 仓内 94 个文件全局替换：import / 活文档 / 站点内容 / gen.mjs 与
+  llms.txt 的 URL 面。
+刻意不改的两类（不改写历史）：
+- CHANGELOG.md 与 docs/ 标注「历史快照」的四份文档保留旧名；
+- 门禁规则 ID（harness-*）是内部标识符，不在本次更名范围。
+验证：make check 全链绿——fmt（换名改字符串长度后 cmd/docsync 的对齐块
+被 gofmt 当场抓出，已格式化；换名批的机械替换会破坏 gofmt 对齐块，这是
+fmt-check 应抓的形态）/ vet / lint / test / cover / vuln / race /
+crossbuild 四平台 / architecture-check（8 规则 + 5 门包 + 43 包）/
+docsync / modreplace / modwork；站点本地构建 10 页成功。
 
-**安全地板抬升**：`go` 指令 1.27.3 → **1.27.4**——Go 官方 2026-11-10
-安全发布（1.27.4 / 1.26.11，修复标准库 CVE-2026-97033…97054）后，
-govulncheck 当天即报本仓命中其中 1 条，按家规**抬 `go` 指令**（依赖模块的
-`toolchain` 指令会被忽略，只有 go 指令顶得动下游工具链）。对下游是隐式
-breaking：`go mod tidy` 后 GOTOOLCHAIN 自动对齐。
+- 文档：发版 v0.31.0——BREAKING：项目更名 goagent-kernel（CHANGELOG 补段 + README 去「未发版」）
 
-全量 `make check` 绿
-（更名批的字符串长度变化曾震碎 gofmt 对齐块，fmt-check 当场抓出）。
+v0.31.0 范围 = v0.30.0..HEAD：项目整体更名（BREAKING，迁移指引见 README 下游升级须知 v0.31.0 行）、安全地板 1.27.4、站点图解化与首页视觉升级。
 
-* fix(security)!: go 指令 1.27.3 → 1.27.4——安全地板随 Go 2026-11-10 安全发布抬升（CVE-2026-97033…97054）
-* refactor!: 项目更名 agent-harness → goagent-kernel（BREAKING）
-* docs(site): 首页视觉再升级——网格光晕 hero + 流光标题 + 编号卡 + 渐变横幅
-* docs(site): 介绍/设计初衷/怎么用 三页图解化——用图代替文字降认知负担
+- 文档(site)：首页视觉再升级——网格光晕 hero + 流光标题 + 编号卡 + 渐变横幅
+
+用户反馈首页还是不够好看，整体升一档（配色语言不动，深色 GitHub 风延续）：
+- hero：加 44px 科技网格底纹 + 三层径向光晕（蓝/紫/青，漂浮动画保留），
+  标题渐变加宽到五段流光（8s 循环扫过）+ 外发光，字号提到 clamp(38-66px)；
+- 入场动效：标题 → 标语 → 按钮 → 六卡依次浮起（0.55s/卡、70ms 阶梯），
+  全部尊重 prefers-reduced-motion；
+- 特性卡：CSS counter 渐变编号 01-06 做视觉锚点，圆角 12→14、
+  hover 微升 + 蓝光描边保留；
+- 按钮：主按钮渐变蓝底 + hover 泛光上浮；次按钮渐变描边
+  （padding-box/border-box 双背景技法）；
+- 压轴句升级为渐变描边横幅（圆角 16 + 投影），下加 mono 安装命令条
+  「▸ go get …@latest」——把老站的开发者质感带回来。
+验证：本地两轮截图（一轮抓在入场动效中途，一轮 1.5s 落定后）——
+落定态网格/流光/编号/横幅全部就位，797px 双列与 1280px 三列均正常。
+
+- 文档(site)：介绍/设计初衷/怎么用 三页图解化——用图代替文字降认知负担
+
+延续能力页的「先看图再看字」，三页各配手绘 SVG（同色板、无外部依赖）：
+- 设计初衷（4 图）：
+  ① 编排失控 vs 编排是代码 对比图（左：模型被三个问号包围、红色乱序
+  箭头；右：环节管线、LLM 只在环节 2）；
+  ② 判定口诀决策图（换宿主要不要改？→ 要改=宿主 / 不用改=内核）；
+  ③ 假绿对照图（坏实现必须变红 vs 只测好实现=假绿）；
+  ④ 派生状态图（两个计数器 ≠ vs 真相 + 投影）。
+  被图替代的段落文字相应收短。
+- 介绍（2 图）：机制 vs 资产双栏对照图替代表格（✓8 项 / ✗8 项 +
+  口诀压底）；依赖链图保留。
+- 怎么用（2 图）：六步接入阶梯图替代表格（标注「典型路径非硬依赖」）；
+  唯一边界图（引擎 → RunContext/StepSink → 宿主状态）。
+- 三页页顶补「🤖 本页要点已收录进 llms.txt」提示（与能力页一致）。
+- .gitignore 补记生成物（llms.txt / releases.md）——生成页不入库的
+  口径对 gen.mjs 新增产物同样成立。
+踩坑一枚（同族复发）：SVG 图注 <p> 漏了闭合标签，Vue 模板编译报
+「Element is missing end tag」当场红——上次是空行截断 HTML 块，这次是
+标签闭合，都是「markdown 当 Vue 模板编译」这条规则的变体。
+验证：本地构建全绿，四页 SVG 计数 2/4/2/5，无空行截断；浏览器截图
+验收设计初衷页对比图渲染完整。
+
 
 ## [v0.30.0] — 2026-11-11
 
-### 新增(ptc)：诊断渲染原语导出——Result.Describe/Position.Describe，宿主回喂面单源（#68）
+### 新增(ptc)：导出 Result.Describe()/Position.Describe() 诊断渲染原语——宿主回喂面单源（#68）
 
-ptc.Result 的诊断渲染（`describePosition`/`suggestionsFor`）此前内部持有：宿主
-（argus `internal/qa`）只能手写 ~25 行同族渲染把 Result 翻成模型可读诊断文本，
-措辞与 harness 归因口径（#57-#59/#67 修复后的分类面）随时间漂移。本版把渲染面
-导出为公开 API，诊断措辞与分类口径单源。**纯新增，无行为变更**：
+- Result.Describe()：失败段（类别/错误原文/位置/修复建议/调用链归因摘要）+ OK-but-null 点破忘写 return + 成功摘要行
+- Position.Describe()：位置可读渲染（不可得返空串），describePosition 括注改由它拼装
+- 建议优先取 Suggestions（宿主增补不丢），为空按 ErrorKind 补查建议表
+- 调用链摘要：失败明细封顶 5 条 + 全量计数行（明细可截、总数不可截）
+- table-driven 钉渲染形态七组；make check 与 -race 全绿；docsync 校准工程底座行数
+Closes #68
 
-* `Result.Describe()`：失败段（类别/错误原文/位置/修复建议/调用链归因摘要）+
-  OK 但 `Value=="null"` 点破「忘写 return」（undefined→null 是本包契约，模型侧
-  高频缺陷，不点破会把白跑当完成）+ 其余成功一行摘要；
-* `Position.Describe()`：位置可读渲染（「第 N 行第 M 列」），不可得返空串——
-  不造「第 0 行」假位置；内部 `describePosition` 的括注形态改由它拼装，单源不复制；
-* 建议优先取 `Result.Suggestions`（宿主增补不丢），为空按 `ErrorKind` 补查建议表
-  ——手工构造的 Result 也能渲染完整诊断，两个来源同一张表，措辞不漂移；
-* 调用链（归因链）摘要：只列失败明细（error/denied/panic，封顶 5 条——CallLog
-  上限即 MaxCalls，全量展开是账单不是诊断）+ 全量计数行（明细可截、总数不可截）。
+- 文档：发版 v0.30.0——CHANGELOG 补段、站点版本记录投影更新
 
-table-driven 用例钉渲染形态七组（带位置/无位置不编位置/归因链明细/有界截断/
-手工构造补查/宿主增补不被覆盖/未知类别无建议段/成功三形态）。下游 argus 已随
-v6.3.1 收编该 API，净删宿主手写渲染。
+- CHANGELOG 补 [v0.30.0] 段（#68 诊断渲染原语导出，纯新增无行为变更）；
+- 站点 reference/releases.md 由 gen.mjs 从 CHANGELOG 重新投影（44 版）。
 
-* feat(ptc): 导出 Result.Describe()/Position.Describe() 诊断渲染原语——宿主回喂面单源（#68） (#71)
+- 文档(site)：修首页特性卡「中间裂大空档」+ 移除浮出的 commit 胶囊
+
+用户截图圈出两处丑：特性卡中间一条贯穿的大空档、行间不均匀的缝隙；
+左缘还有个半截裁切的「commit/47a5b02」黑胶囊。
+诊断：空档的形态（卡片各占约 30%、被 space-between 甩到两侧）是主题
+.vp-features 的 flex 遗产（flex-basis:30% + place-content:stretch
+space-between）在旧样式缓存下渲出的——当前 CSS 已是 grid，但 cascade
+顺序或缓存一旦回到旧样式就会裂开。胶囊是主题 changelog 挂件
+（@vuepress/plugin-git 数据渲染）。
+修法：
+- 特性网格改**防御性双保险**：容器 display:grid !important 压过主题同
+  特异性规则，子项 flex:none + width/max-width 归零——在 flex 与 grid
+  两种布局模型下都排成整齐等宽列，不再依赖 cascade 顺序；
+- config 关掉 changelog 挂件（版本史看仓内 CHANGELOG，参考区有入口）；
+- 断点维持 1024/640 两档（宽 3 列 / 中 2 列 / 窄 1 列）。
+验证：本地 1280px 宽度截图——3 列等宽、缝隙均匀、胶囊消失；
+构建产物确认 display:grid!important 入包。线上部署后旧缓存需强刷。
+
+- 文档(site)：能力详解改图解 + 全站 AI 直读（llms.txt）入口
+
+三项用户需求落地：
+1. 能力详解尽可能用图：手绘六张 SVG 矢量图（配色随站点色板，
+   无外部依赖、可缩放、可无障碍阅读）——
+   - 能力全景（九组能力 3×3 地图 + 模型/工具/宿主设施三段流向）；
+   - 工具判定环（普通调用与 ptc 程序内调用合流 → Stage → guardset →
+     披露门/审批门/拓扑 → 通过/结构化拒绝）；
+   - 续跑而非重放 + 终态独占（左：快照→BuildPlan→续跑计划；右：
+     Acquire 令牌→提交→Release）；
+   - 上下文三件套（窗口为中心的输入/输出/外置三分工）；
+   - ptc N→1 塌缩对比（上：N 轮往返原始数据过模型面；下：1 轮归并）；
+   - 依赖链（oekit → oagentkit → 本仓 → 宿主，单向箭头）。
+2. 全站 AI 直读入口：生成 llms.txt（同 oekit/oagentkit 的 llms.txt 形态，
+   gen.mjs 生成——判定口诀/三约束/文档清单/事实快照/包一览，数字照旧
+   从 README/go.mod/policy/Makefile 抽取不手抄），站点地址
+   /agent-harness/llms.txt；导航加「AI 直读」下拉（本站/oekit/oagentkit
+   三份 llms.txt）、页脚带入口标识、首页加紫色「AI 直读 llms.txt」胶囊、
+   介绍页同族项目段落各带 AI 直读链接。
+3. 易看优化：各图配图注（一图一句话）；能力页「先看图再看字」导语；
+   介绍页依赖链从代码块升级为矢量图。
+踩坑一枚：markdown 的 HTML 块**遇空行即终止**——SVG 里为可读性加的
+空行会把图拦腰截断，后半段变成字面 <rect> 文本混进页面（首轮截图
+当场暴露）。修法：SVG 区域内零空行（脚本批量清理），已二轮截图确认
+五图 + 一图全部完整渲染。
+验证：本地构建 9+1 页（新增生成的 llms.txt，57 条目），SVG 计数
+能力页 5 + 介绍页 1，浏览器两轮截图核对全景图与续跑双栏图渲染完整；
+导航「AI 直读」下拉与 llms.txt 内容抽查无误。
+
+- 文档(site)：首页文案做减法，首屏做炫（流光渐变 + 漂浮光晕）
+
+用户反馈两点：首页文字太多；开头要酷炫。布局不动，只动内容密度与视觉：
+- 文案减法：tagline 砍到一句「编排是代码，LLM 只做单环节」；六张特性卡
+  每张压到一行短句（原各两行半）；「判定口诀」长段 + 「从哪里开始读」
+  六行表 + 数字纪律 tip 三块，收成一句渐变压轴 + 六枚导航胶囊——
+  首屏往下两屏内的信息量减一半以上。
+- 首屏视觉：标题渐变从静态改流动（background-position 动画 + 外发光），
+  hero 背后加两颗缓慢漂移的模糊光晕球（只动 transform，不引起重排；
+  opacity 0.2，避免盖掉标题对比度——第一版 0.35 实测把标题洗掉了）；
+  特性卡 hover 微升起 + 蓝光描边，主按钮 hover 泛光；
+  尊重 prefers-reduced-motion，全部动效可被系统关掉。
+- 顺带修一个真坑：主题的 .vp-features 是 flex（flex-basis:30% +
+  max-width:30%），grid 属性对它无效——要换列式必须 display:grid 且
+  清掉子项 flex/max-width；列数按 1024/640 两档分层（宽 3 / 中 2 / 窄 1）。
+本地浏览器截图三轮验收（光晕浓度、网格断点、卡片密度各调一轮）后上线。
+
 
 ## [v0.29.0] — 2026-11-11
 
-### 判据面补强：cmdpolicy 事实面收编上游 bashguard，闭合前缀判据三类绕过
+### 新增(cmdpolicy)：事实面收编上游 oagentkit/tools/bashguard，闭合前缀判据三类绕过
 
-前缀判据有三类典型绕过（多段 / 命令替换 / 写重定向），此前没有任何机制面堵。
-本版把「这条命令里出现了什么」的事实面收编 `oagentkit/tools/bashguard`（mvdan.cc/sh
-真 AST，tools#35/#79/#80 的结构化输出）：全调用面取最严 + 事实面下限
-（写重定向 / 动态展开 ⇒ 裁决不低于 prompt），本仓不手写 shell 解析器。
-**下游可见的行为变化**：`DecideCommand` 判定变严（此前被绕过的三类命令会被拦/升
-prompt）、解析失败/超长从放行改报错（`ErrUnjudgeable`）、`Verdict` 新增 `Wrote`/
-`Dynamic` 字段——详见 README 下游升级须知 v0.29.0 行。`Decide(argv)` 纯前缀语义不动。
+前缀判据有三类典型绕过，本提交用上游真 shell AST（mvdan.cc/sh，经
+oagentkit/tools/bashguard）逐类闭合——判据装配仍归本仓，事实面不手写：
+  1. 多段：git status; rm -rf / 的前缀是 git。全调用面把 rm 那段也判了，
+     取最严（SplitCommands 保留，供宿主逐段留痕）；
+  2. 命令替换：echo $(rm -rf /) 里的 rm 是嵌套调用。bashguard.AllCalls
+     （tools#35）覆盖管道后半/子 shell/$(…) 嵌套，嵌套 rm 逐个过前缀规则；
+  3. 写重定向：git status > /etc/passwd 的 > 是语句级事实、不在 argv 里，
+     前缀规则结构上看不见。bashguard.Redirs（tools#79）给出结构化重定向集，
+     由此引入「事实面下限」：含写重定向或动态展开 ⇒ 裁决不低于 prompt——
+     这两类语义前缀规则看不见，静默 allow 就是「判据比声明宽」。
+另两处收口：
+  · 新哨兵 ErrUnjudgeable：AST 超长/解析失败 ⇒ 报错（判不了就不放行），
+    与 ErrUnclosedQuote 同一处置口径；
+  · Verdict 新增 Wrote/Dynamic 事实字段（键名构造不受影响），Explain 追加
+    信号说明——prompt 常是下限抬上来的，不写出来模型会学「绕开规则」。
+上游 bashguard 的只读/不可逆风险分级是另一套语义，本包不用（空 Table
+只取事实面）；Decide(argv) 保持纯前缀语义不动（调用面一字未变）。
+依赖（先改 policy 再写代码，cmdpolicy 的 requires 已登记
+ext:github.com/oagentkit/tools）：新增 github.com/oagentkit/tools v0.14.3
+（带入 mvdan.cc/sh v3.14.1）。与 v0.28.0 线（24fd54c）合并后地板以 go.mod
+为准：guardx v0.24.1、runtime v0.12.6、toolgate v0.17.0、concurrency v0.32.0、
+logx v0.9.2、pkg v0.42.0、eino v0.9.23 等。下游须知已写进 README v0.29.0 行，
+v0.28.0 行补齐第四轮 issue 清零（#62-#67）的下游须知（tag 指向 24fd54c）。
+反向验证（注入退化 → 必红，实测两条）：
+  · 去掉事实面下限 → TestRedirectBypassClosed /
+    TestCommandSubstitutionBypassClosed 判红；
+  · 只判第一个调用 → TestCommandSubstitutionBypassClosed /
+    TestMultiSegmentBypassClosed 判红。
+门禁（合并树）：fmt / build / vet / architecture-check / docsync / test /
+lint(0 issues) 全绿；cover-gate / race / crossbuild 见提交前复跑。
 
-* feat(cmdpolicy): 事实面收编上游 oagentkit/tools/bashguard——全调用 AST 判定（多段/嵌套 $(…)/管道后半逐调用取最严）+ 事实面下限（写重定向、动态展开 ⇒ 不低于 prompt）；新增哨兵 ErrUnjudgeable（AST 超长/解析失败判不了就不放行）、Verdict.Wrote/Dynamic 事实字段；依赖新增 oagentkit/tools v0.14.3（带入 mvdan.cc/sh v3.14.1）
-* docs: v0.28.0 须知行按实发内容对账——logredact 脱敏已随 c159773 在 tag 内（#70 的「待落」判断经 merge-base 核实有误，已归位）
-* docs(site): 配色/风格回退到迁站前的深色 GitHub 风 + 同族项目介绍
-* docs: 发版 v0.29.0——CHANGELOG 补段、站点版本记录（从 CHANGELOG 投影生成 releases 页）、README 去「未发版」标注
+- 文档：发版 v0.29.0——CHANGELOG 补段、站点版本记录上线、README 去「未发版」
+
+· CHANGELOG 补 [v0.29.0] 段（覆盖 v0.28.0..HEAD：bashguard 事实面收编、
+    #70 须知对账、站点风格回退），下游可见行为变化逐条写明；
+  · 站点新增「版本记录」页（reference/releases.md）：由 gen.mjs 从 CHANGELOG
+    投影生成（版本/日期/主题，43 版），进导航——发版时同步 CHANGELOG 即同步
+    站点，不手抄第二份；
+  · README：v0.29.0 行去「未发版」改「已发版 tag v0.29.0」；v0.27.0 行的
+    陈旧「未发版」标注一并订正（tag 早已存在）；宿主接入版本引用
+    v0.28.0 → v0.29.0；v0.29.0 行依赖描述按实发增量订正（相对 v0.28.0 只新增
+    oagentkit/tools v0.14.3 + mvdan.cc/sh，其余地板 v0.28.0 已抬）。
+
+- 文档(site)：配色/风格回退到迁站前的深色 GitHub 风 + 同族项目介绍
+
+用户取舍明确：布局要现在的（VuePress 文档站），颜色与风格要之前的
+（迁站前 build.py 旧站那套）。故只动视觉层，不动结构：
+- styles/index.scss 整体压回旧站色板（取色逐值来自旧站 style.css）：
+  #0d1117 底三层（bg/bg-alt/bg-elv）/ #e6edf3 文字三级 / #58a6ff 品牌蓝 /
+  #a371f7 渐变紫 / #262e3d 描边；明暗开关关掉（旧站是纯深色）；
+- 旧站标志性元素原样复刻：顶栏毛玻璃（saturate(180%) blur(12px)）、
+  hero 双径向光晕 + 标题渐变字（96deg 蓝→紫）、浮面特性卡（12px 圆角 +
+  描边）、主按钮蓝底深字 / 次按钮描边；
+- 选择器按构建产物实际类名对齐（vp-hero / vp-feature /
+  vp-hero-action-button.primary|secondary / #main-title / vp-navbar）——
+  写完先本地构建 + 内置浏览器截图肉眼验收再推，两轮截图确认渐变、光晕、
+  卡片、按钮全部到位。
+introduction.md 补同族上游介绍（带文档站链接）：
+- oekit（Open Easy Kit，oekit.github.io）：37 个发版单元的 Go 模块矩阵
+  （微工具/日志门面/注册发现/HTTP-Kitex 生态/应用引导），本仓用 pkg /
+  concurrency / logx 三块基础件；
+- oagentkit（Open Agent Kit，oagentkit.github.io）：13 个模块的 Agent/LLM
+  编排工具链矩阵，本仓的判定语义核心（agent/dispatch、guardx、toolgate、
+  runtime/procx）都在它上面，门面包只做调用面转发。
+事实取自两站各自的 llms.txt，不凭印象写。
+
+- 文档：v0.28.0 须知行按实发内容对账——cmdpolicy/site 两提交随版发布，logredact 脱敏留待未发版行
+
+打 tag 时发现 README 的 v0.28.0 行是 cmdpolicy 车道预写的「未发版，工作树现状」，
+其中 ③（ptc 子进程 stderr 过 logredact 脱敏）尚未落 main，而 ①②（shellx 分词
+收编、段可往返）与 site 迁移已在 main——它们与第四轮 issue 清零（#62-#67）一并
+进了 tag v0.28.0。本提交把该行改为「已发版」并按**实际发布内容**重写（合并
+两条变更线的下游须知），logredact 一项单独留在「未发版」行待其落版；CHANGELOG
+的 v0.28.0 段补录 cmdpolicy 与 site 两个提交（refactor! 级变更不进段会漏报）。
+宿主接入段的版本引用同步 v0.27.1 → v0.28.0。
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
 
 ## [v0.28.0] — 2026-11-11
 
-### 修复：egress 判据收严 + 门面补缺 + 子进程后端契约三处（#62 #63 #64 #65 #66 #67）
+### 修复：agent-harness 第四轮 issue 清零（#62-#67）
 
-出口判据（egress.Verify）两条假绿收口、policy 门面补 Mutating 转发（随 toolgate
-v0.17.0 三态化）、子进程后端的归因/预算/收口竞态三处契约修复。**有新 API 面**
-（`policy.Mutating`）与**行为变更**（`Op.Mutating` 三态化后 nil ⇒ 审计门 fail-safe
-升人审；gatecheck 默认操作映射不再替宿主猜「非变更」），故升 minor。
+egress 判据两条假绿收口：
+- #62 代理变量判据从「六个里命中一个即绿」收严为「一个不缺、一个不歪」
+  （Env 自己写的就是全部六个，客户端各读各的——缺一个即某类流量裸奔，
+  歪一个即流量走了未声明的链路）；缺失与异值在报错里分开点名。
+- #63 绕过名单按 Bypass 空不空走两份只有大小写口径不同的实现，收口为
+  对 NO_PROXY/no_proxy 两变体取并集的单一判定：小写 no_proxy=* 不再验绿，
+  只有小写且正确不再误红；normList 归一补去重。
+policy 门面补缺（#64）：toolgate 升 v0.17.0，Op.Mutating 三态化 *bool，
+门面补转发 Mutating(b) 构造器——宿主不再被迫直引 toolgate/policy。
+随进行为变更：nil=未知 ⇒ 审计门 fail-safe 升人审（不得默认按非变更
+放行）；gatecheck 默认操作映射不替宿主猜，tooldisclose/ptc/gatecheck
+的用例改为显式声明变更标记。
+ptc 子进程后端三处契约：
+- #65 父侧应答的判定环归因复用 stageOutcome——守卫故障上报 stage_failed
+  （外层 unknown），不再一律折成 permission_denied；两个后端同词。
+- #66 Exec 把 req.Budget 与装配期预算逐项取严后写 Start 帧，内存同口径
+  落 cgroup——请求更紧预算不再被静默按装配期宽限跑。
+- #67 收口窗口不再在 VM 上跑用户 JS：拒绝锚定从 nonce 渲染全等改为
+  对象身份（指针相等，不可伪造不可被打断）；失配分支文本渲染直调
+  String() 收在保护下；中断打穿收口按哨兵归类 deadline/中断，不再落
+  host_panic 或 %!v(PANIC=) 残渣。
+依赖抬升：toolgate v0.17.0、guardx v0.24.1、agent v0.14.8、mcpkit
+v0.12.8、runtime v0.12.6、oekit/concurrency v0.32.0、oekit/logx v0.9.2、
+oekit/pkg v0.42.0、eino v0.9.23、goja 2026-11-10 快照、x/* 顺升。
+门禁：make check 全绿（race/覆盖率 88.3%/archcheck/docsync）。
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
 
-* fix(egress): 代理变量判据收严为「六个一个不缺、一个不歪」——只配 HTTP_PROXY 的环境不再验成 enforced（HTTPS 裸奔），缺失与异值在报错里分开点名（#62）
-* fix(egress): 绕过名单收口为对 NO_PROXY/no_proxy 两变体取**并集**的单一判定——大写对而小写 no_proxy=* 不再判绿，只有小写且正确不再误红；normList 归一补去重（#63）
-* feat(policy): 门面补转发 `Mutating(b bool) *bool` 构造器——toolgate v0.17.0 把 `Op.Mutating` 三态化为 `*bool` 后宿主经门面写不了字面量、被迫直引 toolgate/policy（#64）
-* fix(ptc): 子进程判定环归因复用 stageOutcome——守卫故障上报 stage_failed（外层 unknown、消息带「判定环故障」前缀），不再一律折成 permission_denied（#65）
-* fix(ptc): SubprocessProvider.Exec 把 req.Budget 与装配期预算**逐项取严**后写 Start 帧，内存同口径落到 cgroup——请求更紧的墙钟/调用数/字节不再被静默按装配期宽限跑（#66）
-* fix(ptc): 收口窗口不再在 VM 上跑用户 JS——拒绝锚定从「nonce 渲染全等」改为**对象身份**（指针相等），失配分支的文本渲染直调 String() 收在保护下；中断打穿收口按哨兵归类 deadline/中断，不再落 host_panic 或 %!v(PANIC=) 残渣（#67）
-* refactor(cmdpolicy)!: 分词面收编上游 oekit/pkg/shellx，删掉手写分词器——顺带修三处 POSIX 错误（双引号内反斜杠、分隔符相邻合并、CR 归空白），SplitCommands 段文本改 QuoteArgv 拼装可往返
-* docs(site): 站点迁回 main 的 site/ 并升级 VuePress，发布改走 GitHub Actions
-* chore(deps): 第一方依赖抬升——toolgate v0.15.3→v0.17.0、guardx v0.23.4→v0.24.1、agent v0.14.5→v0.14.8、mcpkit v0.12.4→v0.12.8、runtime v0.12.4→v0.12.6、oekit/concurrency v0.31.0→v0.32.0、oekit/logx v0.8.12→v0.9.2、oekit/pkg v0.40.0→v0.42.0、eino v0.9.22→v0.9.23、goja 升至 2026-11-10 快照
-* docs: docsync 行数对账——egress/policy/gatecheck/ptc 修订后 26,032 行/142 文件
+### 重构(cmdpolicy)!：分词面收编上游 oekit/pkg/shellx，删掉手写分词器
+
+本仓 cmdpolicy 曾自研一份 shell 分词（85 行分词 + 17 行 mergeSeparators）。
+当初保留自研的理由写进了 CHANGELOG v0.25.1：「shellx 只有 Quote / QuoteArgv，
+没有分词器」——**那个前提已随上游失效**：oekit/pkg v0.37→v0.40 之间上游新增了
+shellx.Split（Quote/QuoteArgv 的逆运算）。于是那份手写实现从「上游没有等价物」
+变成「上游有等价物且更准」，继续留着就是两份会漂移的真相。
+收编顺带修掉手写版三处 POSIX 错误（bash 实测逐字核对上游口径）：
+  1. 双引号内的反斜杠被一律丢弃（"a\b" → ab）。bash 实测是 a\b ——
+     本仓那份把文件名里的反斜杠吃掉，判据看到的于是另一个文件名。
+  2. 分隔符按 token 相邻合并（a & & b → a && b）。上游按字符相邻合并
+     （a & & b → a & & b）——前者把两条独立的后台命令伪装成一条 && 链。
+  3. CR 未归空白（CRLF 命令行的行尾 CR 粘进最后一个 token）。
+另修一处安全方向的漏判：SplitCommands 的段文本原用空格拼接，段再分词得回
+的 token 与原段不同（git 'a b' status → 段 "git a b status" → 4 个 token，
+原 3 个）⇒ 含空格的备选前缀（如 {{"git"}, {"a b"}}）永不命中。
+改用上游 shellx.QuoteArgv 拼段（上游保证 Split(QuoteArgv(args...)) 逐项还原
+args），段因此**可往返**。
+错误契约：本包哨兵包装上游哨兵（errors.Wrap），两层判法都成立 ——
+errors.Is(err, cmdpolicy.ErrUnclosedQuote) 与 errors.Is(err,
+shellx.ErrUnclosedQuote) 同时为真；错误文案保留「cmdpolicy: 」前缀。
+反向验证（注入旧实现 → 必须红）：
+  · 段拼接退回空格拼接 → TestSplitCommandsSegmentsRoundTrip 判红；
+  · 分词换回旧手写口径（丢弃双引号内全部反斜杠）→ 5 条用例同时判红
+    （POSIX 反斜杠 / 分隔符合并 / CR / 错误可辨识 / 与上游等价）。
+refactor(ptc): 子进程 stderr 进诊断报告前过上游 guardx/logredact 脱敏
+子进程常把连接串、API key、token 打进 stderr（MCP server 启动时回显配置是
+最高频形态），而这段文本原先原样进 ExecutionAborted.Stderr → 错误消息 →
+诊断报告，等于凭据泄漏面。脱敏用上游 guardx/logredact（凭据形态打码：URL
+内嵌凭据 / Bearer 头 / JWT / 厂商 token 前缀 / 长 hex / 键值对）——
+本仓 pii 管的是个人信息（手机号、身份证），两者判的不是同一件事，互补不重叠。
+脱敏发生在**写入字段时**而非渲染时：字段是公开的，宿主可直接读 e.Stderr，
+只在渲染面脱敏等于给宿主留了原文出口。崩溃原因（fatal error / panic 栈）
+原样保留。
+反向验证：把 redactChildStderr 退回原文赋值 → TestChildStderrRedactsCredentials
+判红；另补「死因不被误伤」「无凭据时逐字不变」两条用例钉住边界。
+BREAKING（下游须知已写进 README v0.28.0 行）：
+  · cmdpolicy 分词结果在三处形态上变（只影响含反斜杠 / 空格分隔的 & / CRLF
+    行尾的命令行）——是修复不是回归，但按旧行为做过前缀匹配的宿主需核对；
+  · SplitCommands 段文本形态变（含空格的段现在带引号）——段仍是合法 shell
+    命令行，但不要再按字面比对段文本；
+  · ptc 的 ExecutionAborted.Stderr 现在是脱敏后的文本。
+依赖地板不变：shellx 在 oekit/pkg、logredact 在 oagentkit/guardx，两者都已在
+本仓已声明的依赖面内，无新增依赖。
+门禁：fmt / build / vet / architecture-check / docsync / test / lint(0 issues) /
+cover-gate(88.1%，逐包 70% 全过) / race(改动包) / crossbuild(四平台) 全绿。
+
+- 文档(site)：站点升级为 VuePress 文档站——介绍/设计初衷/怎么用/能力详解
+
+上一版站点是「面向访客的精简介绍页」（build.py 拼 HTML）。本次改成
+VuePress 文档站，把「怎么用、有什么能力、设计初衷」写成完整章节：
+- guide/introduction.md  介绍：机制面 vs 资产分界、你会拿到什么、依赖链位置
+- guide/philosophy.md    设计初衷：编排是代码/LLM 只做单环节、内核不认领域、
+  判定语义跨宿主一致、失败形态必须是变红、fail-closed、每个机制的事故出处
+- guide/getting-started.md 怎么用：安装、三个约束、六步接入路线（逐步代码）、
+  最小闭环、升级须知
+- guide/capabilities.md 能力详解：九组能力（报告协议/工具判定环/续跑契约/
+  上下文三件套/程序化编排/实时流式/安全面/副作用/协作治理）+ 三个选型判断
+- reference/gates.md     门禁体系：make check 全链、两类判定、数字纪律
+- reference/packages.md  包清单与机器事实（生成）
+- reference/pitfalls.md  坑速查（生成）
+数字不手抄的纪律延续并扩大：gen.mjs 每次构建前从 README（包表/工程底座）、
+go.mod（依赖版本）、architecture-policy.yaml（规则清单）、Makefile（覆盖率
+门槛）、docs/USAGE.md（坑速查表）抽取事实页——解析不到即构建失败，
+不静默填默认值。坑表尤其如此：整表从 USAGE §6 抽取，不手抄第二份
+（手抄表就是会漂的第二份真相）。生成页不入库，每次构建重新生成。
+构建细节两条（都踩过）：
+- 默认主题的 .scss 需要显式装 sass（vite 不再自带）；
+- markdown 被编译成 Vue 模板，裸 <tool> 形态（如 host.<tool>()）会被当自定义
+  元素解析、炸构建——gen.mjs 对生成内容做反引号感知的尖括号转义。
+部署：pages.yml 换 Node 构建（setup-node@v7 / Node 24 LTS / npm 缓存），
+触发面 = gen.mjs 的全部事实输入（+ Makefile / architecture-policy.yaml /
+docs/USAGE.md）。build_type: workflow 与 URL 不变，gh-pages 分支仍为归档。
+验证：本地 npm run docs:build 出 9 页（含2 个生成页），dist 资源路径
+/agent-harness/ 前缀正确，生成页含 41 包/8 依赖/8 规则/坑表；make docsync
+与仓库事实一致（25852 行 / 182 测试文件，取并行会话已落库的口径）。
+
+- 文档(site)：站点迁回 main 的 site/，发布改走 GitHub Actions
+
+站点源码（build.py / template.html / style.css）原先整个住在 gh-pages
+独立分支，main 里只有一个链接——生成器与它生成的事实分居两处，恰好违反
+本仓「单一真相」纪律。现迁回 main 的 site/，发布改走 .github/workflows/
+pages.yml（build_type: workflow）：push 到 main 且 site/、README.md、
+go.mod/go.sum 变更时自动重跑生成并部署。gh-pages 分支冻结为历史归档，
+不再接收构建产物。URL 不变。
+数字继续全部生成、不手抄，本次还收缴了两组漏网的手抄数字：
+- 规则清单（条数 + 各条 desc）改从 architecture-policy.yaml 的 rules 段
+  生成——此前 8 条规则名手抄在模板里，policy 改了页面会悄悄说谎；
+- 覆盖率门槛（60/逐包 70）改从 Makefile 的 COV_MIN / PKG_COV_MIN 生成。
+两处读不到即报错退出，不静默填默认值（与包清单/依赖版本同一口径）。
+README 顺带修掉两处真实缺陷：
+- 「全部文档一览」表 6 行缺 "> " 前缀，块引用断裂、GitHub 上表格渲染破碎；
+- 表头「三份历史快照」与表内实际标注数对不上（现 4 份），改为不数数的
+  写法——派生计数不抄进散文的同一条纪律。
+工作树里另有并行会话的在制品（cmdpolicy/split.go、ptc/aborted.go 等及其
+README 数字同步），本提交逐路径 add、**不夹带**：README 只取本次改动的
+hunks，数字同步（25852/182 等）留给原会话随其代码一起提交。故本提交的
+README 数字（25847 行 / 180 测试文件）与本提交的代码态一致（docsync 判
+相等口径），不是漏改。
+验证（在暂存态导出的干净树上，GOWORK=off）：docsync / modreplace /
+modwork / versioncheck / fmt / vet / lint(0 issues) / test 全绿；
+cover-gate 88.2%（门槛 60%，逐包 70% 44 包全过）；race 绿；crossbuild
+四平台矩阵全过；architecture-check 绿（8 条规则 + 5 个门面包 + 43 包
+依赖方向）。vuln 因 vuln.go.dev 当前网络不通（两次 EOF）未能在本地跑成，
+本提交零 Go 改动、判定面不受影响，CI 的 make check 会执行它。
+
+- 文档：订正「宿主接入」版本号并补 v0.27.1 下游须知行
+
+「宿主接入」段的 require 示例与「当前已发布 tag」两处都还写着 v0.6.4，
+而远端已发到 v0.27.1——那是下游**第一眼**看到的版本号，停在 v0.6.4 会让人
+以为当前版本就是那个。订正为 v0.27.1。
+另补 v0.27.1 行（此前该版发版时未录）：`ptc` 拒绝分类载体化（issue #53-#59），
+分类随抛出对象一起走，收口处据此把「守卫判定拒绝」与「守卫自己崩了」分成两类。
+修复轮，**无破坏性变更、无依赖地板变化**。
+
+- 文档：校准包表行数与工程底座测试文件数（rebase 后对账）
+
+rebase 到 origin/main 后，远端新增的 issue 修复改动了 9 个包的代码，
+本仓包表的「生产行数」列与「工程底座」的测试文件数随之失配。按实测重算：
+- 包表：protocol / egress / pending / drain / ptc / guardset 等 6 个包行数变动，
+  另有 archcheck / trajectory / ticket 三行是空格对齐形态（前一轮脚本的正则
+  未覆盖，本轮一并校正为实测值 5073 / 1043 / 203）。
+- 工程底座：测试文件数 179 → 180（新增 protocol/report_parse_test.go）。
+两处都由 `make docsync` 判相等，门禁绿。
+附：site 的包表合计同步刷新为 24,361 行（生成器从 README 读，无需手改）。
+
+- 文档：README 拆分 + GitHub Pages 站点 + 第一方依赖全量抬升
+
+oekit/concurrency v0.28.4→v0.31.0、oekit/pkg v0.37.4→v0.40.0、
+oekit/logx v0.8.10→v0.8.12、oagentkit/agent v0.14.3→v0.14.5、
+guardx v0.23.2→v0.23.4、runtime v0.12.2→v0.12.4、
+toolgate v0.15.2→v0.15.3、mcpkit v0.12.1→v0.12.4。
+oekit/pkg v0.38 起 jsonrepair.Repair 的输出契约明写「: 后缺值补 null」
+（pkg#268），故 {"agent_name":"X","confidence":} 这类非法 JSON 从「拒收」
+变成「被修复通道救回」。
+判定为「规则该改」而非「代码错了」：救回点落在 markRepaired 的既有设计内
+——修复产物整体降置信 low，下游 verify/needs_review 承接（正是那条实弹
+审计 Critical 的处置）。旧测试固定的是某个上游版本下的边界，不是这个包的
+承诺。故把不变量改写为真正要保证的性质：
+- TestParseInvalidJSONRepairedLow：缺值形态必被救回，且置信必为 low；
+- TestParseUnrepairableRejected（成对反向判据）：缺冒号、无 JSON 结构仍
+  须拒收。只留前者的话，「修复通道把一切都放行」的错实现照样全绿。
+另把「输入形态 → 走哪条通道」的 4 条用例从 report_test.go 抽到独立的
+report_parse_test.go——通道选择与内容合规是两条判据，混在一个文件里会让
+失败互相淹没；顺带避开 report_test.go 撞 max_file_lines: 400。
+「工程底座」的九轮历史校准日志（约 80 行）下沉到
+docs/ENGINEERING-HISTORY.md：那是**只会增长**的叙述，留在 README 里会让
+正文重心从「这个仓是什么」滑向「这张表怎么漂的」。搬走后 README 留下
+当前值（机器判）与口径（怎么重算），过程与账在历史文档里。
+破坏性变更表留在 README——下游要看的是它，不是它的校准史。
+- 规则计数订正：正文写「7 条正则 + 2 条 go/ast」，实测是 8 + 5（后者含
+  子进程出口与沙箱档位登记）。同一份 README 里两处数字打架，这次对齐。
+- 包表「生产行数」列按实测重算 23 个包。docsync 对该列只判 25% 相对容差，
+  跨量级的误述要靠人看——本轮实测发现 ptc（2419→2749）、archcheck
+  （4484→5073）、pii（768→712）等已越界。
+- 「下游升级须知」补 v0.27.0 行：本轮唯一的**真正传导到下游的 BREAKING**
+  是 async.PanicHandler 新签名（本仓未定义该 handler，故编译未破，
+  但宿主若自行实现了必须改）；protocol 的解析口径变化也写明了改判方式。
+- 新增「项目主页」小节，说明站点从 README 生成而非手抄。
+https://yi-nology.github.io/agent-harness/
+住在 gh-pages 独立分支（发布源 = 分支根目录），main 不带站点文件。
+站点上的每个数字都从 README 与 go.mod 读（生成器在 gh-pages 分支：
+build.py + template.html + style.css），读不到即报错退出。
+理由与本仓纪律同源：手抄一遍就等于多一份会静默失真的真相。
+docsync / architecture-check / fmt-check / vet / lint(0 issues) /
+test / cover-gate(88.1%，逐包 70% 全过) 全绿。
+
 
 ## [v0.27.1] — 2026-11-09
 
@@ -3182,7 +3386,7 @@ golangci-lint ✅ 0 issues
 
 - 文档(overlap)：复核并更正 §四 的结论——补完整映射表，删掉一句不实断言
 
-上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一���上下文窗口在两处算出两个
+上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一上下文窗口在两处算出两个
 阈值」。**实测评数值后该断言不成立**，本轮更正。
 ## 断言错在哪
 1. **对照方式本身错了**：拿上游 `EffectiveWindow()`（纯窗口口径：窗口−预留）与
@@ -4018,7 +4222,7 @@ requires 改成真实依赖 [eventbus]，删除那句自我合理化。
 ### 新增(tooldisclose)：SignatureOf 从 schema 派生调用形态，消除第二份描述
 
 对标 OpenCode codemode/src/tool-schema.ts 的 inputProperties：他们从工具声明的 schema
-自动派��签名与必填/可选标注，schema 是唯一事实源。
+自动派生签名与必填/可选标注，schema 是唯一事实源。
 我们的 Signature 此前要宿主手写，等于同一组参数有两份描述。加了参数忘了改签名，
 模型就按旧签名调用——传不进去的、或多传的，两种都表现为「工具明明支持，模型却
 调不对」，而排查时极容易先怀疑模型。派生把「靠人记得同步」变成「不可能忘记」。
