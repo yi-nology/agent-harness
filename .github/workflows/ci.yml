@@ -36,7 +36,10 @@ jobs:
       - run: go test ./... -count=1
 
   check:
-    name: fmt + vet + lint + test + cover-gate(全局+逐包) + vuln + race + crossbuild + archcheck + repo 卫生
+    # job 名不得超长：GitHub 会截断超 100 字节的名字，于是分支保护的
+    # required context 永远匹配不上 ⇒ 每个 PR 都卡在 BLOCKED 且看不出原因。
+    # 长度门禁见 Makefile 的 cijobname 目标；改这个名要同步改分支保护。
+    name: check（fmt+vet+lint+test+cover-gate+vuln+race+crossbuild+archcheck+卫生）
     runs-on: ubuntu-24.04
     # 为什么钉死不用 ubuntu-latest：GitHub 公告该标签自 2026-10-19 起迁移到
     # Ubuntu 26，迁移后 runner 镜像的 Go/工具链环境可能与本机不同——门禁在

@@ -40,6 +40,10 @@ const (
 	childModeApplyThenHang = "apply-then-hang"
 	// childModeOneShot 效果体写完下游、短暂停顿后正常收场——竞争用例的两个进程。
 	childModeOneShot = "one-shot"
+	// childModeAcquireOnly 只抢闸、不施加不记账：它会卡在父进程持有的行锁上
+	// （事务已开、未提交）——父进程在这个状态下 SIGKILL 它，验证「进程死在
+	// 事务中间 ⇒ 库侧不留半截状态、不留悬挂锁」。
+	childModeAcquireOnly = "acquire-only"
 )
 
 // TestPGRefChildProcess 子进程入口：只在父进程 re-exec 本测试二进制
@@ -80,6 +84,17 @@ func runChildE2E(t *testing.T, mode string) {
 		Resource:    resource,
 		Payload:     []byte("p"),
 		RetrySafety: sideeffect.RetrySafetyUnknown, // 按最弱处理：失败即需对账
+	}
+
+	if mode == childModeAcquireOnly {
+		// 直接调 Acquire：它卡在父进程持有的行锁上（事务已开、未提交），
+		// 父进程要在这个状态下 SIGKILL 它。
+		outcome, _, _, err := eff.Acquire(context.Background(), act, ttl)
+		fmt.Printf("OUTCOME=%s\n", outcome)
+		if err != nil {
+			t.Fatalf("子进程 Acquire 失败: %v", err)
+		}
+		return
 	}
 
 	outcome, _, execErr := runner.Execute(context.Background(), act, func(ctx context.Context, lease sideeffect.Lease) (sideeffect.Result, error) {
