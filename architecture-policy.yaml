@@ -654,13 +654,14 @@ modules:
 
   - id: archcheck
     roots: [archcheck]
-    requires: []
+    requires: ["ext:golang.org/x/tools"]
     owner: harness
     managed: true
     notes: |
       架构门禁执行体：architecture-policy.yaml 的可执行面（规则判定、门包判定、
       依赖方向判定、policy 自校验、结构阈值）。
-      requires 为空：只依赖 stdlib 与 yaml.v3，不依赖本仓任何机制包——
+      依赖 stdlib、yaml.v3 与 x/tools/go/packages（类型感知严格档，issue #103——
+      @go/types@ 才能判赋值接收方的真实类型），不依赖本仓任何机制包——
       门禁必须是**最底层**的东西，否则「用它判别人」就变成「它自己也在被判定」，
       门禁的红绿会依赖它所判的代码。
 
@@ -1090,6 +1091,10 @@ dependency_direction:
     # 登记在这里是让「谁在用 pgx」可判：内核包若 import 它，依赖方向门禁
     # 当场红（内核不实现存储，判据面不拖驱动）。
     - github.com/jackc
+    # x/tools（v0.34.x 起，issue #103）：只被 archcheck 的类型感知严格档
+    # import（go/packages + go/types——赋值形态的字段赋值判据要真类型）。
+    # 登记让「谁在用 x/tools」可判：别的包要引它先回答「判什么」。
+    - golang.org/x/tools
 
 # ── 执行沙箱后端的档位登记 ──
 #

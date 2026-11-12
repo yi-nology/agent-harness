@@ -96,6 +96,12 @@ func WriteReport(w io.Writer, res *Result, opts ReportOptions) error {
 			rw.println("\n阈值超限：结构债已超阈值，先清偿或显式上调阈值再提交。")
 		}
 	}
+	// 类型感知严格档的运行凭据（issue #103）：开关开着但这里计到 0 而仓库
+	// 有包目录的形态已在 RunWithOptions 显式报错——打印包数是让「跑了」可见，
+	// 与「规则有执行体」自校验同一条纪律。
+	if res.TypeAwarePackages > 0 {
+		rw.printf("\n类型感知严格档（go/types）：类型检查了 %d 个包\n", res.TypeAwarePackages)
+	}
 	return rw.err
 }
 
