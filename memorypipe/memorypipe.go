@@ -28,7 +28,7 @@
 package memorypipe
 
 import (
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -117,12 +117,12 @@ func Build(entries []Entry, q Query) (Result, error) {
 		keys = append(keys, k)
 	}
 	// 确定性：按 (At 降序, ID 升序)。时间相同也不能靠 map 顺序决定先后。
-	sort.Slice(keys, func(i, j int) bool {
-		a, b := latest[keys[i]], latest[keys[j]]
-		if !a.At.Equal(b.At) {
-			return a.At.After(b.At)
+	slices.SortFunc(keys, func(a, b string) int {
+		ea, eb := latest[a], latest[b]
+		if c := ea.At.Compare(eb.At); c != 0 {
+			return -c
 		}
-		return a.ID < b.ID
+		return strings.Compare(ea.ID, eb.ID)
 	})
 
 	usedBytes := 0

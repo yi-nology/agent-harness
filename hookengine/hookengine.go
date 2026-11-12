@@ -38,7 +38,7 @@ package hookengine
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -174,7 +174,7 @@ func New(hooks []Hook, r Runner) (*Engine, error) {
 	}
 	// 求值顺序必须确定：hook 集合常常来自 map / 文件遍历，顺序不定会让
 	// 「哪个理由先出现」每次都不同，报告无法比对。
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortStableFunc(out, func(a, b Hook) int { return strings.Compare(a.Name, b.Name) })
 	return &Engine{hooks: out, runner: r, maxChars: DefaultMaxChars}, nil
 }
 

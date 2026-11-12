@@ -34,7 +34,7 @@ package offload
 
 import (
 	"mime"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -94,6 +94,6 @@ func ExtForMimeType(mimeType string) string {
 	}
 	// 显式排序：确定性由本包自己兜住，不外包给 stdlib 的排序实现细节
 	// （当前 stdlib 已排，但换版本时这条判据不该被静默改掉）。
-	sort.Strings(exts)
+	slices.Sort(exts)
 	return exts[0]
 }

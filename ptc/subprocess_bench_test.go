@@ -75,7 +75,7 @@ func BenchmarkToolCallInProcess(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		res := ptc.Run(ctx, prog, bindings, ptc.Options{Stages: allowStages()})
 		if !res.OK {
 			b.Fatalf("进程内执行失败: %v", res.Error)
@@ -93,7 +93,7 @@ func BenchmarkToolCallSubprocess(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		p := ptc.NewSubprocessProvider(ptc.SubprocessOptions{Stages: allowStages(),
 			ExePath:  bin,
 			Program:  prog,

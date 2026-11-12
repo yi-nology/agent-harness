@@ -43,12 +43,13 @@
 package archcheck
 
 import (
+	"cmp"
 	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -243,9 +244,7 @@ func buildModuleIndex(mods []Module, modPath string, universe []string) (moduleI
 		}
 	}
 	// 最长前缀优先：roots 允许嵌套，先命中外层会把内层包的边判成外层的边。
-	sort.Slice(mi.prefixes, func(i, j int) bool {
-		return len(mi.prefixes[i]) > len(mi.prefixes[j])
-	})
+	slices.SortFunc(mi.prefixes, func(a, b string) int { return cmp.Compare(len(b), len(a)) })
 	return mi, nil
 }
 

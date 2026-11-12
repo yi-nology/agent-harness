@@ -71,9 +71,9 @@
 package guardset
 
 import (
+	"cmp"
 	"context"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -250,7 +250,7 @@ func New(guards ...Guard) (*Set, error) {
 		seen[g.Name] = true
 	}
 	ordered := slices.Clone(guards)
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Rank < ordered[j].Rank })
+	slices.SortStableFunc(ordered, func(a, b Guard) int { return cmp.Compare(a.Rank, b.Rank) })
 	return &Set{guards: ordered}, nil
 }
 

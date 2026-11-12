@@ -33,7 +33,7 @@
 package worktree
 
 import (
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/oekit/pkg/errors"
@@ -105,7 +105,7 @@ func New(ws []Workspace) (*Plan, error) {
 		w.ID = id
 		out = append(out, w)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortStableFunc(out, func(a, b Workspace) int { return strings.Compare(a.ID, b.ID) })
 	return &Plan{workspaces: out}, nil
 }
 
@@ -132,7 +132,7 @@ func (p *Plan) Workspaces() []Workspace { return p.workspaces }
 // 只判写：读的重叠没有危害——多个人读同一份文件不会产生第二份真相。
 func (p *Plan) Conflicts() []Conflict {
 	var out []Conflict
-	for i := 0; i < len(p.workspaces); i++ {
+	for i := range p.workspaces {
 		for j := i + 1; j < len(p.workspaces); j++ {
 			a, b := p.workspaces[i], p.workspaces[j]
 			for _, pa := range a.Writable {

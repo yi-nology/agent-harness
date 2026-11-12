@@ -161,7 +161,7 @@ func firstUnsatisfiedPred(i int, ids []string, specs []depSpec, satisfied map[st
 	case spec.isolated:
 		return "", predSatisfied
 	default:
-		for j := 0; j < i; j++ {
+		for j := range i {
 			if !satisfied[ids[j]] {
 				return ids[j], predState(ids[j], done, index)
 			}
@@ -213,7 +213,7 @@ func topoRun(specs []depSpec, index map[string]int, run []string) []string {
 	order := make([]string, 0, m)
 	for len(order) < m {
 		picked := -1
-		for k := 0; k < m; k++ {
+		for k := range m {
 			if emitted[k] {
 				continue
 			}
@@ -224,7 +224,7 @@ func topoRun(specs []depSpec, index map[string]int, run []string) []string {
 		}
 		if picked < 0 {
 			// 成环：剩下的按编排图顺序追加（内核不替宿主裁决环）。
-			for k := 0; k < m; k++ {
+			for k := range m {
 				if !emitted[k] {
 					order = append(order, run[k])
 					emitted[k] = true
@@ -252,7 +252,7 @@ func runStepReady(spec depSpec, pos map[string]int, emitted []bool, k int) bool 
 		return true
 	default:
 		// 位置隐含前驱：排在它之前的待执行步骤都得先跑。
-		for j := 0; j < k; j++ {
+		for j := range k {
 			if !emitted[j] {
 				return false
 			}

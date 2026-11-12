@@ -263,8 +263,7 @@ func BenchmarkDisclose(b *testing.B) {
 	}
 	q := Query{Text: "alpha beta gamma delta epsilon zeta eta theta", Resources: []string{"src/main.go"}}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := c.Disclose(q, Budget{Max: 5}); err != nil {
 			b.Fatal(err)
 		}

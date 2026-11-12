@@ -43,7 +43,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -166,7 +166,7 @@ func godObjects(root string, scanRoots []string, limit, shellLimit int) ([]strin
 				name, c.total, c.forwarding, sub, sub, limit))
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 

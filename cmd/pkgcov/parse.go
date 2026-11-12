@@ -141,7 +141,7 @@ func parse(r io.Reader) ([]pkgResult, error) {
 // 前者是判据没跑对，后者是判据正常工作的结论。
 func coverageOf(pkg string, rest []string) (res pkgResult, found bool, err error) {
 	res.pkg = pkg
-	for i := 0; i < len(rest)-1; i++ {
+	for i := range len(rest) - 1 {
 		if rest[i] != coverageToken {
 			continue
 		}

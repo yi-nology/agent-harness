@@ -131,8 +131,7 @@ func mixedTools(n int) []Tool {
 func BenchmarkSearch(b *testing.B) {
 	c := NewCatalog(mixedTools(100))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = c.Search("alpha beta gamma")
 	}
 }
@@ -140,8 +139,7 @@ func BenchmarkSearch(b *testing.B) {
 func BenchmarkSearchFullSort(b *testing.B) {
 	c := NewCatalog(mixedTools(100))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = fullSortSearch(c, "alpha beta gamma")
 	}
 }

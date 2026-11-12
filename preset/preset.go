@@ -53,7 +53,6 @@ package preset
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/oekit/pkg/errors"
@@ -195,7 +194,7 @@ func (s *Set) Names() []string {
 		return nil
 	}
 	out := slicex.Map(s.presets, func(p Preset) string { return p.Name })
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -205,7 +204,7 @@ func (s *Set) All() []Preset {
 		return nil
 	}
 	out := slices.Clone(s.presets)
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b Preset) int { return strings.Compare(a.Name, b.Name) })
 	return out
 }
 

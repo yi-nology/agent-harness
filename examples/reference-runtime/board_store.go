@@ -22,9 +22,10 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -88,7 +89,7 @@ func (s *boardStore) List(_ context.Context) ([]taskboard.Task, error) {
 		t.Deps = append([]taskboard.TaskID(nil), t.Deps...)
 		out = append(out, t)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortFunc(out, func(a, b taskboard.Task) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
 }
 

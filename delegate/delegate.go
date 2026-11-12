@@ -24,7 +24,8 @@
 package delegate
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/oekit/pkg/errors"
@@ -107,11 +108,11 @@ func Route(offers []Offer, r Request) (Offer, error) {
 	if len(cands) == 0 {
 		return Offer{}, errors.Wrap(ErrNoRunner, "delegate: 请求需要能力 "+joinCaps(r.Needs))
 	}
-	sort.SliceStable(cands, func(i, j int) bool {
-		if len(cands[i].Provides) != len(cands[j].Provides) {
-			return len(cands[i].Provides) < len(cands[j].Provides)
+	slices.SortStableFunc(cands, func(a, b Offer) int {
+		if c := cmp.Compare(len(a.Provides), len(b.Provides)); c != 0 {
+			return c
 		}
-		return cands[i].Name < cands[j].Name
+		return strings.Compare(a.Name, b.Name)
 	})
 	return cands[0], nil
 }

@@ -35,7 +35,7 @@
 package tooldisclose
 
 import (
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/oekit/pkg/errors"
@@ -121,7 +121,7 @@ func SignatureOf(t Tool) (string, error) {
 		}
 		optional = append(optional, p)
 	}
-	sort.Strings(optional) // map 迭代顺序随机，而签名是给模型读的文本
+	slices.Sort(optional) // map 迭代顺序随机，而签名是给模型读的文本
 
 	// 带空格分隔：这段文本是给模型读的，`host, count` 比 `host,count` 更易读，
 	// 而多出的字节在任何预算口径下都可忽略。

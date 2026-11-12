@@ -32,8 +32,9 @@
 package pii
 
 import (
+	"cmp"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -133,7 +134,7 @@ func validResidentID(s string) bool {
 		return false
 	}
 	sum := 0
-	for i := 0; i < 17; i++ {
+	for i := range 17 {
 		d, err := strconv.Atoi(s[i : i+1])
 		if err != nil {
 			return false
@@ -149,11 +150,11 @@ func dedupeSpans(in []Span) []Span {
 	if len(in) < 2 {
 		return in
 	}
-	sort.Slice(in, func(i, j int) bool {
-		if in[i].Start != in[j].Start {
-			return in[i].Start < in[j].Start
+	slices.SortFunc(in, func(a, b Span) int {
+		if c := cmp.Compare(a.Start, b.Start); c != 0 {
+			return c
 		}
-		return in[i].End-in[i].Start > in[j].End-in[j].Start
+		return cmp.Compare(b.End-b.Start, a.End-a.Start)
 	})
 	var out []Span
 	lastEnd := -1

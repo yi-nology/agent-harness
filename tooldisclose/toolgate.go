@@ -50,8 +50,8 @@
 package tooldisclose
 
 import (
+	"maps"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 
@@ -329,13 +329,5 @@ func exposureOf(t Tool, loaded bool) Exposure {
 // namesOf 收集集合成员并升序排列。map 序是随机化的，所有出口一律走这里排序，
 // 免得「同一个集合、两个出口、两份顺序」。
 func namesOf[V any](set map[string]V) []string {
-	if len(set) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(set))
-	for n := range set {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(set))
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -221,7 +221,7 @@ func describeCalls(c *callCounter) string {
 	for id := range snap {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	parts := make([]string, 0, len(ids))
 	for _, id := range ids {
 		parts = append(parts, fmt.Sprintf("%s=%d", id, snap[id]))
