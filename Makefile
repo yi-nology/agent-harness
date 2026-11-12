@@ -345,7 +345,33 @@ modwork: ## go.work / go.work.sum 不得入库（只应存在于本机）
 # 不挂到 ci.yml 上变回「推送后门禁」。
 ## 提交前门禁聚合。versioncheck 排在最前：工具版本不符时后面每条门禁的绿都不
 ## 代表「本仓合规」，先让它说话，免得红在别处、人往别处查。
-check: versioncheck fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync apilifecheck modreplace modwork
+# ci.yml 的 job 名不得超长：GitHub 会把它截断，于是**分支保护的 required
+# context 永远匹配不上** ⇒ 每个 PR 都卡在 BLOCKED（三个检查全绿、合并被拒
+# 「the base branch policy prohibits the merge」），而报告里看不出原因。
+#
+# 2026-11-12 实录：PG 车道给 check job 名加「repo 卫生」几个字 ⇒ 名字超 100
+# 字节 ⇒ GitHub 记下的 check 名以「...」结尾 ⇒ 与保护规则里的全名失配 ⇒
+# 本仓此后每一个 PR 都卡住（三个 job 全绿也合不进去）。
+#
+# 判据：每个 job 名的**字节数** ≤ 90（GitHub 的截断阈值是 100 字节，留 10
+# 字节余量给将来加字）。超了当场红，并指出该改哪一行。
+#
+# 另注：改 job 名时必须**同步**更新分支保护的 required contexts（两者逐字
+# 相同）——本门禁只管长度，那条「逐字相同」的关系在 GitHub 侧，离线判不了。
+cijobname: ## ci.yml 的 job 名长度（超长 ⇒ GitHub 截断 ⇒ 分支保护的 context 失配 ⇒ 所有 PR 卡住）
+	@ok=1; \
+	for name in $$(grep -E '^    name: ' $(CI_YML) | sed 's/^    name: //'); do \
+		bytes=$$(printf '%s' "$$name" | wc -c | tr -d ' '); \
+		if [ "$$bytes" -gt 90 ]; then \
+			echo "ci.yml 的 job 名超长（$$bytes 字节 > 90）：GitHub 会截断它 ⇒ 分支保护的 required context 永远匹配不上 ⇒ 每个 PR 都卡在 BLOCKED 且看不出原因"; \
+			echo "  改短这个 job 名，并同步更新分支保护的 required contexts（两者必须逐字相同）：$$name"; \
+			ok=0; \
+		fi; \
+	done; \
+	if [ "$$ok" != 1 ]; then exit 1; fi; \
+	echo "ci.yml job 名长度 ✓（均 ≤ 90 字节，GitHub 不会截断）"
+
+check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync apilifecheck modreplace modwork
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy
