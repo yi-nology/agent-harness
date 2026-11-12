@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"fmt"
 	"github.com/oekit/pkg/errors"
 )
 
@@ -189,7 +190,7 @@ func (s Spec) SatisfiedVerdict(provider any) (Verdict, error) {
 			return Verdict{Mode: s.Mode}, errors.Wrap(err, "egress: 后端实测出站隔离失败")
 		}
 		if !got.Satisfies(s.Mode) {
-			return Verdict{Mode: s.Mode}, errors.Errorf("egress: 后端实测只能兑现 %s，低于要求的 %s", got, s.Mode)
+			return Verdict{Mode: s.Mode}, fmt.Errorf("egress: 后端实测只能兑现 %s，低于要求的 %s", got, s.Mode)
 		}
 		return Verdict{
 			Mode:     s.Mode,
@@ -200,11 +201,11 @@ func (s Spec) SatisfiedVerdict(provider any) (Verdict, error) {
 
 	enf, ok := provider.(Enforcer)
 	if !ok {
-		return Verdict{Mode: s.Mode}, errors.Errorf("egress: 后端未声明出口能力，无法兑现 %s（沉默按最弱处理）", s.Mode)
+		return Verdict{Mode: s.Mode}, fmt.Errorf("egress: 后端未声明出口能力，无法兑现 %s（沉默按最弱处理）", s.Mode)
 	}
 	got := enf.Egress()
 	if !got.Satisfies(s.Mode) {
-		return Verdict{Mode: s.Mode}, errors.Errorf("egress: 后端只能兑现 %s，低于要求的 %s", got, s.Mode)
+		return Verdict{Mode: s.Mode}, fmt.Errorf("egress: 后端只能兑现 %s，低于要求的 %s", got, s.Mode)
 	}
 	return Verdict{
 		Mode:     s.Mode,

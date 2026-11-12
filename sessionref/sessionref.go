@@ -123,7 +123,7 @@ func Capture(source string, version uint64, at, expires time.Time, body string, 
 		return Ref{}, errors.New("sessionref: 来源会话标识为空（没有来源的快照既无法留痕，也无法判失效）")
 	}
 	if !expires.After(at) {
-		return Ref{}, errors.Errorf("sessionref: 失效时刻 %s 不晚于采集时刻 %s（这条声明一出生就过期）",
+		return Ref{}, fmt.Errorf("sessionref: 失效时刻 %s 不晚于采集时刻 %s（这条声明一出生就过期）",
 			expires.Format(time.RFC3339), at.Format(time.RFC3339))
 	}
 	if b.MaxBytes < 0 || b.MaxLines < 0 {

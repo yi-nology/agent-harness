@@ -147,22 +147,22 @@ func New(rules []Rule) (*Policy, error) {
 			return nil, errors.New("cmdpolicy: 规则名不得为空")
 		}
 		if _, dup := seen[r.Name]; dup {
-			return nil, errors.Errorf("cmdpolicy: 规则名重复 %q（重名会让留痕无法定位到规则）", r.Name)
+			return nil, fmt.Errorf("cmdpolicy: 规则名重复 %q（重名会让留痕无法定位到规则）", r.Name)
 		}
 		seen[r.Name] = struct{}{}
 		if r.Decision < DecisionAllow || r.Decision > DecisionForbidden {
-			return nil, errors.Errorf("cmdpolicy: 规则 %q 的裁决 %d 不在词表内", r.Name, r.Decision)
+			return nil, fmt.Errorf("cmdpolicy: 规则 %q 的裁决 %d 不在词表内", r.Name, r.Decision)
 		}
 		if len(r.Prefix) == 0 {
-			return nil, errors.Errorf("cmdpolicy: 规则 %q 的前缀为空（会匹配一切命令，必是配置写错）", r.Name)
+			return nil, fmt.Errorf("cmdpolicy: 规则 %q 的前缀为空（会匹配一切命令，必是配置写错）", r.Name)
 		}
 		for i, seg := range r.Prefix {
 			if len(seg) == 0 {
-				return nil, errors.Errorf("cmdpolicy: 规则 %q 第 %d 段没有备选（空段会让规则永不命中）", r.Name, i)
+				return nil, fmt.Errorf("cmdpolicy: 规则 %q 第 %d 段没有备选（空段会让规则永不命中）", r.Name, i)
 			}
 			for _, tok := range seg {
 				if tok == "" {
-					return nil, errors.Errorf("cmdpolicy: 规则 %q 第 %d 段含空 token", r.Name, i)
+					return nil, fmt.Errorf("cmdpolicy: 规则 %q 第 %d 段含空 token", r.Name, i)
 				}
 			}
 		}
@@ -184,7 +184,7 @@ func (p *Policy) selfCheckExamples() error {
 				return err
 			}
 			if v.Rule != c.rule.Name {
-				return errors.Errorf("cmdpolicy: 规则 %q 的正例 %q 没被它命中（实际命中 %q）", c.rule.Name, cmd, v.Rule)
+				return fmt.Errorf("cmdpolicy: 规则 %q 的正例 %q 没被它命中（实际命中 %q）", c.rule.Name, cmd, v.Rule)
 			}
 		}
 		for _, cmd := range c.rule.NotMatch {
@@ -193,7 +193,7 @@ func (p *Policy) selfCheckExamples() error {
 				return err
 			}
 			if v.Rule == c.rule.Name {
-				return errors.Errorf("cmdpolicy: 规则 %q 的反例 %q 被它命中了（判据比声明宽）", c.rule.Name, cmd)
+				return fmt.Errorf("cmdpolicy: 规则 %q 的反例 %q 被它命中了（判据比声明宽）", c.rule.Name, cmd)
 			}
 		}
 	}

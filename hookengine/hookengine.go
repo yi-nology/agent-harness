@@ -38,6 +38,7 @@ package hookengine
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -149,24 +150,24 @@ func New(hooks []Hook, r Runner) (*Engine, error) {
 			return nil, errors.New("hookengine: hook 名为空（留痕无从定位）")
 		}
 		if seen[name] {
-			return nil, errors.Errorf("hookengine: hook 名 %q 重复", name)
+			return nil, fmt.Errorf("hookengine: hook 名 %q 重复", name)
 		}
 		seen[name] = true
 		if strings.TrimSpace(h.Event) == "" {
-			return nil, errors.Errorf("hookengine: hook %q 没有事件（它永远不会被触发）", name)
+			return nil, fmt.Errorf("hookengine: hook %q 没有事件（它永远不会被触发）", name)
 		}
 		if strings.TrimSpace(h.Command) == "" {
-			return nil, errors.Errorf("hookengine: hook %q 没有命令", name)
+			return nil, fmt.Errorf("hookengine: hook %q 没有命令", name)
 		}
 		if h.Blocking {
 			if h.Timeout <= 0 {
-				return nil, errors.Errorf("hookengine: 阻塞 hook %q 没有 Timeout（会把宿主挂在可能永不返回的进程上）", name)
+				return nil, fmt.Errorf("hookengine: 阻塞 hook %q 没有 Timeout（会把宿主挂在可能永不返回的进程上）", name)
 			}
 			if h.OnTimeout != "" && !h.OnTimeout.valid() {
-				return nil, errors.Errorf("hookengine: hook %q 的 OnTimeout 不在词表内（allow / deny）", name)
+				return nil, fmt.Errorf("hookengine: hook %q 的 OnTimeout 不在词表内（allow / deny）", name)
 			}
 		} else if h.OnTimeout != "" {
-			return nil, errors.Errorf("hookengine: hook %q 是非阻塞的，却声明了 OnTimeout——"+
+			return nil, fmt.Errorf("hookengine: hook %q 是非阻塞的，却声明了 OnTimeout——"+
 				"非阻塞 hook 的超时**不参与裁决**，这条声明永远不会生效", name)
 		}
 		h.Name = name

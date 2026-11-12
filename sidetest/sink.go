@@ -31,6 +31,7 @@ package sidetest
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -99,14 +100,14 @@ func checkSinkFreshAccepted(p SinkProbe) error {
 		return errors.Wrap(err, "更新的令牌应被接受")
 	}
 	if e.n.Load() != 1 {
-		return errors.Errorf("写入体应被执行 1 次，实得 %d", e.n.Load())
+		return fmt.Errorf("写入体应被执行 1 次，实得 %d", e.n.Load())
 	}
 	seen, err := p.SeenFence(ctx, "res-a")
 	if err != nil {
 		return err
 	}
 	if seen != 5 {
-		return errors.Errorf("已见最大令牌应为 5，实得 %d", seen)
+		return fmt.Errorf("已见最大令牌应为 5，实得 %d", seen)
 	}
 	return nil
 }
@@ -125,7 +126,7 @@ func checkSinkEqualAccepted(p SinkProbe) error {
 		return errors.Wrap(err, "同代令牌应被接受")
 	}
 	if e.n.Load() != 2 {
-		return errors.Errorf("同代令牌的写入体应再执行一次（共 2 次），实得 %d", e.n.Load())
+		return fmt.Errorf("同代令牌的写入体应再执行一次（共 2 次），实得 %d", e.n.Load())
 	}
 	return nil
 }
@@ -145,7 +146,7 @@ func checkSinkStaleRejectedNoWrite(p SinkProbe) error {
 		return p.WriteMarker(ctx, "res-a")
 	})
 	if !errors.Is(err, sideeffect.ErrFenceStale) {
-		return errors.Errorf("陈旧令牌应被拒为 ErrFenceStale，实得 %v", err)
+		return fmt.Errorf("陈旧令牌应被拒为 ErrFenceStale，实得 %v", err)
 	}
 	if executed {
 		return errors.New("陈旧写入的写入体不该被执行")
@@ -155,14 +156,14 @@ func checkSinkStaleRejectedNoWrite(p SinkProbe) error {
 		return err
 	}
 	if marker != "" {
-		return errors.Errorf("陈旧写入不得部分写：标记竟已落盘 %q", marker)
+		return fmt.Errorf("陈旧写入不得部分写：标记竟已落盘 %q", marker)
 	}
 	seen, err := p.SeenFence(ctx, "res-a")
 	if err != nil {
 		return err
 	}
 	if seen != 5 {
-		return errors.Errorf("已见最大令牌应仍为 5，实得 %d", seen)
+		return fmt.Errorf("已见最大令牌应仍为 5，实得 %d", seen)
 	}
 	return nil
 }
@@ -179,14 +180,14 @@ func checkSinkStaleAfterFreshKeepsMax(p SinkProbe) error {
 		return errors.Wrap(err, "令牌 9 的写入失败")
 	}
 	if err := p.WriteFenced(ctx, "res-a", 3, func(context.Context) error { return nil }); !errors.Is(err, sideeffect.ErrFenceStale) {
-		return errors.Errorf("令牌 3 应被拒为 ErrFenceStale，实得 %v", err)
+		return fmt.Errorf("令牌 3 应被拒为 ErrFenceStale，实得 %v", err)
 	}
 	seen, err := p.SeenFence(ctx, "res-a")
 	if err != nil {
 		return err
 	}
 	if seen != 9 {
-		return errors.Errorf("已见最大令牌应仍为 9，实得 %d（掉回去了 = 陈旧写入污染了它）", seen)
+		return fmt.Errorf("已见最大令牌应仍为 9，实得 %d（掉回去了 = 陈旧写入污染了它）", seen)
 	}
 	if err := p.WriteFenced(ctx, "res-a", 9, func(context.Context) error { return nil }); err != nil {
 		return errors.Wrap(err, "被拒的陈旧写入不该影响后续合法写入")
@@ -220,7 +221,7 @@ func checkSinkConcurrentStaleRejected(p SinkProbe) error {
 	})
 	wg.Wait()
 	if !errors.Is(errStale, sideeffect.ErrFenceStale) {
-		return errors.Errorf("并发下旧令牌那次应被拒为 ErrFenceStale，实得 %v", errStale)
+		return fmt.Errorf("并发下旧令牌那次应被拒为 ErrFenceStale，实得 %v", errStale)
 	}
 	if errFresh != nil {
 		return errors.Wrap(errFresh, "并发下新令牌那次应成功")
@@ -230,7 +231,7 @@ func checkSinkConcurrentStaleRejected(p SinkProbe) error {
 		return err
 	}
 	if seen != 9 {
-		return errors.Errorf("已见最大令牌应为 9，实得 %d（旧的覆盖了新的 = 原子性破了）", seen)
+		return fmt.Errorf("已见最大令牌应为 9，实得 %d（旧的覆盖了新的 = 原子性破了）", seen)
 	}
 	return nil
 }
@@ -255,21 +256,21 @@ func checkSinkWriteErrorNoPartialWrite(p SinkProbe) error {
 		return errSinkBoom
 	})
 	if !errors.Is(err, errSinkBoom) {
-		return errors.Errorf("写入体的故障应原样透出，实得 %v", err)
+		return fmt.Errorf("写入体的故障应原样透出，实得 %v", err)
 	}
 	marker, mErr := p.Marker(ctx, "res-a")
 	if mErr != nil {
 		return mErr
 	}
 	if marker != "" {
-		return errors.Errorf("写入体失败后不得部分写：标记竟已落盘 %q", marker)
+		return fmt.Errorf("写入体失败后不得部分写：标记竟已落盘 %q", marker)
 	}
 	seen, err := p.SeenFence(ctx, "res-a")
 	if err != nil {
 		return err
 	}
 	if seen != 5 {
-		return errors.Errorf("写入体失败后预占必须一起回滚：已见最大应仍为 5，实得 %d", seen)
+		return fmt.Errorf("写入体失败后预占必须一起回滚：已见最大应仍为 5，实得 %d", seen)
 	}
 	return nil
 }

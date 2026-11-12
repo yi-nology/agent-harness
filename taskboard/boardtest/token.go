@@ -8,6 +8,7 @@ package boardtest
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -114,10 +115,10 @@ func checkCrossTaskTokenRejected(ctx context.Context, b taskboard.Board) error {
 		return errors.New("boardtest: 不同任务的令牌撞号——释放与完成会把两个任务混成一份状态")
 	}
 	if err := b.Release(ctx, "t2", t1.Lease.Token); !errors.Is(err, taskboard.ErrLeaseLost) {
-		return errors.Errorf("boardtest: t1 的令牌拿去释放 t2 必须报 ErrLeaseLost（实得 %v）", err)
+		return fmt.Errorf("boardtest: t1 的令牌拿去释放 t2 必须报 ErrLeaseLost（实得 %v）", err)
 	}
 	if err := b.Complete(ctx, "t2", t1.Lease.Token); !errors.Is(err, taskboard.ErrLeaseLost) {
-		return errors.Errorf("boardtest: t1 的令牌拿去完成 t2 必须报 ErrLeaseLost（实得 %v）", err)
+		return fmt.Errorf("boardtest: t1 的令牌拿去完成 t2 必须报 ErrLeaseLost（实得 %v）", err)
 	}
 	// 对照：t2 自己的令牌仍然有效——上面的拒绝是因为令牌不匹配，不是 t2 坏了。
 	if err := b.Complete(ctx, "t2", t2.Lease.Token); err != nil {

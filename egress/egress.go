@@ -111,7 +111,7 @@ type Spec struct {
 // Validate 自检声明本身是否可兑现（配置写错即报错，不静默降级）。
 func (s Spec) Validate() error {
 	if !s.Mode.Valid() {
-		return errors.Errorf("egress: 未知档位 %d", int(s.Mode))
+		return fmt.Errorf("egress: 未知档位 %d", int(s.Mode))
 	}
 	if s.Mode != ModeProxy {
 		return nil
@@ -120,7 +120,7 @@ func (s Spec) Validate() error {
 		return errors.New("egress: 要求经代理但没给代理地址（这条声明兑现不了）")
 	}
 	if !strings.Contains(s.Proxy, "://") {
-		return errors.Errorf("egress: 代理地址 %q 缺少 scheme（形如 http://host:port）", s.Proxy)
+		return fmt.Errorf("egress: 代理地址 %q 缺少 scheme（形如 http://host:port）", s.Proxy)
 	}
 	return nil
 }
@@ -221,12 +221,12 @@ func (s Spec) verifyBypass(env map[string]string) error {
 		return nil
 	}
 	if len(want) == 0 {
-		return errors.Errorf("egress: 声明无绕过但环境携带 %s——代理将被绕过架空", strings.Join(present, "、"))
+		return fmt.Errorf("egress: 声明无绕过但环境携带 %s——代理将被绕过架空", strings.Join(present, "、"))
 	}
 	if len(present) == 0 {
-		return errors.Errorf("egress: 绕过名单未兑现（要求 %v，实际 NO_PROXY/no_proxy 两个变体都缺席）", want)
+		return fmt.Errorf("egress: 绕过名单未兑现（要求 %v，实际 NO_PROXY/no_proxy 两个变体都缺席）", want)
 	}
-	return errors.Errorf("egress: 绕过名单未兑现（要求 %v，实际 %v）", want, present)
+	return fmt.Errorf("egress: 绕过名单未兑现（要求 %v，实际 %v）", want, present)
 }
 
 // verifyProxyVars 代理变量判据（issue #62）：六个变量**一个不缺、一个不歪**。
@@ -251,7 +251,7 @@ func (s Spec) verifyProxyVars(env map[string]string) error {
 	if len(missing) == 0 && len(wrong) == 0 {
 		return nil
 	}
-	return errors.Errorf("egress: 子进程环境未兑现代理声明（要求 %s；缺失 %v；异值 %v）", s.Proxy, missing, wrong)
+	return fmt.Errorf("egress: 子进程环境未兑现代理声明（要求 %s；缺失 %v；异值 %v）", s.Proxy, missing, wrong)
 }
 
 // normList 折成「去空白、去空条目、排序、去重」的形态（比较目标清单前先归一）。

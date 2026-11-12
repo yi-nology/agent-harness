@@ -13,6 +13,7 @@ package boardtest
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -61,11 +62,11 @@ func checkTakeoverRejectsStaleSubmit(ctx context.Context, b taskboard.Board, clo
 		return errors.New("boardtest: 接管必须换新令牌（旧令牌与新一代并存等于没有换代）")
 	}
 	if err := b.Release(ctx, "t1", first.Lease.Token); !errors.Is(err, taskboard.ErrLeaseLost) {
-		return errors.Errorf("boardtest: 过期持有者的迟到释放必须报 ErrLeaseLost（实得 %v）——"+
+		return fmt.Errorf("boardtest: 过期持有者的迟到释放必须报 ErrLeaseLost（实得 %v）——"+
 			"静默成功会放掉新持有者的闸", err)
 	}
 	if err := b.Complete(ctx, "t1", first.Lease.Token); !errors.Is(err, taskboard.ErrLeaseLost) {
-		return errors.Errorf("boardtest: 过期持有者的迟到完成必须报 ErrLeaseLost（实得 %v）——"+
+		return fmt.Errorf("boardtest: 过期持有者的迟到完成必须报 ErrLeaseLost（实得 %v）——"+
 			"静默成功会把别人正在做的事记成自己做完", err)
 	}
 	if err := b.Complete(ctx, "t1", second.Lease.Token); err != nil {
@@ -100,7 +101,7 @@ func checkTakeoverFenceIncrements(ctx context.Context, b taskboard.Board, clock 
 		return errors.Wrap(err, "boardtest: 过期租约必须可被接管")
 	}
 	if takeover.Lease.Fence <= first.Lease.Fence {
-		return errors.Errorf("boardtest: 接管后的代次必须严格大于旧代（实得 old=%d new=%d）——"+
+		return fmt.Errorf("boardtest: 接管后的代次必须严格大于旧代（实得 old=%d new=%d）——"+
 			"代次不递增，下游凭代次拒收迟到写入的栅栏就失效了",
 			first.Lease.Fence, takeover.Lease.Fence)
 	}
@@ -112,7 +113,7 @@ func checkTakeoverFenceIncrements(ctx context.Context, b taskboard.Board, clock 
 		return errors.Wrap(err, "boardtest: 释放后应当可再认领")
 	}
 	if reclaim.Lease.Fence <= takeover.Lease.Fence {
-		return errors.Errorf("boardtest: 再认领后的代次必须严格递增（实得 old=%d new=%d）",
+		return fmt.Errorf("boardtest: 再认领后的代次必须严格递增（实得 old=%d new=%d）",
 			takeover.Lease.Fence, reclaim.Lease.Fence)
 	}
 	return nil
@@ -155,20 +156,20 @@ func checkRenewKeepsLongTask(ctx context.Context, b taskboard.Board, clock *Fake
 		return errors.New("boardtest: 续期不得更换令牌（续期不是接管——换了令牌旧持有者的在途提交全被误拒）")
 	}
 	if renewed.Lease.Fence != fence {
-		return errors.Errorf("boardtest: 续期不得递增代次（实得 old=%d new=%d）——续期不是接管",
+		return fmt.Errorf("boardtest: 续期不得递增代次（实得 old=%d new=%d）——续期不是接管",
 			fence, renewed.Lease.Fence)
 	}
 	if !renewed.Lease.Until.After(oldUntil) {
-		return errors.Errorf("boardtest: 续期必须把到期时刻推后（实得 old=%v new=%v）", oldUntil, renewed.Lease.Until)
+		return fmt.Errorf("boardtest: 续期必须把到期时刻推后（实得 old=%v new=%v）", oldUntil, renewed.Lease.Until)
 	}
 	if renewed.Seq <= seq {
-		return errors.Errorf("boardtest: 续期是任务的一次变更，Seq 必须前进（实得 old=%d new=%d）", seq, renewed.Seq)
+		return fmt.Errorf("boardtest: 续期是任务的一次变更，Seq 必须前进（实得 old=%d new=%d）", seq, renewed.Seq)
 	}
 
 	// 原始租约的到期时刻已过：若续期没生效，这里会错误地允许接管。
 	clock.Advance(50 * time.Second)
 	if _, err := b.Claim(ctx, "t1", "a2", taskboard.ClaimRequest{TTL: time.Minute}); !errors.Is(err, taskboard.ErrTaken) {
-		return errors.Errorf("boardtest: 续期后的租约仍在保护持有者，他人认领必须报 ErrTaken（实得 %v）——"+
+		return fmt.Errorf("boardtest: 续期后的租约仍在保护持有者，他人认领必须报 ErrTaken（实得 %v）——"+
 			"这条红了说明续期是假的（没把到期时刻推后）", err)
 	}
 	if err := b.Complete(ctx, "t1", token); err != nil {
@@ -212,11 +213,11 @@ func checkRenewRejectsStaleToken(ctx context.Context, b taskboard.Board, clock *
 		return errors.Wrap(err, "boardtest: 过期租约必须可被接管")
 	}
 	if _, err := r.Renew(ctx, "t1", first.Lease.Token, taskboard.ClaimRequest{TTL: time.Minute}); !errors.Is(err, taskboard.ErrLeaseLost) {
-		return errors.Errorf("boardtest: 接管后旧令牌续期必须报 ErrLeaseLost（实得 %v）——"+
+		return fmt.Errorf("boardtest: 接管后旧令牌续期必须报 ErrLeaseLost（实得 %v）——"+
 			"放行就是假续期：延长的别人的闸，旧持有者却以为延长的是自己的", err)
 	}
 	if _, err := b.Claim(ctx, "t1", "a3", taskboard.ClaimRequest{TTL: time.Minute}); !errors.Is(err, taskboard.ErrTaken) {
-		return errors.Errorf("boardtest: 旧令牌续期被拒后，新持有者的租约必须原样（实得 %v）", err)
+		return fmt.Errorf("boardtest: 旧令牌续期被拒后，新持有者的租约必须原样（实得 %v）", err)
 	}
 
 	// 路径二：释放后旧令牌续期被拒。
@@ -224,7 +225,7 @@ func checkRenewRejectsStaleToken(ctx context.Context, b taskboard.Board, clock *
 		return errors.Wrap(err, "boardtest: 持有者释放应当成功")
 	}
 	if _, err := r.Renew(ctx, "t1", second.Lease.Token, taskboard.ClaimRequest{TTL: time.Minute}); !errors.Is(err, taskboard.ErrLeaseLost) {
-		return errors.Errorf("boardtest: 释放后旧令牌续期必须报 ErrLeaseLost（实得 %v）", err)
+		return fmt.Errorf("boardtest: 释放后旧令牌续期必须报 ErrLeaseLost（实得 %v）", err)
 	}
 
 	// 路径三：过期后（没被接管）续期被拒——资格在到期时刻终止。
@@ -237,7 +238,7 @@ func checkRenewRejectsStaleToken(ctx context.Context, b taskboard.Board, clock *
 	}
 	clock.Advance(2 * time.Minute)
 	if _, err := r.Renew(ctx, "t2", third.Lease.Token, taskboard.ClaimRequest{TTL: time.Minute}); !errors.Is(err, taskboard.ErrLeaseLost) {
-		return errors.Errorf("boardtest: 过期租约的续期必须报 ErrLeaseLost（实得 %v）——"+
+		return fmt.Errorf("boardtest: 过期租约的续期必须报 ErrLeaseLost（实得 %v）——"+
 			"过期后任务随时可能被接管，存储不能既承诺「随时可接管」又给死者续命", err)
 	}
 	return nil

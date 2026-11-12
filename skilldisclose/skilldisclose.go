@@ -33,6 +33,7 @@ package skilldisclose
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -122,14 +123,14 @@ func New(skills []Skill) (*Catalog, error) {
 			return nil, errors.New("skilldisclose: 技能名为空（点名与留痕都无从定位）")
 		}
 		if _, ok := c.byName[name]; ok {
-			return nil, errors.Errorf("skilldisclose: 技能名 %q 重复（点名会指到两个技能）", name)
+			return nil, fmt.Errorf("skilldisclose: 技能名 %q 重复（点名会指到两个技能）", name)
 		}
 		if strings.TrimSpace(s.Description) == "" {
-			return nil, errors.Errorf("skilldisclose: 技能 %q 没有描述（只能靠点名命中，等于假装登记了）", name)
+			return nil, fmt.Errorf("skilldisclose: 技能 %q 没有描述（只能靠点名命中，等于假装登记了）", name)
 		}
 		for _, r := range s.Resources {
 			if strings.TrimSpace(r) == "" {
-				return nil, errors.Errorf("skilldisclose: 技能 %q 有空的资源项（空串会匹配一切）", name)
+				return nil, fmt.Errorf("skilldisclose: 技能 %q 有空的资源项（空串会匹配一切）", name)
 			}
 		}
 		s.Name = name
