@@ -229,3 +229,20 @@ packages:
     level: Experimental
     since: v0.33.0
     reason: 部署冒烟入口（issue #105）。它的验收是 compose 冒烟 / make integration 真跑，不是稳定 API 面。
+  # ── 2026-11-13 清零轮新增（issue #109 / #110 / #111）──
+  - pkg: backend
+    level: Experimental
+    since: v0.35.0
+    reason: 任务式执行后端契约刚立（隔离轴 + 能力自报 + 登记簿），Docker/K8s 接入形态还要随真实引擎磨合。
+  - pkg: handoff
+    level: Experimental
+    since: v0.35.0
+    reason: 跨进程交接四问的契约草案刚落（原子性/幂等键/回执寻址/超时），跨进程存储形态未定。
+  - pkg: eval
+    level: Experimental
+    since: v0.35.0
+    reason: 录制/重放闭环与评估判项刚立，判项词表会随宿主评估面扩展。
+  - pkg: examples/containerbackend
+    level: Experimental
+    since: v0.35.0
+    reason: 容器后端参考实现随契约与真实引擎演进（与 examples/pgstore 同一性质），不构成任何兼容承诺。

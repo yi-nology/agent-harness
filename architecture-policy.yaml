@@ -639,6 +639,28 @@ modules:
       （SELECT … FOR UPDATE 行锁），栅栏预占是一条带条件的 upsert，写入体走
       同一事务（不得部分写）。契约判定在共享契约套件（与内存版同一段判据）。
 
+  # 容器执行后端参考实现（2026-11-13 新增，issue #109）：backend.Backend 的
+  # 容器形态落点。
+  #
+  # 为什么它是**独立示例子包**而不是内核子包：与 pgrefstore 同一条边界——
+  # 参考实现不是内核依赖，容器引擎的接入形态（socket 位置 / 集群凭据 /
+  # 镜像仓库策略）是宿主资产。宿主抄它、不 import 它。
+  #
+  # 为什么零第三方依赖：Docker 走 Engine HTTP API（stdlib net/http，
+  # unix socket 直连），**不引 Docker 客户端库**；Kubernetes 侧是接入点占位
+  # （client-go 归宿主侧——引它会让示例的依赖图追着 K8s 版本跑）。
+  - id: containerbackend
+    roots: [examples/containerbackend]
+    requires: [backend, sandbox, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      Docker Engine 参考实现（IsolationContainer + EgressDenied 以 network=none
+      兑现 + 内存经容器上限兑现，日志多路复用流 demux）+ Kubernetes Job 接入
+      占位（未接入前按最弱档自报，Exec 一律 ErrNotWired 响亮失败——半成品
+      会把「没接上」伪装成「跑过了」）。测试以 httptest 假引擎对拍，不需要
+      真实守护进程。
+
   - id: archcheck
     roots: [archcheck]
     requires: []
@@ -697,6 +719,52 @@ modules:
       **零依赖、零公开 API**：语义判定（fn 为 nil 报哪个错、哨兵叫什么）刻意留在
       三个使用方——共用哨兵会让 `errors.Is(err, netguard.ErrNilSubscriber)` 这类
       既有调用点的判定链断掉。
+
+  # 2026-11-13 新增（issue #109 / #110 / #111，本轮清零）：三个 P3 特性单的
+  # 机制面。为什么都是**契约 + 判据**而实现放示例：三单的传输/引擎形态都是
+  # 宿主资产（容器引擎怎么接、跨进程存储怎么落库、录制格式怎么演化），
+  # 内核只定「要求 vs 实际」的判定口径——与 taskboard「不给存储实现」、
+  # delegate「线格式归上游」是同一条分工。
+  - id: backend
+    roots: [backend]
+    requires: [sandbox, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      任务式执行后端的契约面（issue #109）：隔离轴（none/process/container/vm）、
+      能力自报（EgressEnforcer / Capable 与 sandbox 同构同词表——沉默按最弱）、
+      要求对照判据（SatisfiedBy，fail-closed）与登记簿（无满足者即拒绝不降级，
+      满足者取最弱、同档按 ID 字典序）+ 进程内兜底实现（Inline，显式声明
+      IsolationNone）。Docker Engine 参考实现与 K8s Job 接入占位在
+      examples/containerbackend。隔离轴在本包重立而出口词表复用 sandbox：
+      上游 Level 枚举值即强弱序，往中间插容器档 = 跨仓破坏性变更；
+      对应关系只写在 Isolation 注释里，不做代码级映射（第二真相）。
+
+  - id: handoff
+    roots: [handoff]
+    requires: ["ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      跨进程任务交接的契约面（issue #110）：交接点（Store/Ticket）、原子性
+      （Take 一次原子操作完成负责人转移，判据 ConcurrentTake 赢家恰好 1）、
+      幂等键（同 Key 重放返回原单；重新交接 = 新一代，代次与令牌同源——
+      taskboard 的 Fence 口径）、回执寻址（ReplyTo 必填 + 只有 To 能领取 +
+      回执凭存储铸造的令牌）、超时（一条时限线覆盖领取与回执，无时限交接
+      契约禁止；迟到的领取与回执一律拒收）。回执状态三值与 delegate 同纪律。
+      进程内参考实现 LocalDesk 只证契约可满足，不做跨进程承诺。
+
+  - id: eval
+    roots: [eval]
+    requires: [eventbus, trajectory, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      轨迹的录制 → 重放 → 差异比对与确定性评估判据（issue #111）。锚点是
+      trajectory 的确定性行 ID；时刻是数据不是时钟（录制即定格，重放即复读）。
+      Verify 判「录制适航」（头部字段往返保真 + 载荷往返幂等）；Diff 是纯函数
+      且排序确定；Assess 是纯函数评估判据（收口/配对/重复/期望/禁止五个判项，
+      零判项显式拒绝——「没有检查」与「检查通过」必须分得开）。
 
 # ── 可执行规则 ──
 rules:
@@ -1297,7 +1365,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
