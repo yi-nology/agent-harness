@@ -49,12 +49,21 @@ type EffectStore struct {
 // schema 必须已建好表（EnsureSchema）；search_path 已被连接池指到该 schema
 // （见 NewEffectStores），故本包的 SQL 不写 schema 前缀。
 func NewEffectStore(pool *pgxpool.Pool) *EffectStore {
-	return &EffectStore{pool: pool, now: time.Now}
+	// 默认（未注入）：**不使用进程本地时钟**——now 为 nil，nowIn 读数据库
+	// 的 clock_timestamp。租约是跨节点共享的事实，判定时刻必须来自同
+	// 一个权威时钟源：A 节点时钟慢 10s、B 节点快 10s 时，用各自 time.Now
+	// 判对方写的租约，15s 的 TTL 会「从一开始就被判过期」⇒ B 提前接管
+	// A 仍在执行的资源（评审第三轮 P0）。注入（sidetest 契约套件）时
+	// 用注入值——套件的过期推进语义不变。
+	return &EffectStore{pool: pool, now: nil}
 }
 
 // UseClock 注入时钟（sidetest 契约套件用）。
 //
 // 过期判定必须读它，否则过期场景恒不触发（套件的硬要求）。
+// 注入值代表**系统时间**的测试替身（整个判定链的唯一时间源），不是
+// 「某个 worker 的本地时钟」——修复后的实现里 worker 根本不提供时间，
+// 这正是「租约统一数据库时钟」要达成的状态。
 func (s *EffectStore) UseClock(now func() time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -63,11 +72,24 @@ func (s *EffectStore) UseClock(now func() time.Time) {
 	}
 }
 
-// clock 当前时刻（各方法的入口读一次，整个判定用同一时刻）。
-func (s *EffectStore) clock() time.Time {
+// nowIn 事务内的当前时刻：注入了测试时钟（sidetest 契约套件）→ 用注入值；
+// 否则读**数据库时间**（clock_timestamp——跨节点判定的权威时钟源）。
+//
+// 调用位置有硬要求：必须在**取得行锁之后**。CURRENT_TIMESTAMP 固定在事务
+// 开始时刻，事务若在行锁上等了几秒，用它（或事务开头取的任何时间）判过期
+// 就会把「等锁时长」算进租约寿命里——判定基准必须锚在「状态已锁定」那一刻。
+func (s *EffectStore) nowIn(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.now()
+	injected := s.now
+	s.mu.Unlock()
+	if injected != nil {
+		return injected(), nil
+	}
+	var t time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&t); err != nil {
+		return time.Time{}, errors.Wrap(err, "pgstore: 读数据库时间失败")
+	}
+	return t, nil
 }
 
 // runTx 事务骨架：fn 报错即整体回滚（不落任何一行），成功才提交。
@@ -135,12 +157,48 @@ func withinTx3[T1, T2, T3 any](ctx context.Context, pool *pgxpool.Pool, fn func(
 
 // ensureActionRow / ensureResourceRow 保证行存在（Acquire 的自增主键语义：
 // 「没做过」「没人占」就是空行——首个动作顺手把行建出来）。
-func ensureActionRow(ctx context.Context, tx pgx.Tx, key sideeffect.Key) error {
+func ensureActionRow(ctx context.Context, tx pgx.Tx, act sideeffect.Action) error {
+	// INSERT 同时登记动作身份（首次见到这个 Key 的调用就是身份登记时刻，
+	// 即便这次 Acquire 的结果是 contended——身份不等授予）。冲突（已存在）
+	// 不更新：身份以先到者的登记为准，后到的不一致者由 lockAction 内的
+	// ensureIdentity 拒掉（ErrActionConflict）。
 	_, err := tx.Exec(ctx,
-		`INSERT INTO pgref_effect_action (key) VALUES ($1) ON CONFLICT (key) DO NOTHING`,
-		string(key))
+		`INSERT INTO pgref_effect_action (key, id_resource, id_safety, id_payload_hash)
+		VALUES ($1, $2, $3, $4) ON CONFLICT (key) DO NOTHING`,
+		string(act.Key), act.Resource, int16(act.RetrySafety), sideeffect.HashPayload(act.Payload))
 	if err != nil {
-		return errors.Wrap(err, "pgstore: 登记动作行失败", "key", string(key))
+		return errors.Wrap(err, "pgstore: 登记动作行失败", "key", string(act.Key))
+	}
+	return nil
+}
+
+// ensureIdentity 动作身份校验（调用方持行锁）：未登记 → 补登记（老数据
+// 行的兼容路径）；已登记 → 与本次 act 比对，不一致即 ErrActionConflict。
+//
+// 比对在 lockAction 内完成 ⇒ 每个入口拿到行的那一刻就先问身份，
+// 「已完成 → 重放」等任何判定都在它之后——把旧身份的结果交给新身份的
+// 调用方是答非所问（Store.Acquire 契约「身份不可变」）。
+func ensureIdentity(ctx context.Context, tx pgx.Tx, a *actionRow, act sideeffect.Action) error {
+	if a.idResource == nil || a.idSafety == nil || a.idPayloadHash == nil {
+		res := act.Resource
+		safety := int16(act.RetrySafety)
+		hash := sideeffect.HashPayload(act.Payload)
+		if _, err := tx.Exec(ctx,
+			`UPDATE pgref_effect_action SET id_resource = $2, id_safety = $3, id_payload_hash = $4
+			  WHERE key = $1 AND id_resource IS NULL`,
+			string(act.Key), res, safety, hash); err != nil {
+			return errors.Wrap(err, "pgstore: 登记动作身份失败", "key", string(act.Key))
+		}
+		a.idResource, a.idSafety, a.idPayloadHash = &res, &safety, &hash
+		return nil
+	}
+	if *a.idResource != act.Resource || int16(act.RetrySafety) != *a.idSafety ||
+		*a.idPayloadHash != sideeffect.HashPayload(act.Payload) {
+		return errors.Wrap(sideeffect.ErrActionConflict,
+			"同 Key 的动作身份与首次登记不一致（这不是重试，是另一个动作）",
+			"key", string(act.Key),
+			"登记 resource", *a.idResource, "本次 resource", act.Resource,
+			"登记 safety", sideeffect.RetrySafety(*a.idSafety), "本次 safety", act.RetrySafety)
 	}
 	return nil
 }
@@ -162,6 +220,12 @@ type actionRow struct {
 	uncertain bool
 	reason    string
 
+	// 动作身份（首次登记，永久事实；NULL/nil = 未登记 = 老数据行，
+	// 由 ensureIdentity 首见时补登记）。三者与 ErrActionConflict 对应。
+	idResource    *string
+	idSafety      *int16
+	idPayloadHash *string
+
 	intentResource *string
 	intentFence    *int64
 	intentHolder   *string
@@ -178,17 +242,24 @@ func (r *actionRow) hasIntent() bool { return r.intentFence != nil }
 func (r *actionRow) hasRecon() bool { return r.reconExpires != nil }
 
 // lockAction 锁住并读取 Key 级状态行（调用前必须 ensureActionRow）。
-func lockAction(ctx context.Context, tx pgx.Tx, key sideeffect.Key) (*actionRow, error) {
+// lockAction 锁定并读出动作行，**锁后立刻校验动作身份**（见 ensureIdentity）
+// ——所有入口共用这一处，身份判定天然先于任何状态判定。
+func lockAction(ctx context.Context, tx pgx.Tx, act sideeffect.Action) (*actionRow, error) {
 	row := tx.QueryRow(ctx,
 		`SELECT done, result, uncertain, reason,
+		        id_resource, id_safety, id_payload_hash,
 		        intent_resource, intent_fence, intent_holder, intent_expires,
 		        recon_holder, recon_expires
-		   FROM pgref_effect_action WHERE key = $1 FOR UPDATE`, string(key))
+		   FROM pgref_effect_action WHERE key = $1 FOR UPDATE`, string(act.Key))
 	var r actionRow
 	if err := row.Scan(&r.done, &r.result, &r.uncertain, &r.reason,
+		&r.idResource, &r.idSafety, &r.idPayloadHash,
 		&r.intentResource, &r.intentFence, &r.intentHolder, &r.intentExpires,
 		&r.reconHolder, &r.reconExpires); err != nil {
-		return nil, errors.Wrap(err, "pgstore: 读动作行失败", "key", string(key))
+		return nil, errors.Wrap(err, "pgstore: 读动作行失败", "key", string(act.Key))
+	}
+	if err := ensureIdentity(ctx, tx, &r, act); err != nil {
+		return nil, err
 	}
 	return &r, nil
 }
