@@ -4,7 +4,7 @@
 //
 // e2eEnv 造一套独立 schema + 三份存储 + 观测连接；childProc 封 re-exec 子进程
 // 的起、读（判定结论）、杀（SIGKILL）；其余是轮询与断言助手。用例本体在
-// pg_e2e_test.go（三条：死在施加之前 / 死在施加之后 / 双进程竞争）。
+// pg_e2e_test.go（死前/死后/竞争）与 pg_e2e_snapshot_test.go（跨进程快照）。
 package pgstore
 
 import (
@@ -25,7 +25,7 @@ import (
 
 // ── 父进程侧 ────────────────────────────────────────────────────────────
 
-// e2eEnv 一条用例的完整环境：独立 schema + 三份存储 + 观测连接。
+// e2eEnv 一条用例的完整环境：独立 schema + 各份存储 + 观测连接。
 type e2eEnv struct {
 	dsn      string
 	schema   string
@@ -35,6 +35,7 @@ type e2eEnv struct {
 	pool     *pgxpool.Pool
 	eff      *EffectStore
 	ds       *Downstream
+	snaps    *SnapStore
 }
 
 // freshE2E 建一套全新环境（含 e2e 观测表）。
@@ -68,6 +69,7 @@ func freshE2E(t *testing.T, ttl time.Duration) *e2eEnv {
 		pool:     pool,
 		eff:      NewEffectStore(pool),
 		ds:       NewDownstream(pool),
+		snaps:    NewSnapStore(pool),
 	}
 }
 
@@ -91,6 +93,25 @@ type childProc struct {
 // startChild 起子进程：跑同一个测试二进制的子进程入口（指定模式）。
 func (e *e2eEnv) startChild(t *testing.T, mode string) *childProc {
 	t.Helper()
+	return e.startChildEnv(t, mode, nil)
+}
+
+// startSnapshotChild 起一个「提交快照」模式的子进程。
+//
+// startAt 是**绝对**时刻（Unix 纳秒）：两个子进程等到同一刻才提交，
+// 使并发提交真的撞在一起（否则谁先起跑谁先写完，测不到竞争）。
+func (e *e2eEnv) startSnapshotChild(t *testing.T, runID string, seq uint64, startAt int64) *childProc {
+	t.Helper()
+	return e.startChildEnv(t, childModeSnapshotSave, []string{
+		envRunID + "=" + runID,
+		envSeq + "=" + strconv.FormatUint(seq, 10),
+		envStartAt + "=" + strconv.FormatInt(startAt, 10),
+	})
+}
+
+// startChildEnv 起子进程：跑同一个测试二进制的子进程入口（指定模式 + 附加环境变量）。
+func (e *e2eEnv) startChildEnv(t *testing.T, mode string, extraEnv []string) *childProc {
+	t.Helper()
 	cmd := exec.Command(os.Args[0],
 		"-test.run", "^TestPGRefChildProcess$",
 		"-test.timeout", "90s")
@@ -102,6 +123,7 @@ func (e *e2eEnv) startChild(t *testing.T, mode string) *childProc {
 		envResource+"="+e.resource,
 		envTTLMS+"="+strconv.Itoa(int(e.ttl/time.Millisecond)),
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("建子进程 stdout 管道失败: %v", err)

@@ -63,6 +63,7 @@ GAK_PGREF_DSN=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disab
 | `TestDownstreamSinkContract` | `sidetest.RunSinkContract` 6 条：栅栏一族（issue #84 的核心验收，判据收编自 sideeffect 包内用例） |
 | `TestSnapshot…` | 快照单调闸（拒陈旧 / 拒零 / 无记录 NotFound / 并发同序号恰好一个赢家） |
 | `TestPGE2E*` | **真实进程故障恢复**（issue #95）：子进程执行动作 → `SIGKILL` → 等 TTL 过期 → 断言同一 Key 转需对账**不被重放**；对账「已生效」后只重放结果；双进程竞争恰好一个 `OutcomeApplied`。子进程是 re-exec 本测试二进制（unix build tag），跨进程共享状态只有 PostgreSQL |
+| `TestPGE2ETwoProcessSnapshot*` | **跨进程快照单调**（评审第三节场景「两个进程同时提交快照」）：两个真实子进程经同一绝对时刻屏障同时提交——同序号恰好一个写入一个被拒，不同序号落库的必然是较大那个（只进不退），且竞争结束后闸依然立着 |
 
 CI 的 `integration-pg` job（postgres service container）每次推送都真跑同一批用例。
 
