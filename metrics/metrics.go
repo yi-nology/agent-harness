@@ -33,13 +33,13 @@
 //
 // # 覆盖清单（issue #100 验收的五类量）
 //
-// 	| 量             | 指标                        | 类型      |
-// 	|----------------|-----------------------------|-----------|
-// 	| 执行耗时       | harness.exec.duration       | histogram |
-// 	| 重试次数       | harness.retry.total         | counter   |
-// 	| 租约竞争       | harness.lease.contended     | counter   |
-// 	| 恢复成功率     | harness.recovery.total      | counter   |
-// 	| 未知结果积压   | harness.sideeffect.uncertain| gauge     |
+//	| 量             | 指标                        | 类型      |
+//	|----------------|-----------------------------|-----------|
+//	| 执行耗时       | harness.exec.duration       | histogram |
+//	| 重试次数       | harness.retry.total         | counter   |
+//	| 租约竞争       | harness.lease.contended     | counter   |
+//	| 恢复成功率     | harness.recovery.total      | counter   |
+//	| 未知结果积压   | harness.sideeffect.uncertain| gauge     |
 //
 // 各量的**接入点**（在哪个包哪个函数上埋）见 [ACCESS-POINTS.md]。
 package metrics

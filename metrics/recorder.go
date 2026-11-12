@@ -136,10 +136,10 @@ func Validate(name string, labels Labels) error {
 // 两个用途：宿主测试把它接进 SetDefault 断言「埋点真的响了」；自写 OTel /
 // Prometheus 适配器时照它的形状抄（标签规范化成排序键、并发安全、采集不阻塞埋点）。
 type Mem struct {
-	mu      sync.Mutex
-	counts  map[string]int64
-	gauges  map[string]int64
-	hist    map[string][]float64
+	mu     sync.Mutex
+	counts map[string]int64
+	gauges map[string]int64
+	hist   map[string][]float64
 	// Strict 为真时 Collect 对每次埋点跑 Validate，违规计入 Bad（缺省 false：
 	// 生产语义是旁路不反噬，严格档留给测试）。
 	Strict bool
