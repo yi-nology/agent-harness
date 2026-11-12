@@ -33,6 +33,7 @@ package taskboard
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -90,7 +91,7 @@ func ConcurrentClaim(ctx context.Context, b Board, id TaskID, agents []AgentID, 
 		return winners, errors.Wrap(fatal[0], "taskboard: 并发认领出现非争用类错误（判据无法给出结论）")
 	}
 	if blocked > 0 {
-		return winners, errors.Errorf("taskboard: 有 %d 个 agent 因依赖未完成被拒——"+
+		return winners, fmt.Errorf("taskboard: 有 %d 个 agent 因依赖未完成被拒——"+
 			"这次并发判定没测到争用（请只在就绪任务上跑本判据）", blocked)
 	}
 	return winners, nil

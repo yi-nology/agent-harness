@@ -107,7 +107,7 @@ func New(presets []Preset) (*Set, error) {
 			return nil, err
 		}
 		if _, dup := seen[p.Name]; dup {
-			return nil, errors.Errorf("preset: 预设名重复 %q（留痕无法定位到具体那一份）", p.Name)
+			return nil, fmt.Errorf("preset: 预设名重复 %q（留痕无法定位到具体那一份）", p.Name)
 		}
 		k := p.Key()
 		// 语义相同即撞名：判定按「组合」比，不按「名字」比。
@@ -115,7 +115,7 @@ func New(presets []Preset) (*Set, error) {
 		// 两个名字一份组合在配置里看起来是「两个选择」，而宿主挑哪个都一样；
 		// 真正的伤害在留痕：报告里出现两个名字，读者会以为执行过两种权限。
 		if other, dup := keys[k]; dup {
-			return nil, errors.Errorf("preset: %q 与 %q 的语义完全相同（%s）——两个名字一份组合会让留痕出现两个名字指同一档",
+			return nil, fmt.Errorf("preset: %q 与 %q 的语义完全相同（%s）——两个名字一份组合会让留痕出现两个名字指同一档",
 				p.Name, other, k)
 		}
 		keys[k] = p.Name
@@ -133,13 +133,13 @@ func (p Preset) validate() error {
 		return errors.New("preset: 预设名不得为空")
 	}
 	if name != p.Name || strings.ContainsAny(p.Name, " \t\r\n") {
-		return errors.Errorf("preset: 预设名 %q 含空白或首尾空白（名字进配置文件与留痕，两处各自 trim 后会撞名）", p.Name)
+		return fmt.Errorf("preset: 预设名 %q 含空白或首尾空白（名字进配置文件与留痕，两处各自 trim 后会撞名）", p.Name)
 	}
 	if p.Level > sandbox.LevelMachine {
-		return errors.Errorf("preset: 预设 %q 的档位 %d 不在词表内（LevelNone..LevelMachine）", p.Name, p.Level)
+		return fmt.Errorf("preset: 预设 %q 的档位 %d 不在词表内（LevelNone..LevelMachine）", p.Name, p.Level)
 	}
 	if !policy.ValidMode(string(p.Mode)) {
-		return errors.Errorf("preset: 预设 %q 的审批模式 %q 不在词表内", p.Name, string(p.Mode))
+		return fmt.Errorf("preset: 预设 %q 的审批模式 %q 不在词表内", p.Name, string(p.Mode))
 	}
 	if err := p.Egress.Validate(); err != nil {
 		return errors.Wrap(err, "preset: 预设 "+p.Name+" 的出口策略不可兑现")
@@ -148,12 +148,12 @@ func (p Preset) validate() error {
 		p.Mode == policy.ModeFull &&
 		p.Egress.Mode == egress.ModeUnrestricted
 	if allLoose && !p.Unsafe {
-		return errors.Errorf(
+		return fmt.Errorf(
 			"preset: 预设 %q 三面全松（档位 none × 模式 full × 出口不限）却没有 Unsafe 标记——"+
 				"这类组合必须显式承认并写明理由，否则它就是「反正先跑起来」留下的、没人认领的松口", p.Name)
 	}
 	if p.Unsafe && strings.TrimSpace(p.Justification) == "" {
-		return errors.Errorf("preset: 预设 %q 标了 Unsafe 却没写理由（签字不带理由是空签字）", p.Name)
+		return fmt.Errorf("preset: 预设 %q 标了 Unsafe 却没写理由（签字不带理由是空签字）", p.Name)
 	}
 	return nil
 }
@@ -183,7 +183,7 @@ func (s *Set) Resolve(name string) (Preset, error) {
 	}
 	i, ok := s.index[name]
 	if !ok {
-		return Preset{}, errors.Errorf("preset: 未登记的预设名 %q（已登记：%s）", name, strings.Join(s.Names(), " / "))
+		return Preset{}, fmt.Errorf("preset: 未登记的预设名 %q（已登记：%s）", name, strings.Join(s.Names(), " / "))
 	}
 	return s.presets[i], nil
 }

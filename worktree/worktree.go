@@ -33,6 +33,7 @@
 package worktree
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -84,7 +85,7 @@ func New(ws []Workspace) (*Plan, error) {
 			return nil, errors.New("worktree: 工作区 ID 为空（冲突报告无从定位）")
 		}
 		if seen[id] {
-			return nil, errors.Errorf("worktree: 工作区 ID %q 重复", id)
+			return nil, fmt.Errorf("worktree: 工作区 ID %q 重复", id)
 		}
 		seen[id] = true
 		for _, group := range [][]string{w.ReadOnly, w.Writable} {
@@ -97,7 +98,7 @@ func New(ws []Workspace) (*Plan, error) {
 		for _, rp := range w.ReadOnly {
 			for _, wp := range w.Writable {
 				if patternsOverlap(rp, wp) {
-					return nil, errors.Errorf("worktree: 工作区 %q 的只读项 %q 与可写项 %q 重叠——"+
+					return nil, fmt.Errorf("worktree: 工作区 %q 的只读项 %q 与可写项 %q 重叠——"+
 						"同一份路径既只读又可写，两边的读者会得出不同结论", id, rp, wp)
 				}
 			}
@@ -113,13 +114,13 @@ func New(ws []Workspace) (*Plan, error) {
 func validatePattern(id, p string) error {
 	q := strings.TrimSpace(p)
 	if q == "" {
-		return errors.Errorf("worktree: 工作区 %q 有空声明项（空串会匹配一切）", id)
+		return fmt.Errorf("worktree: 工作区 %q 有空声明项（空串会匹配一切）", id)
 	}
 	if strings.HasPrefix(q, "/") {
-		return errors.Errorf("worktree: 工作区 %q 的声明项 %q 是绝对路径（分区失去意义）", id, p)
+		return fmt.Errorf("worktree: 工作区 %q 的声明项 %q 是绝对路径（分区失去意义）", id, p)
 	}
 	if strings.Contains(q, "..") {
-		return errors.Errorf("worktree: 工作区 %q 的声明项 %q 含 ..（可穿出工作区）", id, p)
+		return fmt.Errorf("worktree: 工作区 %q 的声明项 %q 含 ..（可穿出工作区）", id, p)
 	}
 	return nil
 }

@@ -25,6 +25,7 @@ package delegate
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -75,7 +76,7 @@ func (o Offer) Accept(r Request) error {
 		return errors.New("delegate: 目标为空（没有目标的委托无法判定完成）")
 	}
 	if o.MaxGoalBytes > 0 && len(r.Goal) > o.MaxGoalBytes {
-		return errors.Errorf("delegate: 目标 %d 字节超过 %s 的上限 %d", len(r.Goal), o.Name, o.MaxGoalBytes)
+		return fmt.Errorf("delegate: 目标 %d 字节超过 %s 的上限 %d", len(r.Goal), o.Name, o.MaxGoalBytes)
 	}
 	have := make(map[Capability]bool, len(o.Provides))
 	for _, c := range o.Provides {
@@ -157,7 +158,7 @@ type Receipt struct {
 //   - failed / refused 必须有 Failure（没有原因就无法决定重试还是改需求）。
 func (r Receipt) Validate() error {
 	if !r.Status.valid() {
-		return errors.Errorf("delegate: 回执状态 %q 不在词表内（completed / failed / refused）", r.Status)
+		return fmt.Errorf("delegate: 回执状态 %q 不在词表内（completed / failed / refused）", r.Status)
 	}
 	switch r.Status {
 	case StatusCompleted:
@@ -169,7 +170,7 @@ func (r Receipt) Validate() error {
 		}
 	default:
 		if strings.TrimSpace(r.Failure) == "" {
-			return errors.Errorf("delegate: %s 的回执没有原因——没有原因就无从决定重试还是改需求", r.Status)
+			return fmt.Errorf("delegate: %s 的回执没有原因——没有原因就无从决定重试还是改需求", r.Status)
 		}
 	}
 	return nil
