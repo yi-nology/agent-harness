@@ -115,6 +115,15 @@ type Store interface {
 	// 返回的 Result 是**既有结果原样**（不做任何标记）：本次是否在重放
 	// 由 Acquire 的 Outcome 表达，不靠结果里的一个标志位——
 	// 同一件事只有一个真相。
+	//
+	// 动作身份不可变（v0.33.0 后新增，见 ErrActionConflict）：同一 Key
+	// 首次 Acquire 登记的动作身份（Resource / Payload / RetrySafety）是
+	// 这个 Key 的永久事实。后续 Acquire 的 act 与已登记身份不一致 →
+	// 返回 ErrActionConflict，**不授予、不重放既有结果、不转未知态**，
+	// 且判定优先于「已完成 → 重放」（把旧身份的结果交给新身份的调用方
+	// 就是答非所问）。依据：RetrySafety 是「过期后能不能重试」的判据，
+	// 若可被后续调用覆盖，最初不可安全重试的动作会被重新声明为安全
+	// ⇒ 重复施加；Resource / Payload 同理——同 Key 不同内容不是重试。
 	Acquire(ctx context.Context, act Action, ttl time.Duration) (Outcome, Lease, Result, error)
 
 	// Complete 标记该 Key 的动作已完成并记录结果。
@@ -197,6 +206,15 @@ type Store interface {
 	// 那时若返回 ErrFenceStale，说明闸已易主或本次尝试已失效，
 	// 本次动作**必须放弃**——继续做就是与新持有者重复施加。
 	//
+	// 过期即资格终止（无论是否已被接管）：租约**已过期而尚未被他人
+	// 接管**时，旧持有者的续期同样必须被拒（ErrFenceStale）——过期是
+	// 资格的终点，不是「还没人来接，所以还算数」。放行过期续期等于允许
+	// GC 停顿超 TTL 的持有者复活一段已作废的租约，而它上一次施加的
+	// 结果可能正是「已生效但账没记上」：复活的租约让那次尝试继续推进，
+	// 绕开了 Acquire 第 2 条「过期 → 结果未知，必须先对账」的判定。
+	// 这条与 taskboard.Renew 的「到期后资格终止」是同一条口径——
+	// 两个包对「过期租约」的回答必须一致。
+	//
 	// 存储侧须保证：续期与资格校验在**同一次原子操作**里完成
 	// （否则「校验通过」与「续期生效」之间仍有窗口）。
 	Renew(ctx context.Context, act Action, lease Lease, ttl time.Duration) (Lease, error)
@@ -235,7 +253,9 @@ type Store interface {
 	//     （重放而不是重做）。对 RetrySafetyUnsafe 的动作同样成立——
 	//     「确认已生效」不涉及重试，没有风险。
 	//  2. res.Applied == false → 清除未知标记，该 Key 重新可被执行
-	//     （之后同一 Key 的 Acquire 可返回 OutcomeApplied）。
+	//     （之后同一 Key 的 Acquire 可返回 OutcomeApplied），本方法返回
+	//     OutcomeApplied 表达这个结论——裁决成功且门已打开，不是
+	//     OutcomeContended（那会把「可执行了」误报成「没轮上」）。
 	//     **例外——RetrySafetyUnsafe 的动作**（v0.33.0 起）：未生效的裁决
 	//     **不解除阻塞**，返回 ErrUnsafeNotRetryable，该 Key 保持未知态。
 	//     「不可重试」是宿主的显式声明，对账的「未生效」结论来自宿主的
@@ -271,10 +291,48 @@ type Store interface {
 	//  4. 认领期间该 Key 仍处于未知态：Acquire 必须继续拒绝授予执行权
 	//     （对账中 ≠ 已裁决，更不等于可以重做）；
 	//  5. ResolveUncertain 在未知态与对账中都可用（它是唯一裁决入口，
-	//     先到者为准兜底）；裁决成功即清除占用。
+	//     先到者为准兜底）；裁决成功即清除占用；
+	//  6. ttl <= 0 → ErrInvalidTTL，**不认领**（v0.33.0 后新增）。零/负
+	//     TTL 造出的是出生即过期的认领——承诺从未生效（见该哨兵注释）。
 	//
 	// 调用约定：宿主先 BeginReconcile 占住对账权，再查下游，最后
 	// ResolveUncertain。跳过认领直接裁决仍是合法的（短对账无须占用），
-	// 但长对账（要跨进程查询）必须认领——否则就是那个竞争窗口。
+	// 但长对账（要跨进程查询）必须认领——否则就是那个竞争窗口；
+	// 跨进程对账的提交要用下面 OwnedResolveStore 的带凭据入口。
 	BeginReconcile(ctx context.Context, act Action, ttl time.Duration) (Reconcile, error)
+}
+
+// OwnedResolveStore 可选能力：**带对账占用凭据**的裁决入口（v0.33.0 后新增）。
+//
+// # 为什么 ResolveUncertain 不够——先到者为准不校验资格
+//
+// Store.ResolveUncertain 是合法的简化入口（短对账、单进程内查完就裁决），
+// 它只按「先到者为准」处理并发。但跨进程长对账是另一个形状：
+//
+//	对账者 A 认领 → A 查下游（慢）→ A 卡顿超时 → 占用过期 →
+//	对账者 B 接管、也开始查 → A 恢复、先于 B 提交旧查询结果
+//
+// 先到者为准接受 A 的裁决——**不问 A 还有没有对账资格**。而 A 的查询
+// 窗口横跨了状态变化（B 可能已查到新事实），它的结论恰是最不可信的。
+// 「先到者为准」解决的是「不覆盖」，不是「提交者有资格」。
+//
+// # 契约（存储侧必须保证）
+//
+//  1. holder 必须是该 Key **当前有效**对账占用的持有者：占用存在、
+//     未过期、Holder 匹配——否则 ErrReconcileLost，**不改任何状态**；
+//  2. 通过后的裁决语义与 Store.ResolveUncertain 完全一致（先到者为准、
+//     Unsafe 判据、裁决即清占用与意图）；
+//  3. 该 Key 已完成 → 返回 OutcomeReplayed + 既有结果（读操作无害，
+//     不因凭据过期而拒绝读取既有事实）。
+//
+// 简化入口 Store.ResolveUncertain **保留**：单进程短对账里占用本就
+// 可省，不强迫所有调用方持有凭据。但跨进程对账的宿主应当用本接口——
+// 不实现本接口的存储编译不破，但 sidetest 套件对缺失**硬失败**
+// （与 RenewingBoard 同一处置：跳过 = 把「没测过」伪装成「通过了」）。
+type OwnedResolveStore interface {
+	Store
+
+	// ResolveUncertainOwned 带占用凭据的裁决：holder 不是当前有效
+	// 对账认领的持有者 → ErrReconcileLost（不改任何状态）。
+	ResolveUncertainOwned(ctx context.Context, act Action, res Resolution, holder string) (Outcome, Result, error)
 }

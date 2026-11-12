@@ -58,7 +58,7 @@ GAK_PGREF_DSN=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disab
 
 | 层 | 内容 |
 |---|---|
-| `TestSideEffectStoreContract` | `sidetest` 29 条：三判合一 / 三项联查 / 执行意图 / 结果未知 / 对账占用 / Unsafe 裁决 / 标记失败……与内存版参考实现跑**同一段套件**（issue #94 的核心验收） |
+| `TestSideEffectStoreContract` | `sidetest` 33 条：三判合一 / 三项联查 / 执行意图 / 结果未知 / 对账占用（含带凭据裁决与 TTL 校验）/ 动作身份不可变 / 过期租约拒续期 / Unsafe 裁决 / 标记失败……与内存版参考实现跑**同一段套件**（issue #94 的核心验收） |
 | `TestTaskBoardContract` | `boardtest` 全家族（含并发认领 10 与 100 两档） |
 | `TestDownstreamSinkContract` | `sidetest.RunSinkContract` 6 条：栅栏一族（issue #84 的核心验收，判据收编自 sideeffect 包内用例） |
 | `TestSnapshot…` | 快照单调闸（拒陈旧 / 拒零 / 无记录 NotFound / 并发同序号恰好一个赢家） |

@@ -88,6 +88,17 @@ func EnsureSchema(ctx context.Context, pool *pgxpool.Pool, schema string) error 
 		if _, err := tx.Exec(ctx, schemaDDL); err != nil {
 			return fmt.Errorf("pgstore: 建表失败（schema %s）: %w", schema, err)
 		}
+		// 动作身份三列（ErrActionConflict）**只在这里定义一次**：CREATE TABLE
+		// 不带它们，新老表统一由下面三条幂等 ALTER 加上——两处各写一份列
+		// 定义就会漂（改一处漏一处，老库与新库的表结构分叉）。
+		// IF NOT EXISTS 对新表是无操作，对已部署的旧表是迁移。
+		const identityDDL = `
+ALTER TABLE pgref_effect_action ADD COLUMN IF NOT EXISTS id_resource TEXT;
+ALTER TABLE pgref_effect_action ADD COLUMN IF NOT EXISTS id_safety SMALLINT;
+ALTER TABLE pgref_effect_action ADD COLUMN IF NOT EXISTS id_payload_hash TEXT;`
+		if _, err := tx.Exec(ctx, identityDDL); err != nil {
+			return fmt.Errorf("pgstore: 动作身份列迁移失败（schema %s）: %w", schema, err)
+		}
 		return nil
 	})
 }

@@ -26,19 +26,24 @@ import (
 // 时刻）随授予一并落库。三者分开写就等于没写：中间死掉 ⇒ 意图悬空或没写，
 // 重复施加的入口重新打开。
 func (s *EffectStore) Acquire(ctx context.Context, act sideeffect.Action, ttl time.Duration) (sideeffect.Outcome, sideeffect.Lease, sideeffect.Result, error) {
-	now := s.clock()
 	return withinTx3(ctx, s.pool, func(tx pgx.Tx) (sideeffect.Outcome, sideeffect.Lease, sideeffect.Result, error) {
 		if err := ensureResourceRow(ctx, tx, act.Resource); err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 		}
-		if err := ensureActionRow(ctx, tx, act.Key); err != nil {
+		if err := ensureActionRow(ctx, tx, act); err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 		}
 		rr, err := lockResource(ctx, tx, act.Resource)
 		if err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 		}
-		a, err := lockAction(ctx, tx, act.Key)
+		a, err := lockAction(ctx, tx, act)
+		if err != nil {
+			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
+		}
+		// 判定时刻：**行锁之后**取（注入时钟或数据库 clock_timestamp）——
+		// 事务在锁上等的时间不计入租约寿命，跨节点判定读同一个权威时钟。
+		now, err := s.nowIn(ctx, tx)
 		if err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 		}
