@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/oekit/pkg/errors"
 
+	"github.com/yi-nology/goagent-kernel/checkpoint"
 	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
@@ -30,9 +31,12 @@ const (
 	envKey       = "GAK_PGREF_KEY"
 	envResource  = "GAK_PGREF_RESOURCE"
 	envTTLMS     = "GAK_PGREF_TTL_MS"
+	envRunID     = "GAK_PGREF_RUN_ID"
+	envSeq       = "GAK_PGREF_SEQ"
+	envStartAt   = "GAK_PGREF_START_AT"
 )
 
-// 三种子进程模式（名字即子进程里效果体的剧本）。
+// 四种子进程模式（名字即子进程里效果体的剧本）。
 const (
 	// childModeRecordThenHang 效果体登记调用后挂住（等 SIGKILL）——死在施加之前。
 	childModeRecordThenHang = "record-then-hang"
@@ -44,6 +48,16 @@ const (
 	// （事务已开、未提交）——父进程在这个状态下 SIGKILL 它，验证「进程死在
 	// 事务中间 ⇒ 库侧不留半截状态、不留悬挂锁」。
 	childModeAcquireOnly = "acquire-only"
+	// childModeSnapshotSave 只提交一次进度快照：并发快照用例的两个进程。
+	childModeSnapshotSave = "snapshot-save"
+)
+
+// 子进程提交快照的两种落点（父进程按行解析）。
+const (
+	// snapSaved 快照已落库（本次提交被存储接受）。
+	snapSaved = "SAVED"
+	// snapStale 快照被判陈旧（单调闸拒绝，未写入）。
+	snapStale = "STALE"
 )
 
 // TestPGRefChildProcess 子进程入口：只在父进程 re-exec 本测试二进制
@@ -62,6 +76,10 @@ func TestPGRefChildProcess(t *testing.T) {
 // 「结果未知」是合法判据不是故障——照常上报，以 0 退出。
 func runChildE2E(t *testing.T, mode string) {
 	t.Helper()
+	if mode == childModeSnapshotSave {
+		runChildSnapshotSave(t)
+		return
+	}
 	dsn := os.Getenv(dsnEnv)
 	schema := os.Getenv(envSchema)
 	key := os.Getenv(envKey)
@@ -129,6 +147,55 @@ func runChildE2E(t *testing.T, mode string) {
 			return
 		}
 		t.Fatalf("子进程执行失败: %v", execErr)
+	}
+}
+
+// runChildSnapshotSave 子进程剧本：等到屏障时刻后提交**一次**进度快照，
+// 报告落点（SAVED = 存储接受 / STALE = 单调闸拒绝）。
+//
+// 为什么单独一个剧本：快照单调闸是**存储侧**的判定（一条带条件的 upsert，
+// 见 snapshot.go），它不依赖任何进程内状态——正因如此，「两个进程同时提交」
+// 与「一个进程里两个 goroutine 同时提交」的差别必须由**真实进程**来证：
+// 后者共享同一个连接池与同一个运行时，前者连连接都不共享。
+//
+// 屏障：两个子进程等到**同一个绝对时刻**（envStartAt，Unix 纳秒）再提交，
+// 使两次提交真的撞在一起，而不是谁先起跑谁先写完。
+func runChildSnapshotSave(t *testing.T) {
+	t.Helper()
+	dsn := os.Getenv(dsnEnv)
+	schema := os.Getenv(envSchema)
+	runID := os.Getenv(envRunID)
+	seqRaw := os.Getenv(envSeq)
+	startRaw := os.Getenv(envStartAt)
+	if dsn == "" || schema == "" || runID == "" || seqRaw == "" || startRaw == "" {
+		t.Fatalf("子进程环境不完整：dsn/schema/run_id/seq/start_at 均必须设置")
+	}
+	seq, err := strconv.ParseUint(seqRaw, 10, 64)
+	if err != nil || seq == 0 {
+		t.Fatalf("子进程序号非法 %q（0 不是一次真实提交）", seqRaw)
+	}
+	startAt, err := strconv.ParseInt(startRaw, 10, 64)
+	if err != nil {
+		t.Fatalf("子进程屏障时刻非法 %q", startRaw)
+	}
+	if d := time.Until(time.Unix(0, startAt)); d > 0 {
+		time.Sleep(d)
+	}
+
+	pool := schemaPool(t, dsn, schema)
+	snaps := NewSnapStore(pool)
+	err = snaps.SaveIfNewer(context.Background(), checkpoint.Snapshot{
+		RunID:  runID,
+		Seq:    seq,
+		Status: "running",
+	})
+	switch {
+	case err == nil:
+		fmt.Printf("OUTCOME=%s\n", snapSaved)
+	case errors.Is(err, checkpoint.ErrStaleSeq):
+		fmt.Printf("OUTCOME=%s\n", snapStale)
+	default:
+		t.Fatalf("子进程提交快照失败: %v", err)
 	}
 }
 
