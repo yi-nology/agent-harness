@@ -229,3 +229,21 @@ packages:
     level: Experimental
     since: v0.33.0
     reason: 部署冒烟入口（issue #105）。它的验收是 compose 冒烟 / make integration 真跑，不是稳定 API 面。
+
+  # ── 2026-11-13 新增（issue #106 #107 #108）──
+  - pkg: coord
+    level: Experimental
+    since: v0.35.0
+    reason: 协调后端适配形态约定（issue #107）刚落地——Backend 三原语与适配器的形状会随真实后端（Redis/etcd）接入的反馈调整。
+  - pkg: worker
+    level: Experimental
+    since: v0.35.0
+    reason: Worker 生命周期契约与驱动（issue #106）刚落地——Registry 接口与 Loop 的六段边界还要随宿主反馈调整。
+  - pkg: scheduling
+    level: Experimental
+    since: v0.35.0
+    reason: 调度判据面（issue #108）刚落地——判据刻度与组合方式会随宿主的调度策略需求调整。
+  - pkg: examples/worker-runtime
+    level: Experimental
+    since: v0.35.0
+    reason: Worker 生命周期参考实现（package main，issue #106）。示例演示契约怎么接线，不构成任何兼容承诺。
