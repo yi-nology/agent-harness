@@ -60,6 +60,25 @@
 | `ErrAlreadyCommitted` | 该环节终态已被提交过（两条分支都赢了） | 对账：放弃本次提交；用 `As` 取 `AlreadyCommittedError` 读先前提交者与状态，判定谁是赢家 |
 | `ErrEmptyRef` | 引用缺字段（空 RunID 或空 Step） | 修声明：补全引用后重试 |
 
+### controlplane
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrNotFound` | 查询目标不存在（任务 / 运行 / 效果键） | 按目标不存在处置；介入重试撞上它通常是目标 id 错 |
+| `ErrInvalidRequest` | 介入请求不完整（Operator / Basis / 结论词表不合格） | 修声明：无归责不介入，补全归责字段后重发 |
+| `ErrNoAuditor` | 留痕面未装配即发起介入 | 修声明：装配 Auditor 后再介入（fail-closed，没有留痕的介入无法对账） |
+| `ErrStaleRun` | 运行代次已前进，介入基于过期视图 | 对账：重新拉取 RunView 取最新 Gen 后重发（先到者的介入已生效） |
+| `ErrTerminalRun` | 运行已是终态仍发起终止 | 放弃本次介入（重试撞上它说明首次终止已生效） |
+| `ErrAlreadyExists` | Seed* 重复登记（run / 任务 / 效果键） | 修声明：登记面是运行时侧的建场景动作，重复登记是驱动侧 bug |
+| `ErrInvalidAudit`（MemAuditor） | 留痕条目缺 Operator / Target / Basis 或动作不在介入词表内 | 修声明：留痕完整性是介入请求校验之外的第二道闸，宿主实现应复用同一判据 |
+
+### cost
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrEmptyKind` | 成本事件缺计量种类（Record / Aggregate 双闸） | 修声明：没有种类的账无从聚合，补 Kind 后重报 |
+| `ErrNegativeAmount` | 成本事件量为负 | 修声明：报数侧给负数是记账 bug，拒收留痕（与 budget 估算侧钳位为 0 刻意不同——估错可以少算，账错必须被看见） |
+
 ### delegate
 
 | 哨兵 | 触发条件 | 调用方处置 |
@@ -177,6 +196,14 @@
 | `ErrBlocked` | 依赖未完成 | 等：依赖完成后再来认领（可稍后重试） |
 | `ErrTerminal` | 任务已是终态 | 放弃：读既有结论，不重开 |
 | `ErrLeaseLost` | 令牌不匹配（租约已易主或被释放过） | 对账：本次操作作废，重新 `Claim` |
+
+### tenant
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrNoContext` | 写路径判据（Require / Enforce）遇到未注入租户上下文的请求 | 修声明：机制面声明了「本动作必须感知租户」，注入 tenant.Context 后重发；不得当成「没有租户也放行」 |
+| `ErrUnauthorized` | 授权不足（required 不在 Scopes 内，精确子集判定） | 按宿主的授权体系处置（提权 / 拒绝）；内核只判子集，词表语义归宿主 |
+| `ErrQuotaExceeded` | 配额超限（Enforce 出口；明细经包装链消息携带） | 按超限处置（拒绝 / 排队 / 扩配额）；需要结构化明细时直接用 `Quota.Judge` 取 Exceeded 列表 |
 
 ### tooldisclose
 

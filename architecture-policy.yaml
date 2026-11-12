@@ -584,6 +584,63 @@ modules:
       配对，缺口进 Issues 显式可见；增量投影支持「先喂一半再喂后半，行被更新
       而非重复」。依赖 eventbus 是为了吃本仓自己的事件词表，不另立事件模型。
 
+  # 2026-11-13 新增（P3 清零，issue #112 #114 #115）：运行成本治理 / 多租户判据面 /
+  # 控制平面。三单共一条线：成本事件口径先定（cost），租户配额是它的一个维度
+  # （tenant），人工介入必须走运行时同一套判据且可归责（controlplane）。
+  - id: cost
+    roots: [cost]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      运行成本账（issue #112）：任务级成本事件的口径与聚合面。
+      与 budget 的边界（包注释同样钉了）：budget 估算**输入侧**下一轮提示的
+      构成（永不回填 provider 报数），cost 记录**已发生**的消费报数
+      （token / 工具调用 / 墙钟 / 并发占用），只做聚合不做估算、不做预算约束
+      ——两边都出现 token 时按各自口径各自算，共用一个数字才是口径漂移。
+      事件种类与维度都是开放键（与 budget.Segment / contract.Fields 同纪律）；
+      量必须非负：报数侧给负数是记账 bug，拒收留痕（与 budget 估算侧钳位为 0
+      刻意不同——估错可以少算，账错必须被看见）。
+      Ledger 是进程内参考实现，不是持久化承诺：契约与判据归内核，落库归宿主
+      （与 taskboard 同一条分工）。
+  - id: tenant
+    roots: [tenant]
+    requires: [cost, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      多租户的机制面判据（issue #114）：先定归属再谈实现——数据面（租户是谁、
+      怎么隔离）归宿主，判据面归本仓。产出三样：
+      ① 上下文传递契约：context.Context 单通道（WithContext / From）+
+      不可变值；From 对未注入宽容（读路径），Require fail-closed（写路径）；
+      ② 授权判定口径：required ⊆ Scopes 精确子集（Can）——scope 词表归宿主，
+      内核只判包含关系，不做通配、不做层级（更强表达力宿主在词表层实现，
+      判定面只有「子集」一个真相）；
+      ③ 配额判定口径：Quota.Judge 纯函数（上限声明 × 已聚合用量 → 超限明细；
+      「不设限」与「归零」是两种声明，用 map 键存在性区分），用量来自
+      cost.Aggregate——requires cost 是契约关系不是复用巧合：配额是成本
+      事件口径的一个下游维度（issue #112 与 #114 共用聚合契约）。
+  - id: controlplane
+    roots: [controlplane]
+    requires: [contract, sideeffect, taskboard, tenant, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      控制平面（issue #115）：最小契约 = 查询（任务/运行状态视图 +
+      taskboard.Check 不变量视图）+ 介入（强制释放 / 裁决未知结果 /
+      终止运行）+ 留痕。此前宿主自己拼命令去查、自己去改存储——这些动作
+      绕过运行时判据，改完可能与运行中的持有者打架；本包把介入收进判据面。
+      三条硬契约：① 介入走运行时同一套判据不绕闸——强释=经闸换持有者
+      （旧令牌当场作废，迟到提交凭 taskboard.ErrLeaseLost 被拒；下一次认领
+      代次严格递增），裁决走 sideeffect 对账语义（凭下游事实不凭持有权，
+      先到者为准，复用其哨兵），终止凭运行代次拒绝过期视图（乐观并发）；
+      ② 介入必须留痕：留痕面缺位一律拒绝（fail-closed），留痕与状态变更
+      同一临界区（没有「先改后补痕迹」的窗口）；③ 介入可归责：
+      Operator/Basis 必填 + 租户上下文必须注入（tenant.Require——
+      issue #114 判据面的落点）。
+      控制平面是接口面不是 UI：MemPlane 是判据演示体（进程内、重启即失效），
+      httpapi 是 net/http JSON 适配面（鉴权钩子由宿主注入，内核不鉴权）。
+
   # 2026-10-19 新增：门禁执行体从 package main 下沉为可导入包。
   #
   # 为什么它属于本仓（而不是留在宿主仓各写一遍）：判据是「AST + 一张声明表」，
@@ -1297,7 +1354,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, cost, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, tenant, controlplane, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

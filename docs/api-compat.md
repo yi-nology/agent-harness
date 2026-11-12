@@ -115,7 +115,7 @@ packages:
 
 ## 当前定级一览
 
-api-lifecycle.yaml 登记 **46** 个包（Stable 26 / Experimental 20 / Deprecated 0）。
+api-lifecycle.yaml 登记 **49** 个包（Stable 26 / Experimental 23 / Deprecated 0）。
 逐包理由看清单 `reason` 字段；本节只说分组的**依据**：
 
 - **核心契约面 Stable**：`contract` / `protocol` / `sideeffect` / `taskboard` /
@@ -130,7 +130,8 @@ api-lifecycle.yaml 登记 **46** 个包（Stable 26 / Experimental 20 / Deprecat
   `budget` 压实骨架刚落、`trajectory` 投影面随上游事件流扩、`egress`/
   `netguard` 出口强制件两端仍空、2026-11-06 批次的七个新包
   `sessionref`/`delegate`/`worktree`/`memorypipe`/`hookengine`/
-  `skilldisclose`/`cmdpolicy`），以及**无对外承诺也不该有**的门禁与内部件
+  `skilldisclose`/`cmdpolicy`、2026-11-13 批次的三个新包
+  `cost`/`tenant`/`controlplane`），以及**无对外承诺也不该有**的门禁与内部件
   （`archcheck` 判据面随 policy 演进、`internal/subhub` 被 Go 可见性挡住、
   `taskboard/boardtest` 与 `examples/reference-runtime` 是测试/示例）。
 
