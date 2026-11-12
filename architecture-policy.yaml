@@ -584,6 +584,19 @@ modules:
       配对，缺口进 Issues 显式可见；增量投影支持「先喂一半再喂后半，行被更新
       而非重复」。依赖 eventbus 是为了吃本仓自己的事件词表，不另立事件模型。
 
+  - id: metrics
+    roots: [metrics]
+    requires: ["ext:github.com/oekit"]
+    owner: harness
+    managed: true
+    notes: |
+      指标契约面（issue #100）：五类运营量（执行耗时 / 重试 / 租约竞争 /
+      恢复成败 / 未知结果积压）的名称 / 类型 / 维度 / 基数上界单一来源。
+      与 trajectory 同源两条纪律：duration 只记实测（AttrDurationMs 同口径），
+      无界键进禁区标签（session_id / run_id / 幂等键——基数 = 业务量）。
+      零依赖（纯 stdlib）：投递接缝 Recorder 归宿主实现，内核不接任何
+      遥测 SDK——「导出失败算不算执行失败」不该出现在内核里。
+
   # 2026-10-19 新增：门禁执行体从 package main 下沉为可导入包。
   #
   # 为什么它属于本仓（而不是留在宿主仓各写一遍）：判据是「AST + 一张声明表」，
@@ -1297,7 +1310,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, metrics, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

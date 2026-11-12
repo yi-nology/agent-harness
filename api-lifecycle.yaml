@@ -203,6 +203,10 @@ packages:
     level: Experimental
     since: v0.33.0
     reason: 跨会话引用的保鲜/失效判据 2026-11-06 立包，注入边界还在补。
+  - pkg: metrics
+    level: Experimental
+    since: v0.34.1
+    reason: 指标契约面（issue #100）五类运营量刚立口径，名称 / 维度面会随宿主看板需求增补——口径面本身不适合 Stable 承诺。
 
   # ── 门禁与内部件（Experimental：无对外兼容承诺，登记以保覆盖完整）──
   - pkg: archcheck

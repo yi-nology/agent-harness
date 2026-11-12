@@ -36,15 +36,15 @@
 > | 口径 | 数字 | 是什么 |
 > |---|---|---|
 > | 本文覆盖 | 23 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
-> | 仓里有什么 | **41** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **45** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **46** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | 仓里有什么 | **42** 个包 | README 包表口径（机器校验，`make docsync` 判）|
+> | policy 登记 | **46** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **47** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 >
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
-> **包数口径（机器校验，`make docsync` 判）**：本仓共 **41** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **45** 个包目录。
+> **包数口径（机器校验，`make docsync` 判）**：本仓共 **42** 个包（README 包表口径）；
+> `architecture-policy.yaml` 的 `modules` 段登记 **46** 个包目录。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
 > CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件

@@ -186,6 +186,12 @@
 | `ErrNotInCatalog` | 工具不在目录内，从未可用 | **放弃**：不存在的东西不会因重试出现，任何退避策略都应停手 |
 | `ErrSchemaNotDerivable` | 该工具的 schema 派不出合法的位置调用形态（含工具名为空） | 修声明：修工具 schema/名字 |
 
+### metrics
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrUnregisteredMetric` | 埋点用了未在 `Specs` 登记表登记的指标名（`Validate` 判，`Mem` 严格档计数） | 修声明：先在 `metrics.go` 登记指标（名称/类型/维度/基数上界）+ ACCESS-POINTS.md 加接入点，再埋点——未登记的数是看板口径外的暗数 |
+
 ## 结构化错误类型（errors.As 判定）
 
 > 哨兵判「是什么错」，下面的类型判「错的现场长什么样」——调用方要读
