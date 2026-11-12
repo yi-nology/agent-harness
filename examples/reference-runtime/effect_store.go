@@ -46,6 +46,13 @@ type actRecord struct {
 	uncertain bool
 	reason    string
 
+	// 动作身份（首次登记，永久事实；idSet=false = 未登记）。
+	// 与 sideeffect.ErrActionConflict 对应，登记/比对在 actLocked 内完成。
+	idSet         bool
+	idResource    string
+	idSafety      sideeffect.RetrySafety
+	idPayloadHash string
+
 	// intent 未裁决的执行意图（Acquire 原子写入）。
 	intent *intentRecord
 
@@ -90,13 +97,33 @@ func (s *effectStore) UseClock(now func() time.Time) {
 // clock 当前时刻。**只在持锁时调用**。
 func (s *effectStore) clock() time.Time { return s.now() }
 
-func (s *effectStore) actLocked(key sideeffect.Key) *actRecord {
-	rec, ok := s.acts[key]
+// actLocked 取（或创建）Key 的状态记录，**取到后立刻登记/比对动作身份**
+// ——所有入口共用这一处，身份判定天然先于任何状态判定（Store.Acquire
+// 契约「身份不可变」：不授予、不重放、不转未知态，优先于已完成重放）。
+func (s *effectStore) actLocked(act sideeffect.Action) (*actRecord, error) {
+	rec, ok := s.acts[act.Key]
 	if !ok {
 		rec = &actRecord{}
-		s.acts[key] = rec
+		s.acts[act.Key] = rec
 	}
-	return rec
+	if !rec.idSet {
+		// 首次见到这个 Key：登记身份（即便本次 Acquire 将返回 contended
+		// ——身份不等授予）。
+		rec.idSet = true
+		rec.idResource = act.Resource
+		rec.idSafety = act.RetrySafety
+		rec.idPayloadHash = sideeffect.HashPayload(act.Payload)
+		return rec, nil
+	}
+	if rec.idResource != act.Resource || rec.idSafety != act.RetrySafety ||
+		rec.idPayloadHash != sideeffect.HashPayload(act.Payload) {
+		return nil, errors.Wrap(sideeffect.ErrActionConflict,
+			"同 Key 的动作身份与首次登记不一致（这不是重试，是另一个动作）",
+			"key", string(act.Key),
+			"登记 resource", rec.idResource, "本次 resource", act.Resource,
+			"登记 safety", rec.idSafety, "本次 safety", act.RetrySafety)
+	}
+	return rec, nil
 }
 
 func (s *effectStore) resLocked(resource string) *resRecord {
@@ -117,7 +144,10 @@ func (s *effectStore) Acquire(_ context.Context, act sideeffect.Action, ttl time
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rec := s.actLocked(act.Key)
+	rec, err := s.actLocked(act)
+	if err != nil {
+		return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
+	}
 	if rec.done {
 		return sideeffect.OutcomeReplayed, sideeffect.Lease{}, rec.result, nil
 	}
@@ -222,7 +252,10 @@ func (s *effectStore) intentOwnerErr(act sideeffect.Action, lease sideeffect.Lea
 	if err := leaseResourceErr(act, lease); err != nil {
 		return err
 	}
-	rec := s.actLocked(act.Key)
+	rec, err := s.actLocked(act)
+	if err != nil {
+		return err
+	}
 	if rec.intent == nil {
 		return errors.Wrap(sideeffect.ErrFenceStale,
 			"凭据被拒：本次尝试已无未裁决的执行意图",
@@ -246,7 +279,10 @@ func (s *effectStore) Complete(_ context.Context, act sideeffect.Action, lease s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rec := s.actLocked(act.Key)
+	rec, err := s.actLocked(act)
+	if err != nil {
+		return sideeffect.Result{}, err
+	}
 	if rec.done {
 		return rec.result, nil // 幂等：先到者的结果不被后到者覆盖
 	}
@@ -288,7 +324,10 @@ func (s *effectStore) Abandon(_ context.Context, act sideeffect.Action, lease si
 	if err := s.intentOwnerErr(act, lease); err != nil {
 		return err
 	}
-	rec := s.actLocked(act.Key)
+	rec, err := s.actLocked(act)
+	if err != nil {
+		return err
+	}
 	rec.intent = nil
 	// 资源闸只在仍是自己的时才放——易主了就不碰（那是新持有者的闸）。
 	if err := s.holdOwnerErr(act, lease); err == nil {
@@ -298,7 +337,8 @@ func (s *effectStore) Abandon(_ context.Context, act sideeffect.Action, lease si
 	return nil
 }
 
-// Renew 续期并**同时确认持有资格**：闸已易主则拒绝续期（假续期是重复施加的入口）。
+// Renew 续期并**同时确认持有资格**：闸已易主、尝试已失效**或租约已过期**
+// 则拒绝续期（假续期是重复施加的入口）。
 func (s *effectStore) Renew(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, ttl time.Duration) (sideeffect.Lease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -311,69 +351,18 @@ func (s *effectStore) Renew(_ context.Context, act sideeffect.Action, lease side
 	}
 	now := s.clock()
 	rr := s.resLocked(act.Resource)
+	// 过期即资格终止（Store.Renew 契约）：租约已过期而无人接管时，
+	// 旧持有者不得复活它——否则过期那次尝试绕开「先对账」直接继续推进。
+	if !rr.until.After(now) {
+		return sideeffect.Lease{}, errors.Wrap(sideeffect.ErrFenceStale,
+			"租约已过期且无人接管——到期即资格终止（要继续做请重新 Acquire）",
+			"key", string(act.Key), "resource", act.Resource)
+	}
 	rr.until = now.Add(ttl)
-	rec := s.actLocked(act.Key)
+	rec, err := s.actLocked(act)
+	if err != nil {
+		return sideeffect.Lease{}, err
+	}
 	rec.intent.expires = now.Add(ttl)
 	return sideeffect.Lease{Resource: act.Resource, Fence: lease.Fence, Holder: lease.Holder, TTL: ttl}, nil
-}
-
-// MarkUncertain 把该键标记为「结果未知」（按键，与资源租约无关）。
-//
-// # 标记写失败必须保住执行意图
-//
-// 本实现里「校验 → 改状态」在一个临界区内完成：任何一步失败都发生在
-// **任何状态被改之前**——意图原样留在存储里，后续 Acquire 会被意图挡住。
-// 这不是实现自由，是契约硬要求（Store.MarkUncertain 第 5 条）：真实宿主
-// 落到数据库上时，标记与撤销意图**不得**「先撤意图、再标未知」分两步写
-// ——第二步失败，存储侧就什么都不剩，另一个 worker 直接重放。
-func (s *effectStore) MarkUncertain(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, reason string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.holdOwnerErr(act, lease); err != nil {
-		return err
-	}
-	if err := s.intentOwnerErr(act, lease); err != nil {
-		return err
-	}
-	rec := s.actLocked(act.Key)
-	rec.uncertain = true
-	rec.reason = reason
-	rec.intent = nil
-	return nil
-}
-
-// ResolveUncertain 裁决「结果未知」的键。**先到者为准**。
-//
-// RetrySafetyUnsafe 的动作：未生效的裁决不解除阻塞（ErrUnsafeNotRetryable），
-// 必须 Resolution.ForceRetryable 的显式决策才放行——「不可重试」是判据，
-// 不是注释。
-func (s *effectStore) ResolveUncertain(_ context.Context, act sideeffect.Action, res sideeffect.Resolution) (sideeffect.Outcome, sideeffect.Result, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	rec := s.actLocked(act.Key)
-	if rec.done {
-		return sideeffect.OutcomeReplayed, rec.result, nil
-	}
-	if !rec.uncertain {
-		return sideeffect.OutcomeContended, sideeffect.Result{}, sideeffect.ErrNotUncertain
-	}
-	// 裁决即结论：执行意图与对账占用一并撤销（这次尝试已有结论）。
-	rec.intent = nil
-	rec.recon = nil
-	if res.Applied {
-		rec.done = true
-		rec.uncertain = false
-		rec.result = res.Result
-		return sideeffect.OutcomeReplayed, rec.result, nil
-	}
-	if act.RetrySafety == sideeffect.RetrySafetyUnsafe && !res.ForceRetryable {
-		// 「不可重试」的动作，一句来自对账的「未生效」不足以重新开门：
-		// 那句结论来自宿主的一次查询，查询可能出错，查错的代价是重复施加。
-		// 未知标记**原样保留**（这个 Key 仍被硬阻塞），放行必须显式签字。
-		return sideeffect.OutcomeUncertain, sideeffect.Result{}, sideeffect.ErrUnsafeNotRetryable
-	}
-	rec.uncertain = false
-	return sideeffect.OutcomeApplied, sideeffect.Result{}, nil
 }

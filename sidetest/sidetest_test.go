@@ -32,6 +32,7 @@ type memStore struct {
 	intents   map[sideeffect.Key]memIntent
 	recons    map[sideeffect.Key]memRecon
 	maxFence  map[string]sideeffect.Fence
+	identity  map[sideeffect.Key]memIdentity
 
 	nowFn func() time.Time
 }
@@ -56,6 +57,13 @@ type memRecon struct {
 	expires time.Time
 }
 
+// memIdentity 已登记的动作身份（首次 Acquire 时钉死）。
+type memIdentity struct {
+	resource string
+	safety   sideeffect.RetrySafety
+	hash     string
+}
+
 func newMemStore() *memStore {
 	return &memStore{
 		done:      map[sideeffect.Key]sideeffect.Result{},
@@ -63,6 +71,7 @@ func newMemStore() *memStore {
 		holders:   map[string]memHold{},
 		intents:   map[sideeffect.Key]memIntent{},
 		recons:    map[sideeffect.Key]memRecon{},
+		identity:  map[sideeffect.Key]memIdentity{},
 		maxFence:  map[string]sideeffect.Fence{},
 	}
 }
@@ -76,6 +85,20 @@ func (m *memStore) UseClock(now func() time.Time) {
 func (m *memStore) Acquire(_ context.Context, act sideeffect.Action, ttl time.Duration) (sideeffect.Outcome, sideeffect.Lease, sideeffect.Result, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// 动作身份不可变（判据在最前，先于「已完成 → 重放」）。
+	if id, ok := m.identity[act.Key]; ok {
+		if id.resource != act.Resource || id.safety != act.RetrySafety ||
+			id.hash != sideeffect.HashPayload(act.Payload) {
+			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, sideeffect.ErrActionConflict
+		}
+	} else {
+		m.identity[act.Key] = memIdentity{
+			resource: act.Resource,
+			safety:   act.RetrySafety,
+			hash:     sideeffect.HashPayload(act.Payload),
+		}
+	}
 
 	if res, ok := m.done[act.Key]; ok {
 		return sideeffect.OutcomeReplayed, sideeffect.Lease{}, res, nil
@@ -240,6 +263,12 @@ func (m *memStore) Renew(_ context.Context, act sideeffect.Action, lease sideeff
 	}
 	now := m.nowLocked()
 	cur := m.holders[act.Resource]
+	// 过期即资格终止（Store.Renew 契约）：租约已过期而无人接管时不得续命。
+	if cur.expires.IsZero() || !cur.expires.After(now) {
+		return sideeffect.Lease{}, errors.Wrap(sideeffect.ErrFenceStale,
+			"租约已过期且无人接管——到期即资格终止（要继续做请重新 Acquire）",
+			"key", string(act.Key), "resource", act.Resource)
+	}
 	cur.expires = now.Add(ttl)
 	cur.lease.TTL = ttl
 	m.holders[act.Resource] = cur
@@ -270,8 +299,31 @@ func (m *memStore) ResolveUncertain(_ context.Context, act sideeffect.Action, re
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	return m.resolveWithin(act, res, "")
+}
+
+// ResolveUncertainOwned 带对账占用凭据的裁决（OwnedResolveStore）。
+func (m *memStore) ResolveUncertainOwned(_ context.Context, act sideeffect.Action, res sideeffect.Resolution, holder string) (sideeffect.Outcome, sideeffect.Result, error) {
+	if holder == "" {
+		return sideeffect.OutcomeContended, sideeffect.Result{}, sideeffect.ErrReconcileLost
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.resolveWithin(act, res, holder)
+}
+
+// resolveWithin 裁决主体：已完成重放先于凭据校验（读既有事实不问资格）。
+func (m *memStore) resolveWithin(act sideeffect.Action, res sideeffect.Resolution, requiredHolder string) (sideeffect.Outcome, sideeffect.Result, error) {
 	if prior, ok := m.done[act.Key]; ok {
 		return sideeffect.OutcomeReplayed, prior, nil
+	}
+	if requiredHolder != "" {
+		now := m.nowLocked()
+		r, ok := m.recons[act.Key]
+		if !ok || !now.Before(r.expires) || r.holder != requiredHolder {
+			return sideeffect.OutcomeContended, sideeffect.Result{}, sideeffect.ErrReconcileLost
+		}
 	}
 	if _, ok := m.uncertain[act.Key]; !ok {
 		return sideeffect.OutcomeContended, sideeffect.Result{}, sideeffect.ErrNotUncertain
@@ -288,10 +340,13 @@ func (m *memStore) ResolveUncertain(_ context.Context, act sideeffect.Action, re
 		return sideeffect.OutcomeUncertain, sideeffect.Result{}, sideeffect.ErrUnsafeNotRetryable
 	}
 	delete(m.uncertain, act.Key)
-	return sideeffect.OutcomeContended, sideeffect.Result{}, nil
+	return sideeffect.OutcomeApplied, sideeffect.Result{}, nil
 }
 
 func (m *memStore) BeginReconcile(_ context.Context, act sideeffect.Action, ttl time.Duration) (sideeffect.Reconcile, error) {
+	if ttl <= 0 {
+		return sideeffect.Reconcile{}, sideeffect.ErrInvalidTTL
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

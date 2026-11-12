@@ -17,7 +17,7 @@ import (
 
 // 本文件是 PostgreSQL 参考实现的**契约接线**：
 //
-//   - TestSideEffectStoreContract  sidetest 29 条（三判合一 / 三项联查 / 意图 /
+//   - TestSideEffectStoreContract  sidetest 33 条（三判合一 / 三项联查 / 意图 /
 //     对账占用 / Unsafe 裁决 / 标记失败……全家族，硬失败不静默跳过）；
 //   - TestTaskBoardContract        boardtest 全家族（含并发认领规模档）；
 //   - TestDownstreamSinkContract   sidetest.RunSinkContract 6 条（栅栏一族，

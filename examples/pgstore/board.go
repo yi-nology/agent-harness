@@ -41,7 +41,10 @@ type BoardStore struct {
 
 // NewBoardStore 构造任务认领面存储。
 func NewBoardStore(pool *pgxpool.Pool) *BoardStore {
-	return &BoardStore{pool: pool, now: time.Now}
+	// 默认（未注入）不读进程本地时钟：nowIn 走数据库 clock_timestamp——
+	// 认领与续期的租约判定是跨节点共享的事实，时间源必须是数据库
+	//（与 EffectStore 同口径，评审第三轮 P0）。
+	return &BoardStore{pool: pool, now: nil}
 }
 
 // UseClock 注入时钟（boardtest 契约套件用）。
@@ -53,10 +56,21 @@ func (b *BoardStore) UseClock(now func() time.Time) {
 	}
 }
 
-func (b *BoardStore) clock() time.Time {
+// nowIn 事务内的当前时刻：注入（boardtest 套件）→ 注入值；否则读数据库
+// clock_timestamp。必须在**取得行锁之后**调用（与 EffectStore.nowIn 同款
+// 理由：等锁时长不得计入租约寿命）。
+func (b *BoardStore) nowIn(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.now()
+	injected := b.now
+	b.mu.Unlock()
+	if injected != nil {
+		return injected(), nil
+	}
+	var t time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&t); err != nil {
+		return time.Time{}, errors.Wrap(err, "pgstore: 读数据库时间失败")
+	}
+	return t, nil
 }
 
 // Seed 摆初始任务（契约里没有「创建」入口：任务拓扑是宿主的资产）。
@@ -179,9 +193,13 @@ func (r *boardRow) task() taskboard.Task {
 
 // Claim 认领一个任务（读-判-写不可分割：一个事务完成）。
 func (b *BoardStore) Claim(ctx context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
-	now := b.clock()
 	return withinTx(ctx, b.pool, func(tx pgx.Tx) (taskboard.Task, error) {
 		r, err := lockTask(ctx, tx, id)
+		if err != nil {
+			return taskboard.Task{}, err
+		}
+		// 判定时刻：行锁之后取（见 nowIn 的调用位置要求）。
+		now, err := b.nowIn(ctx, tx)
 		if err != nil {
 			return taskboard.Task{}, err
 		}
@@ -319,9 +337,13 @@ func releaseOrComplete(ctx context.Context, tx pgx.Tx, id taskboard.TaskID, toke
 // 校验（令牌是当前租约的 + 租约未过期）与延长在**同一个事务**里——原子；
 // TTL 语义与 Claim 一致；续期不换令牌、不递增代次（续期不是接管）。
 func (b *BoardStore) Renew(ctx context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
-	now := b.clock()
 	return withinTx(ctx, b.pool, func(tx pgx.Tx) (taskboard.Task, error) {
 		r, err := lockTask(ctx, tx, id)
+		if err != nil {
+			return taskboard.Task{}, err
+		}
+		// 判定时刻：行锁之后取（见 nowIn 的调用位置要求）。
+		now, err := b.nowIn(ctx, tx)
 		if err != nil {
 			return taskboard.Task{}, err
 		}
