@@ -170,6 +170,9 @@
 | `ErrResourceMismatch` | 租约与动作的资源不一致（A 资源的租约被拿去做 B 资源的操作） | 修声明：Complete/Renew/MarkUncertain 的 act 与 lease 必须同资源，两个真相等于没有真相 |
 | `ErrReconcileTaken` | 该 Key 已有未过期的对账占用（同一时刻至多一个对账者） | 等待或放弃：占用过期后可重新认领（BeginReconcile 可重入）；不要并发抢对账 |
 | `ErrUnsafeNotRetryable` | 动作声明为不可重试（Unsafe）——对账判「未生效」也不解除阻塞 | 二选一：承认查询不可信重新对账；或确认结论可靠并接受风险后，带 `ForceRetryable=true` **显式**重新裁决 |
+| `ErrActionConflict` | 同一 Key 的动作身份（Resource/Payload/RetrySafety）与首次登记不一致——判定优先于「已完成 → 重放」 | 不可重试：要么用与登记一致的身份，要么承认 Key 撞号（两条逻辑动作共用一个 Key），换 Key |
+| `ErrReconcileLost` | 出示的对账占用凭据不是当前有效的一份（已过期 / 已被接管 / 从未认领） | 迟到的对账者：放弃本次裁决；要提交就重新 BeginReconcile 认领后再查（旧查询窗口跨越了状态变化，不可信） |
+| `ErrInvalidTTL` | BeginReconcile 的 ttl ≤ 0（出生即过期的认领 = 没有占用） | 修正入参：给正时长的认领窗口（对账查询的预估耗时 + 余量） |
 
 ### spill
 

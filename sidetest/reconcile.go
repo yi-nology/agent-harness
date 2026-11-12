@@ -122,6 +122,143 @@ func checkReconcileReentrantAfterExpiry(st sideeffect.Store, clock *FakeClock) e
 	return nil
 }
 
+// asOwned 取带凭据裁决能力。缺失即硬失败（与 RenewingBoard 同一处置：
+// 跳过 = 把「没测过」伪装成「通过了」）。
+func asOwned(st sideeffect.Store) (sideeffect.OwnedResolveStore, error) {
+	owned, ok := st.(sideeffect.OwnedResolveStore)
+	if !ok {
+		return nil, errors.New("sidetest: 存储未实现 OwnedResolveStore——带占用凭据的裁决是契约要求（跨进程对账的迟到提交必须能被拒）")
+	}
+	return owned, nil
+}
+
+// checkOwnedResolveRequiresValidHolder 钉住：迟到的对账者不得提交裁决
+// （凭据必须是**当前有效**的那份），且凭据校验不改任何状态。
+//
+// 主案（评审场景）：A 认领 → A 卡顿超时、占用过期 → B 接管 → A 恢复，
+// 先于 B 提交旧查询结果 → 必须被拒（ErrReconcileLost）且 B 的占用原样；
+// B 提交成功后该 Key 按 B 的裁决收场。
+//
+// 第二段钉契约的另一半顺序：该 Key **已完成**时凭据不作数——读既有
+// 结果是无害重放，不问资格（ResolveUncertainOwned 契约第 3 条）。
+func checkOwnedResolveRequiresValidHolder(st sideeffect.Store, clock *FakeClock) error {
+	ctx := context.Background()
+	owned, err := asOwned(st)
+	if err != nil {
+		return err
+	}
+
+	// ── 主案：过期对账者的迟到裁决被拒，状态不动 ──
+	a, err := reconcileFixture(st, "k-owned-recon", "res-owned-recon")
+	if err != nil {
+		return err
+	}
+	first, err := st.BeginReconcile(ctx, a, 10*time.Minute)
+	if err != nil {
+		return fmt.Errorf("首个对账者的认领失败: %w", err)
+	}
+	clock.Advance(11 * time.Minute) // A 卡死了，占用过期
+	second, err := st.BeginReconcile(ctx, a, 10*time.Minute)
+	if err != nil {
+		return fmt.Errorf("接管对账权的新对账者认领失败: %w", err)
+	}
+	if second.Holder == first.Holder {
+		return errors.New("接管必须铸造新身份（新旧凭据同值则凭据校验形同虚设）")
+	}
+
+	// A 恢复，持旧凭据先提交 → 必须被拒。
+	if _, _, err := owned.ResolveUncertainOwned(ctx, a, sideeffect.Resolution{
+		Applied: false,
+		Reason:  "A 的迟到查询结果",
+	}, first.Holder); !errors.Is(err, sideeffect.ErrReconcileLost) {
+		return fmt.Errorf("过期对账者的迟到裁决必须被拒为 ErrReconcileLost（先到者为准不校验资格），实得 %v", err)
+	}
+
+	// 拒绝不改状态：B 的占用原样（第三个对账者仍被挡住）。
+	if _, err := st.BeginReconcile(ctx, a, 10*time.Minute); !errors.Is(err, sideeffect.ErrReconcileTaken) {
+		return fmt.Errorf("迟到裁决被拒不得波及现任对账者的占用（第三个对账者应被拒为 ErrReconcileTaken），实得 %v", err)
+	}
+	// Key 仍在未知态（A 的裁决没落地，也没把门打开）。
+	if outcome, _, _, err := st.Acquire(ctx, a, time.Minute); err != nil || outcome == sideeffect.OutcomeApplied {
+		return fmt.Errorf("迟到裁决被拒后该 Key 应仍在未知态（不得授予执行权），实得 outcome=%v err=%v", outcome, err)
+	}
+
+	// B 持有效凭据裁决成功，该 Key 按 B 的结论收场（未生效 → 重新可执行）。
+	out, _, err := owned.ResolveUncertainOwned(ctx, a, sideeffect.Resolution{
+		Applied: false,
+		Reason:  "B 查过下游：未生效",
+	}, second.Holder)
+	if err != nil {
+		return fmt.Errorf("当前持有者的裁决应成功: %w", err)
+	}
+	if out != sideeffect.OutcomeApplied {
+		return fmt.Errorf("裁决「未生效」后该 Key 应重新可执行（OutcomeApplied），实得 %v", out)
+	}
+
+	// ── 第二段：已完成 → 重放无害，不问凭据 ──
+	b, err := reconcileFixture(st, "k-owned-done", "res-owned-done")
+	if err != nil {
+		return err
+	}
+	third, err := st.BeginReconcile(ctx, b, 10*time.Minute)
+	if err != nil {
+		return fmt.Errorf("认领失败: %w", err)
+	}
+	clock.Advance(11 * time.Minute)
+	fourth, err := st.BeginReconcile(ctx, b, 10*time.Minute)
+	if err != nil {
+		return fmt.Errorf("接管失败: %w", err)
+	}
+	if _, _, err := owned.ResolveUncertainOwned(ctx, b, sideeffect.Resolution{
+		Applied: true,
+		Result:  sideeffect.Result{Payload: []byte("done")},
+		Reason:  "查实已生效",
+	}, fourth.Holder); err != nil {
+		return fmt.Errorf("有效凭据的裁决应成功: %w", err)
+	}
+	// 已完成后，旧凭据来读也是重放（读既有事实不问资格）。
+	out, res, err := owned.ResolveUncertainOwned(ctx, b, sideeffect.Resolution{
+		Applied: true,
+		Reason:  "A 的迟到提交",
+	}, third.Holder)
+	if err != nil {
+		return fmt.Errorf("已完成的重放不应被凭据拒（读既有结果无害）: %w", err)
+	}
+	if out != sideeffect.OutcomeReplayed || string(res.Payload) != "done" {
+		return fmt.Errorf("应返回 OutcomeReplayed + 既有结果（实得 %v / %q）", out, res.Payload)
+	}
+
+	// 空凭据（从未认领）必须被拒。
+	c, err := reconcileFixture(st, "k-owned-empty", "res-owned-empty")
+	if err != nil {
+		return err
+	}
+	if _, _, err := owned.ResolveUncertainOwned(ctx, c, sideeffect.Resolution{Applied: false}, ""); !errors.Is(err, sideeffect.ErrReconcileLost) {
+		return fmt.Errorf("空凭据必须被拒为 ErrReconcileLost，实得 %v", err)
+	}
+	return nil
+}
+
+// checkReconcileTTLPositive 钉住：零/负 TTL 的对账认领必须被拒。
+func checkReconcileTTLPositive(st sideeffect.Store) error {
+	ctx := context.Background()
+	a, err := reconcileFixture(st, "k-recon-ttl", "res-recon-ttl")
+	if err != nil {
+		return err
+	}
+	if _, err := st.BeginReconcile(ctx, a, 0); !errors.Is(err, sideeffect.ErrInvalidTTL) {
+		return fmt.Errorf("零 TTL 认领必须被拒为 ErrInvalidTTL（出生即过期的认领等于没有占用），实得 %v", err)
+	}
+	if _, err := st.BeginReconcile(ctx, a, -time.Minute); !errors.Is(err, sideeffect.ErrInvalidTTL) {
+		return fmt.Errorf("负 TTL 认领必须被拒为 ErrInvalidTTL，实得 %v", err)
+	}
+	// 拒绝不留坏状态：正常认领照常成功。
+	if _, err := st.BeginReconcile(ctx, a, 10*time.Minute); err != nil {
+		return fmt.Errorf("拒绝非法 TTL 后正常认领应成功: %w", err)
+	}
+	return nil
+}
+
 // ── 场景入口（供 Run 调用）────────────────────────────────────────────
 
 func runReconcileTakenWhileActive(t *testing.T, factory Factory) {
@@ -137,5 +274,23 @@ func runReconcileReentrantAfterExpiry(t *testing.T, factory Factory) {
 	st, clock := newStore(t, factory)
 	if err := checkReconcileReentrantAfterExpiry(st, clock); err != nil {
 		t.Fatalf("违反「对账占用过期可重入且不放行」契约: %v", err)
+	}
+}
+
+// runOwnedResolveRequiresValidHolder 迟到的对账者不得提交裁决。
+func runOwnedResolveRequiresValidHolder(t *testing.T, factory Factory) {
+	t.Helper()
+	st, clock := newStore(t, factory)
+	if err := checkOwnedResolveRequiresValidHolder(st, clock); err != nil {
+		t.Fatalf("违反「带凭据的裁决只认当前有效占用」契约: %v", err)
+	}
+}
+
+// runReconcileTTLPositive 零/负 TTL 的对账认领必须被拒。
+func runReconcileTTLPositive(t *testing.T, factory Factory) {
+	t.Helper()
+	st, _ := newStore(t, factory)
+	if err := checkReconcileTTLPositive(st); err != nil {
+		t.Fatalf("违反「对账认领 TTL 必须为正」契约: %v", err)
 	}
 }

@@ -162,7 +162,7 @@ type ClockedStore interface {
 // 实现的后台资源由 factory 经 t.Cleanup 清理。
 type Factory func(t *testing.T, clock *FakeClock) ClockedStore
 
-// Run 跑完整契约场景（29 个子测试，任何一个失败即实现违反契约）。
+// Run 跑完整契约场景（33 个子测试，任何一个失败即实现违反契约）。
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
 
@@ -177,6 +177,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("renew_extends_lease", func(t *testing.T) { runRenewExtendsLease(t, factory) })
 	t.Run("renew_after_takeover_rejected", func(t *testing.T) { runRenewAfterTakeoverRejected(t, factory) })
 	t.Run("renew_after_release_rejected", func(t *testing.T) { runRenewAfterReleaseRejected(t, factory) })
+	t.Run("renew_after_expiry_rejected", func(t *testing.T) { runRenewAfterExpiryRejected(t, factory) })
 	t.Run("uncertain_blocks_execution", func(t *testing.T) { runUncertainBlocksExecution(t, factory) })
 	t.Run("resolve_not_applied_allows_retry", func(t *testing.T) { runResolveNotAppliedAllowsRetry(t, factory) })
 	t.Run("resolve_applied_records_result", func(t *testing.T) { runResolveAppliedRecordsResult(t, factory) })
@@ -196,6 +197,9 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("unsafe_force_retryable_explicit", func(t *testing.T) { runUnsafeForceRetryableExplicit(t, factory) })
 	t.Run("reconcile_taken_while_active", func(t *testing.T) { runReconcileTakenWhileActive(t, factory) })
 	t.Run("reconcile_reentrant_after_expiry", func(t *testing.T) { runReconcileReentrantAfterExpiry(t, factory) })
+	t.Run("owned_resolve_requires_valid_holder", func(t *testing.T) { runOwnedResolveRequiresValidHolder(t, factory) })
+	t.Run("reconcile_ttl_must_be_positive", func(t *testing.T) { runReconcileTTLPositive(t, factory) })
+	t.Run("action_identity_immutable", func(t *testing.T) { runActionIdentityImmutable(t, factory) })
 }
 
 // newStore 构造被测实现并注入假时钟。

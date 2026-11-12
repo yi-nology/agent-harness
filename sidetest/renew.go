@@ -89,6 +89,46 @@ func runRenewAfterTakeoverRejected(t *testing.T, factory Factory) {
 //
 // 这条与「过期持有者续期被拒」同族但不同因：那条是令牌变了，这条是
 // **令牌没变而持有关系没了**——只比令牌的实现会漏掉它。
+// runRenewAfterExpiryRejected 钉住：租约**已过期且无人接管**时，原持有者的
+// 续期必须被拒（过期即资格终止）。
+//
+// 与其他两条续期拒绝场景的区别：那两条是「闸已易主 / 已释放」（有人动过），
+// 这条是**什么都没发生**——只有时间走完了。只校验「令牌是最新代 + 持有者
+// 身份」的实现对它无感：令牌没变、身份没变，于是 GC 停顿超过 TTL 的持有者
+// 回来一续就复活了租约——而它上一次施加的结果可能正是「已生效但账没记上」，
+// 复活的租约让那次尝试继续推进，绕开 Acquire 的「过期 → 结果未知先对账」。
+//
+// 断言分两层：续期被拒（ErrFenceStale），且**没有被续命**——同 Key 再 Acquire
+// 必须走过期路径转未知态（若 Renew 偷偷把意图续上，这里会拿到 contended）。
+func runRenewAfterExpiryRejected(t *testing.T, factory Factory) {
+	t.Helper()
+	st, clock := newStore(t, factory)
+	ctx := context.Background()
+	a := act("k1", "res-a")
+
+	_, lease, _, err := st.Acquire(ctx, a, time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	// 时间走完，且**不发生任何新的 Acquire**（没有接管者动过这道闸）。
+	clock.Advance(2 * time.Minute)
+
+	if _, err := st.Renew(ctx, a, lease, time.Minute); !errors.Is(err, sideeffect.ErrFenceStale) {
+		t.Fatalf("过期且无人接管时续期必须被拒为 ErrFenceStale，实得 %v", err)
+	}
+
+	// 没有被续命：意图仍是过期未裁决 ⇒ 同 Key 再 Acquire 转入需对账态。
+	// （若上面的 Renew 成功把意图续上，这里会是 contended——这层断言
+	// 抓的就是「续期写成功了」这种坏实现。）
+	outcome, _, _, err := st.Acquire(ctx, a, time.Minute)
+	if err != nil {
+		t.Fatalf("过期后的 Acquire 失败: %v", err)
+	}
+	if outcome != sideeffect.OutcomeUncertain {
+		t.Fatalf("过期且未裁决的尝试应转入需对账态（续期不得把它续活），实得 %v", outcome)
+	}
+}
+
 func runRenewAfterReleaseRejected(t *testing.T, factory Factory) {
 	st, _ := newStore(t, factory)
 	ctx := context.Background()

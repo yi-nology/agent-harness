@@ -59,6 +59,26 @@ var ErrUnsafeNotRetryable = errors.New("动作声明为不可重试：未生效�
 // ——对账者死亡不永久占住这个 Key。
 var ErrReconcileTaken = errors.New("该 Key 已有对账占用：同一时刻至多一个对账者")
 
+// ErrReconcileLost 出示的对账占用凭据不是**当前有效**的那份（v0.33.0 后新增）。
+//
+// 三种到达路径，处置相同、理由相同：
+//   - 认领早已过期（对账者卡顿太久，占用已被重新认领）；
+//   - 认领已被新对账者接管（凭据是旧的那份）；
+//   - 从未认领过（直接调带凭据的裁决入口）。
+//
+// 带凭据的裁决入口（OwnedResolveStore.ResolveUncertainOwned）靠它挡住
+// 「迟到的对账者提交过期查询结果」：先到者为准只保证不覆盖，不保证
+// **先提交的人还有对账资格**——而资格失效者的查询窗口（它查下游时
+// Key 状态可能已变）恰恰是最不可信的。
+var ErrReconcileLost = errors.New("对账占用凭据已失效：认领已过期或已被接管")
+
+// ErrInvalidTTL 认领时长非法（零值或负数）。
+//
+// 零/负 TTL 造出的是一段**出生即过期**的对账认领：BeginReconcile 成功
+// 返回、下一次 BeginReconcile 立即可重入——「同一时刻至多一个对账者」
+// 的承诺从未真正生效。宁可在认领时拒绝，也不发一份立即失效的凭据。
+var ErrInvalidTTL = errors.New("对账认领的 TTL 必须为正时长")
+
 // RetrySafety 动作在**施加失败**后的重试安全性声明。
 //
 // # 为什么它必须是宿主声明而不是内核推断
