@@ -408,6 +408,17 @@ var / 短声明含取址与容器 / 函数参数与接收者；包级变量跨�
 宿主升级本版**无需改任何调用面**——本节全部是声明面与门禁增量，
 不改变任何包的导出符号与行为。
 
+### 依赖地板
+
+- **地板抬升**（发版批统一动作，2026-11-12）：`oagentkit/agent v0.14.10`、`oagentkit/guardx
+  v0.24.4`、`oagentkit/runtime v0.12.9`、`oagentkit/toolgate v0.17.2`、`oagentkit/tools
+  v0.14.5`、`oagentkit/mcpkit v0.13.2`、`oekit/concurrency v0.33.0`、`oekit/logx v0.10.0`、
+  `dop251/goja`（新快照）。
+- **钉回**：`oekit/pkg 钉在 v0.44.0`——pkg v0.45.0 起移除 `errors.Errorf`，`guardx
+  v0.24.x`（上游 go.mod 地板旧 pkg）与本仓 `delegate` 各有一处 `Errorf` 使用，
+  pkg v0.45+ 编不过。上游 guardx 适配新 errors 口径 + 本仓 delegate 迁移后解除钉回。
+- **go 1.27.4**（安全地板，随 2026-11-10 官方安全发布；govulncheck 无命中）。
+
 ## [v0.32.1] — 2026-11-11
 
 ### 修复：PTC 未受管逃逸口的豁免登记路径，此前是「照着指引做就红」

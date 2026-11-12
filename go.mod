@@ -33,16 +33,16 @@ go 1.27.4
 // database/sql 适配层。
 require (
 	github.com/cloudwego/eino v0.9.23
-	github.com/dop251/goja v0.0.0-20261110143652-a4433846ae5b
+	github.com/dop251/goja v0.0.0-20261110204830-f493a2b600d6
 	github.com/jackc/pgx/v5 v5.13.0
-	github.com/oagentkit/agent v0.14.8
-	github.com/oagentkit/guardx v0.24.1
-	github.com/oagentkit/runtime v0.12.6
-	github.com/oagentkit/toolgate v0.17.0
-	github.com/oagentkit/tools v0.14.3
-	github.com/oekit/concurrency v0.32.0
-	github.com/oekit/logx v0.9.2
-	github.com/oekit/pkg v0.42.0
+	github.com/oagentkit/agent v0.14.10
+	github.com/oagentkit/guardx v0.24.4
+	github.com/oagentkit/runtime v0.12.9
+	github.com/oagentkit/toolgate v0.17.2
+	github.com/oagentkit/tools v0.14.5
+	github.com/oekit/concurrency v0.33.0
+	github.com/oekit/logx v0.10.0
+	github.com/oekit/pkg v0.44.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -60,7 +60,7 @@ require (
 	github.com/eino-contrib/jsonschema v1.0.3 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
-	github.com/google/pprof v0.0.0-20261110164715-8bb1ee682bd8 // indirect
+	github.com/google/pprof v0.0.0-20261111200114-fac431ef4d26 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -73,7 +73,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
-	github.com/oagentkit/mcpkit v0.12.8 // indirect
+	github.com/oagentkit/mcpkit v0.13.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
