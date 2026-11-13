@@ -2,7 +2,331 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
-## [v0.34.1] — 2026-11-12
+## [v0.35.0] — 2026-11-13
+
+### 新增(ticket,commitgate,eventbus)：#145 B 档三包抽 Store/Relay 接缝——判定留包内、状态归存储、进程内参考实现
+
+多副本宿主（k3s replicas=2 在役形态）消费不了这三个包：状态焊在进程里
+（mu+map/mu+subs），跨副本判定必然失效。按 issue #145 建议与 coord（#107）
+同一条分工抽接缝：**判定逻辑留包内、状态抽接口、进程内参考实现垫在契约下**。
+## ticket —— Backend 四操作（Put/Take/GC/Len）
+- Take 必须原子（多副本并发消费同一张票恰好一个赢）：DB = DELETE...RETURNING；
+  过期判定同在一次取出里（先查后删会重开「两副本同时消费」窗口）。
+- Store 退化为「判定 + 时钟」：容量策略在 Backend 内自判（内存实现满即拒发，
+  文案与旧实现逐字一致）；Consume 对 Backend 故障 fail-closed（绝不放行没验成
+  的票）；GC/Len 故障退 0（清理/观测面）。
+- NewWithBackend 注入；NewMemoryBackend 进程内参考实现（单进程成立，不得上
+  生产——边界刻在文件头）。
+## commitgate —— Store 六操作（Claim/ReleaseToken/ReleaseTriple/SeedIfAbsent/Get/Count）
+- Claim 原子判-占，**Token 由存储铸造**：进程内自增序列跨副本会撞——副本 B
+  铸出与副本 A 迟到 ReleaseLease 相同的令牌时，迟到释放会放掉 B 的闸（与本包
+  「三元组不唯一」是同一个坑，只是从进程内挪到进程间）。
+- Guard 不再自带 mu/done/tokenSeq：词表判定、空引用拒绝、错误构造留包内；
+  AlreadyCommittedError 的 Prev 仍是未导出 record（导出面一字未动，additive）。
+- NewGuardWithStore 注入；Release 的三元组判定在 Store 内原子完成（先查后删
+  两步形态会重开窗口）。零值 Guard 的 Status/Committed/Release/ReleaseLease
+  与旧实现（nil map 读/删良性）逐字一致。
+## eventbus —— Relay 接缝 + Inject 回注
+- 缺省无 Relay = 进程内限定（语义一字不变）；装配后 Publish **本地先、Relay
+  后、且解锁后再调 Relay**（Relay 可回调 Inject 不死锁——RWMutex 不可重入）。
+- Inject 只本地分发不回流（回流即环）；外发条件与本地受众一致（空 SessionID
+  系统事件不外发）；Relay 契约三条（不阻塞热路径 / 失败语义自担 / 权威顺序是
+  宿主落库游标）写在接口注释里。
+## 测试（-race）
+- ticket 97.1% / commitgate 91.1% / eventbus 100%（PKG_COV_MIN=70）。
+- 核心判据：共享存储下 A 的迟到 ReleaseLease 不放 B 的闸（令牌不撞）；
+  并发 Claim/Take 恰好 1 个赢家（原子性契约进程内判据）；Relay 回调 Inject
+  不死锁；注入替身证明判定真的落在接缝上。
+## 验证
+- make fmt-check / vet / lint（golangci-lint 2.14.0 钉版）0 issues；
+- make test：除 archcheck 的 TestEgressGateOnThisRepo（本地 @w*/gak-rescue
+  worktree 目录污染——干净检出 archive 实测 ok，以 CI 为准）外全绿；
+- apilifecheck / docsync 同受 @w* 污染，干净树复核后 README 数字已同步。
+
+### 新增：三张 P3 特性单骨架级落地——worker 生命周期 / coord 协调适配形态 / scheduling 调度判据（#106 #107 #108）
+
+worker（#106）：Registry 注册/心跳/注销契约 + Loop 六段生命周期驱动 +
+Recover 恢复判据。心跳接 taskboard.RenewingBoard.Renew（续期是资格检查，
+租约易主即取消在途执行——危险窗口在施加之前封口）；恢复判资格不判时钟
+（过期判定归任务板侧）。参考实现（内存注册表 + 端到端演示）在
+examples/worker-runtime，不进内核依赖面（issue #106 边界声明）。
+coord（#107）：协调后端适配形态约定——Backend 三原语（一致快照读 /
+断言全过才提交的条件事务 / 前缀列键）+ Board/Store 单份适配器（三判合一、
+三项联查、执行意图、对账占用的判定逻辑只有这一份）+ ConcurrentTxn
+原子性判据（断言与写入分离的坏实现必红）。Redis/etcd/PG/内存的原子性
+边界写在包文档；内存后端是测试保底不是生产存储。
+scheduling（#108）：调度判据面——优先级（确定性平局裁决）/ 加权公平
+（欠账最小者先服务）/ 配额（整单占用、超释放拒）/ 背压（拒绝带机器可判
+原因，在途满优先于队列满）。归属结论落 ADR-0008（证据：上游
+oagentkit/agent/dispatch v0.14.10 的判定面只有可达性/深度/自派发三条，
+四样判据上游确实没有；本包不判可达性，不与上游并存第二份实现）。
+登记：policy modules + scan_roots（4 包）、api-lifecycle（v0.35.0 定级）、
+error-semantics（coord/worker/scheduling 哨兵）、README 包表 + 底座口径、
+USAGE/api-compat 计数。契约套件 boardtest/sidetest 在 coord 适配器上真跑。
+
+### 新增(sweep)：三单 P3 特性机制面落地——backend/handoff/eval（#109 #110 #111）
+
+骨架级落地口径：可运行的参考实现 + 接口契约 + 单测 + godoc；实现形态与
+既有相邻子系统同一条纪律（契约+判据归内核，引擎/存储/传输形态归宿主）。
+- backend（#109）：任务式执行后端契约面——隔离轴（none/process/container/vm，
+  上游 Level 词表冻结故本包立轴，对应关系只注释不映射）、能力自报
+  （EgressEnforcer/Capable 与 sandbox 同构同词表，沉默按最弱）、要求对照
+  SatisfiedBy（fail-closed）、登记簿（无满足者即拒绝不降级，满足者取最弱
+  同档按 ID 字典序）+ 进程内兜底 Inline（显式 IsolationNone）；
+  examples/containerbackend：Docker Engine HTTP API 参考实现（零第三方依赖，
+  network=none 兑现禁网、容器上限兑现内存、日志 demux，httptest 假引擎对拍）
+  + K8s Job 接入占位（未接入按最弱自报，Exec 一律 ErrNotWired）。
+- handoff（#110）：跨进程交接四问契约化——交接点 Store/Ticket、原子性
+  （Take 一次原子操作转移负责人，判据 ConcurrentTake 赢家恰好 1）、幂等键
+  （同 Key 重放返回原单；重新交接=新一代，代次与令牌同源）、回执寻址
+  （ReplyTo 必填+只有 To 能领+回执凭令牌）、超时（一条时限线两段共用，
+  无时限契约禁止，迟到一律拒收）；判据 Validate/Check/ConcurrentTake
+  纯函数 + 进程内参考实现 LocalDesk；ADR-0008 记设计推导。
+- eval（#111）：轨迹录制→重放→差异比对——锚点 trajectory 确定性行 ID，
+  时刻是数据不是时钟；Record/Load 朴素 JSONL、Verify 判录制适航
+  （头部保真+载荷往返幂等）、Diff 纯函数确定排序（空=复现）、Assess
+  纯函数评估判据五判项（零判项显式拒绝）。
+声明面同步：policy modules（backend/handoff/eval/containerbackend）+
+scan_roots；README 包表 +3 行与工程底座实测数；api-lifecycle +4 条
+（v0.35.0 Experimental）；error-semantics 四包哨兵；USAGE 口径数。
+验证：make check 全绿（fmt/vet/lint v2.14.0/test/cover-gate 81.7%/vuln/
+race/crossbuild/architecture 49 包/docsync 44 包/apilifecheck 50 条）；
+新增包逐包覆盖均过 70% 下限。
+Fixes #109
+Fixes #110
+Fixes #111
+
+### 新增(cost,tenant,controlplane)：P3 三单骨架级落地——成本事件口径 / 租户判据面 / 控制平面契约
+
+- cost（#112）：任务级成本事件的口径与聚合面。Kind/Dims 开放键；量必须非负
+  （报数侧负数拒收留痕，与 budget 估算侧钳位刻意不同）；Aggregate 按任意维度
+  子集分组（iter.Seq 流式事件源，产出确定性排序，口径外事件不静默吸收），
+  规范维度具名快捷面 ByTenant/ByRun/ByTask；Ledger 进程内参考实现（账面只读）。
+  与 budget 的边界（输入侧估算 vs 已发生消费）钉进包注释与 policy notes。
+- tenant（#114）：多租户的机制面判据。context.Context 单通道传递契约
+  （From 读宽容 / Require 写 fail-closed）；授权口径 Can = required ⊆ Scopes
+  精确子集（词表归宿主，不做通配/层级）；配额口径 Quota.Judge 纯函数
+  （不设限 vs 归零两种声明、Remaining 剩余额度不为负）+ QuotaSource 宿主接口
+  + Enforce 组合出口；用量来自 cost.Aggregate（配额是成本口径的下游维度）。
+- controlplane（#115）：控制平面最小契约 = 查询（TaskView/RunView +
+  taskboard.Check 不变量投影）+ 介入（强制释放/裁决未知结果/终止运行）+ 留痕。
+  三条硬契约：介入走运行时同一套判据不绕闸（强释=经闸换持有者、旧令牌作废、
+  代次严格递增；裁决走 sideeffect 对账语义复用其哨兵；终止凭运行代次拒绝
+  过期视图）；留痕面缺位一律拒绝（ErrNoAuditor）且留痕与状态变更同一临界区；
+  介入可归责（Operator/Basis 必填 + tenant.Require fail-closed）。
+  MemPlane/MemAuditor 进程内参考实现 + net/http JSON 适配面（Authorizer
+  鉴权钩子宿主注入，缺位全 401）。
+- 声明面同步：architecture-policy modules+scan_roots、api-lifecycle
+  （Experimental v0.35.0）、error-semantics 哨兵登记、README 包表/工程底座/
+  边界段、USAGE 与 api-compat 计数口径块。
+测试：cost 97.0% / tenant 97.8% / controlplane 88.3%；make check 全绿。
+
+### 新增(archcheck)：未受管逃逸门禁的类型感知严格档——go/types 判赋值接收方真实类型（issue #103）
+
+- 新执行体 unmanaged_gotypes.go：go/packages + go/types 整仓类型检查后判
+  「对持有 ptc 逃逸类型的接收方做 AllowUnmanaged 赋值」——AST 三趟追踪
+  （#92）的静态不可溯盲区（函数返回值 / 容器元素 / 指针经调用流转、
+  别名与 defined type 包装）在此覆盖
+- 可选严格档（RunOptions.TypeAware / cmd/archcheck -types /
+  make architecture-check-types）：整仓类型检查慢一个量级，opt-in 不进 check
+- 解析失败显式报错（Load 失败 / 任何包带类型错误 / 解析出零包 → error，
+  cmd 侧退出码 2）——「给不出结论」与「无违规」严格分开，绝不静默放行
+- 两档重叠形态按 (rule,path,line) 去重（豁免键唯一）；Result.TypeAwarePackages
+  是「严格档真的跑了」的凭据，报告显形——与「规则须有执行体」自校验同纪律
+- 对照用例四条：盲区命中（AST 档 0 / 严格档 3，对照即执行体证明）、
+  宿主同名同型字段不误伤、重叠去重、解析失败两形态显式报错
+- 登记：policy archcheck requires + ext_prefixes 白名单登记 x/tools；
+  go.mod x/tools 升直接依赖（v0.52.1，已在模块图内）
+
+### 新增：评审第三轮四条封口——Action 身份不可变 / PG 统一数据库时钟 / 对账裁决绑占用凭据 / 过期租约拒续期（#137 #138 #139 #140）
+
+四条都是「跨进程、跨状态转换时保持同一份事实」的契约收紧，同批落库：
+四条共享 sidetest 注册面与 sideeffect 契约面，拆开的中间态没有独立
+意义（且 hunk 级拆分易错）。每条都配了反向验证——坏实现注入当场变红。
+一、§3.1 P0 Action 身份持久化（#137）
+   问题：表里没有身份列，意图过期的判定用本次传入的 RetrySafety——
+   首试 Unsafe 过期后换传 Safe 即可放行，「不可重试」被后到声明推翻。
+   修复：sideeffect 新增 ErrActionConflict + HashPayload，Acquire 契约
+   补「身份不可变」（判定优先于已完成重放）；首次 Acquire 登记身份
+   （Resource/PayloadHash/RetrySafety），不一致 → 拒且什么都不做。
+   pgstore（幂等迁移列 + lockAction 内校验一处覆盖全入口）、内存实现
+   （actLocked 收 act，编译器强制 8 处全覆盖）、套件替身。
+   场景 action_identity_immutable 四段（改 Safety/Resource/Payload/
+   已完成后改身份不重放）。反向验证：摘 ensureIdentity → 红在评审 T5。
+二、§3.2 P0 租约统一数据库时钟（#138）
+   问题：now: time.Now——±10s 节点漂移对 15s TTL 意味着「A 写的租约
+   在 B 看来从一开始就是过期的」⇒ 提前接管仍在执行的资源。
+   修复：默认时钟源改数据库 clock_timestamp（nowIn：注入值仍生效，
+   套件语义不变），四个调用点（Acquire/BeginReconcile/Claim/Renew）
+   全部移到取得行锁之后取时刻（避开 CURRENT_TIMESTAMP 固定事务起点）。
+   判据两条（评审的 ±30s 模拟在修复后不可表达——worker 已无时钟源，
+   这正是修复本身）：源码判据（生产文件剥注释不含 time.Now）+ 锁后
+   锚定判据（持锁 2.5s 后余量 ≥ TTL-1.5s，坏实现实测 597.5s < 598.5s）。
+   反向验证：两条各注入坏实现，均当场变红。
+三、§3.3 P1 对账裁决绑占用凭据 + §4.P1 拒零/负 TTL（#139）
+   问题：BeginReconcile 铸了 Holder 但 ResolveUncertain 不收凭据——
+   迟到对账者的旧查询结果会被「先到者为准」接受（它只保证不覆盖，
+   不保证提交者还有资格）。零/负 TTL 造出生即过期的认领。
+   修复：sideeffect 新增可选接口 OwnedResolveStore.ResolveUncertainOwned
+   （holder 非当前有效占用 → ErrReconcileLost 且不改状态；已完成重放
+   先于凭据校验）+ ErrInvalidTTL；简化入口保留；套件缺失硬失败。
+   场景 owned_resolve_requires_valid_holder + reconcile_ttl_must_be_positive。
+   反向验证：两处校验各摘 → 两场景当场变红。
+四、§3.4 P1 过期租约拒续期（#140）
+   问题：凭据校验只查身份不查到期——过期未接管时旧持有者 Renew 把
+   资源闸与执行意图一起续活，绕开 Acquire「过期 → 先对账」判据，
+   且与 taskboard.Renew「到期即资格终止」不一致。
+   修复：三实现 Renew 增过期判定（ErrFenceStale）+ Store.Renew 契约
+   补条款。场景 renew_after_expiry_rejected（拒 + 意图未被续活二层断言）。
+   反向验证：pgstore 与内存实现各摘判定 → 场景当场变红。
+顺带：sidetest 29 → 33 条（README 包表 / Run 注释 / pgstore README 同步）；
+新哨兵三个登记 docs/error-semantics.md（apilifecheck 口径）；
+reference-runtime 的 effect_store.go 拆出 effect_resolve.go（463 → 368/80，
+结构阈值 400）；README 工程底座 36,156 行 / 194 文件 / 224 测试文件。
+契约影响（下游，发版批记入 README「下游升级须知」）：
+- sidetest 新场景对所有 Store 实现硬失败（跳过 = 假绿）——实现宿主要
+  补身份判定、过期 Renew 拒绝、OwnedResolveStore 才能过套件；
+- 全部新增导出（哨兵/接口/HashPayload）为 additive，不破坏编译。
+验收：make check exit 0（fmt/vet/lint/test/cover-gate/vuln/race/
+crossbuild/archcheck/docsync/apilifecheck/卫生）；make integration
+（真实 PostgreSQL 16，33 场景 + SIGKILL e2e + 跨进程快照）全绿。
+
+### 新增(metrics)：指标契约面——五类运营量的名称/类型/维度/基数上界单一来源（issue #100）
+
+- metrics 包：Specs 登记表（先登记再埋点）+ Recorder 投递接缝（缺省 Nop，
+  SetDefault 装配，宿主实现编码与投递——内核不接任何遥测 SDK）+
+  Mem 进程内参考实现（宿主测试断言埋点真的响了）
+- 与 trajectory 同源纪律：duration 只记实测（AttrDurationMs 同口径，自校验
+  逐字比对行类目）；无界键进禁区标签（session_id/run_id/幂等键）
+- retry.path 与 retryplan.Path 逐字比对，两份枚举各自长大当场红
+- 接入点清单 ACCESS-POINTS.md：每个量在哪个包哪个函数上埋、埋什么值
+- Validate 把越界取值/禁区键/未登记名拦在测试期（这类错生产里静默）
+- 登记：api-lifecycle / policy modules+scan_roots / README 表 / USAGE 口径 /
+  error-semantics 哨兵表
+Fixes #100 的规范文档与契约面部分
+
+### 修复(coord)：StoreAdapter 补齐 sidetest 三条契约——过期拒续期 / OwnedResolveStore / 对账 TTL 判据
+
+coord 的 StoreAdapter 接入 sidetest 契约套件后卡 3 条，判据是权威、逐条修实现：
+1. renew_after_expiry_rejected：Renew 在三项联查之后补「过期即资格终止」
+   判定（!rr.Until.After(now) → ErrFenceStale）。此前只查令牌/持有者/意图
+   归属，租约过期而无人接管时令牌没变、身份没变，旧持有者一续就把已过期
+   的尝试续活——绕开「过期 → 结果未知先对账」。判定在写入之前，被拒的
+   续期不留任何状态（后续 Acquire 仍走 uncertain 路径）。
+2. owned_resolve_requires_valid_holder：实现 sideeffect.OwnedResolveStore——
+   新增 ResolveUncertainOwned（holder 为空 / 非当前有效对账占用 →
+   ErrReconcileLost，不改任何状态），裁决主体抽成 resolveWithin 与简化
+   入口共用；已完成的重放先于凭据校验（读既有事实不问资格）。配编译期
+   接口断言 var _ sideeffect.OwnedResolveStore。
+3. reconile_ttl_must_be_positive：BeginReconcile 入参先行判 ttl <= 0 →
+   ErrInvalidTTL（零/负 TTL 是出生即过期的认领，等于没有占用），拒了
+   不碰状态，后续正常认领照常成功。
+同批收编评审第三轮动作身份半成品（record.go 的 actRec 身份字段 +
+registerIdentity/identityErr，Acquire/Complete 判定先于重放），并清掉
+origin/main 上已有的 apilifecheck 欠账（cost/tenant/controlplane 12 个
+哨兵登记进 docs/error-semantics.md、生命周期清单 57 口径两处同步）——
+CI check job 跑 make check，欠账不清 PR 不可能绿。
+验证：go build/vet ./... 绿；契约套件 34 条全过（含新增 3 条）；
+coord/worker/scheduling 测试 + -race 全绿；make architecture-check /
+docsync / apilifecheck / cover-gate / crossbuild / fmt-check 全绿；
+golangci-lint 0 issues；gofmt coord/ 无输出。
+
+### 修复(policy)：补登记 metrics/cost/tenant/controlplane 四包（modules + scan_roots + USAGE 49→53）
+
+#143 解冲突时 policy 登记被 --theirs 覆盖丢失（architecture-check 报
+module_unregistered）。按各包实际 import 写 requires：metrics→retryplan/trajectory、
+tenant→cost、controlplane→contract/sideeffect/taskboard/tenant，均含 ext:oekit/pkg。
+
+### 重构：仓级垫片清仓——commitgate 旧三元组接口/SwapRecord.Seq/五门面包/cmdpolicy.Split
+
+- commitgate: 删 Guard.Commit/Guard.Release（(status,branch,seq) 三元组认人，
+  同名并行分支/重试同快照下迟到 Release 放掉别人的闸——实测 8 路并发 4 赢家）；
+  一并删 Store.ReleaseTriple 接缝与其实现（只为旧 Release 存在）。Acquire/
+  ReleaseLease 已就位，消费方（examples/reference-runtime、store_test、
+  commitgate_test、lease_test）全量迁移；TestLegacyReleaseRequiresStatusMatch
+  随旧接口删除
+- guardset: 删 SwapRecord.Seq 兼容字段（与 Generation 同一计数，v0.9.0 兼容面）；
+  构造处与 assembly_test/assembly_sub_test 改读 Generation
+- 删五个门面包（转发 oagentkit 真身）：dispatch/toolfail 仓内零消费直接删；
+  reminder→guardx/injectband（sessionref）、policy→toolgate/policy（preset）、
+  sandbox→guardx/sandbox（ptc/preset/egress/backend/examples/containerbackend）
+  消费方全部直连上游 import；architecture-policy.yaml 删 5 个 modules 条目、
+  facades 段置空（规则保留）、scan_roots 同步；api-lifecycle.yaml 删 5 个门面包
+  定级；README 包表/工程底座/边界表、docs/USAGE.md、docs/api-compat.md 口径同步
+- cmdpolicy: 删导出 Split 转发（裸分词直连 oekit/pkg/shellx.Split）；
+  哨兵包装逻辑内化为 split() 供 SplitCommands/DecideCommand，SplitCommands
+  真逻辑保留；分词口径用例随转发壳删除（上游仓自带契约用例）
+**下游要做什么（BREAKING）**：
+1. guard.Commit(c) → lease, err := guard.Acquire(c)（忽略凭证即旧行为）；
+   guard.Release(c) → guard.ReleaseLease(lease)（落库失败回滚处先留好 lease）；
+   自定义 Store 实现删 ReleaseTriple 方法（接口已收缩）
+2. rec.Seq → rec.Generation（同一计数）
+3. 门面包 import 改直连：
+   goagent-kernel/dispatch → oagentkit/agent/dispatch
+   goagent-kernel/policy → oagentkit/toolgate/policy（WithAuditGate→AuditGate、
+   LoadOverrides 显式传 "_shared/operation_policy.yaml" 路径）
+   goagent-kernel/reminder → oagentkit/guardx/injectband（Wrap/SanitizeBody 同名）
+   goagent-kernel/toolfail → oagentkit/guardx/toolfail（符号同名）
+   goagent-kernel/sandbox → oagentkit/guardx/sandbox（符号同名）
+4. cmdpolicy.Split(cmdline) → shellx.Split(cmdline)（需判本包哨兵改用
+   SplitCommands/DecideCommand 的失败路径）
+
+- bench：五处判据层性能基线（issue #101）
+
+- PTC 主体（进程内 goja + 判定环，calls=1/10/50 三档）、GuardSet（8 守卫
+  allow/deny/New）、Checkpoint（SeqGate + Committer，100 步快照）、
+  TaskBoard（Check 200 任务 DAG + 单链）、SideEffect（全新 Key 授予路径）
+- 全部 b.Loop 形态；数据规模写进各文件头注
+- docs/BENCH-BASELINE-20261113.md：基线数字入库，机器口径（M6/go1.27.4/
+  CGO_ENABLED=0）与规模同表；allocs/op 是判据（跨机器可比），ns/op 是参照
+  （±30% 噪声带）；演进纪律：换口径整表重录，不许逐格补丁
+- make bench 独立目标（随 Makefile 提交），不在 check——基线是记录不是门禁
+
+
+- 杂务(deps)：oekit/pkg 地板 v0.47.1 → v0.48.0——仓级垫片清仓的地板前置
+
+**下游要做什么**：随本版升级后 go.mod 需 go mod tidy（地板抬高，
+报错只说 updates to go.mod needed）。v0.48.0 内容以 oekit 仓发布说明为准。
+
+- 杂务(deps)：oekit/pkg 地板 v0.44 → v0.47.1——解除 Errorf 钉回（#126 #134）
+
+pkg v0.45.0 删 errors.Errorf 时本仓钉回 v0.44；上游已恢复为 Deprecated
+兼容层（v0.47.0），地板追到 v0.47.1。delegate/egress 等 Errorf 用点在
+v0.47.x 下恢复可编译，「与 pkg ≥v0.45 组合编译断」解除；AGENTS.md 规则一
+白名单（oekiterrors.Errorf）与上游口径重新一致，无需迁移改写。
+
+
+- CI：测试五层分层——Makefile 分层 target + CI workflow 分 job（issue #102）
+
+- Makefile 新增 unit / contract / fault-injection / gates / bench 分层目标：
+  本地允许只跑一层；unit 用 -skip '^TestFault' 显式排除故障注入（那里有
+  自己的层），跳过一律写明理由，没有静默
+- ci.yml 从单条 check 链拆成七 job：unit / race / contract / fault-injection /
+  gates（cover-gate+crossbuild+vuln+versioncheck）/ windows / integration，
+  每层独立红绿、独立 timeout-minutes、触发条件与跳过政策逐层写在头注
+- 门禁本体仍在 Makefile（check 聚合不变，CI 只是执行分层 target）——
+  本仓「推送后门禁不是门禁」的既有纪律不破
+- job 名全部 ≤90 字节（cijobname 门禁验证过）；合并前同步分支保护
+  required contexts（旧 check job 名退役）
+- versioncheck 交叉判据继续成立：golangci-lint v2.14.0 / govulncheck v1.7.0
+
+
+- 文档(readme)：#145 接缝后重算包表行数与工程底座（docsync 判相等三项）
+
+- 包表：ticket 203→329、commitgate 328→479、eventbus 377→471（容差内也一并
+  更新到实测），三行描述补接缝口径；
+- 工程底座：43,547→43,870 行、241→243 文件、测试 250→253（git archive 干净树
+  实测——本地 @w*/gak-rescue worktree 目录会污染 find 口径，以干净树为准）。
+
+- 文档(api-compat)：清单登记数 57→58（lifecycle 并集后 +metrics Experimental）
+- 文档(readme)：底座按 #142+#146 叠加后实测重算（43547/241/250）
+- 文档(readme)：工程底座基线数按 docsync 实测修正（38430 行）
+- 文档(readme)：工程底座表随 origin/main 合入重算（37,685 行 / 204 文件 / 229 个测试文件，docsync 门禁）
+- 文档(readme)：工程底座与 archcheck 行计数修正（底座是确定性量判相等）
+
+- 格式(metrics)：gofmt——注释表格缩进与结构体对齐（接 #100）
+
+## [v0.34.1] — 2026-11-13
 
 ### 重构(errors)：全仓 errors.Errorf → fmt.Errorf——解除 oekit/pkg 钉回的本仓侧前置
 
@@ -3386,7 +3710,7 @@ golangci-lint ✅ 0 issues
 
 - 文档(overlap)：复核并更正 §四 的结论——补完整映射表，删掉一句不实断言
 
-上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一上下文窗口在两处算出两个
+上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一个上下文窗口在两处算出两个
 阈值」。**实测评数值后该断言不成立**，本轮更正。
 ## 断言错在哪
 1. **对照方式本身错了**：拿上游 `EffectiveWindow()`（纯窗口口径：窗口−预留）与
