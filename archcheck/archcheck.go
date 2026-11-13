@@ -89,6 +89,11 @@ type Result struct {
 	ThresholdEnforced bool
 	// Rules 是报告顺序下的规则清单。
 	Rules []RuleInfo
+
+	// TypeAwarePackages 类型感知严格档（RunOptions.TypeAware）实际类型检查的
+	// 包数；0 = 未启用。它是「严格档真的跑了」的凭据——开关开着而本仓有包
+	// 目录却计到 0 的形态，RunWithOptions 已显式报错（类型解析失败 ≠ 无违规）。
+	TypeAwarePackages int
 	// Exceptions 是 policy 登记的例外清单（回显用，让债是显式的）。
 	Exceptions []Exception
 
@@ -119,7 +124,25 @@ type ReportOptions struct {
 //
 // 返回 error 表示门禁**给不出结论**（policy 解析失败、源码解析失败、声明自相矛盾）——
 // 调用方必须据此非零退出，绝不能当成「无违反」继续。
+// RunOptions Run 的可选开关。
+type RunOptions struct {
+	// TypeAware 开类型感知严格档（go/packages + go/types，issue #103）：
+	// 覆盖赋值形态里 AST 追踪静态不可溯的盲区（函数返回值 / 接口断言 /
+	// 深层容器流转）。代价是整仓类型检查（慢一个量级），故是 opt-in 档；
+	// 类型解析失败显式报错，绝不当作无违规放行（unmanaged_gotypes.go）。
+	TypeAware bool
+}
+
+// Run 对 root 执行全套门禁（默认档，不开类型感知严格档）。
 func Run(root string, pol *Policy) (*Result, error) {
+	return RunWithOptions(root, pol, RunOptions{})
+}
+
+// RunWithOptions 对 root 执行全套门禁，opts 控制可选档。
+//
+// 返回 error 表示门禁**给不出结论**（policy 解析失败、源码解析失败、声明自相矛盾、
+// 严格档类型解析失败）——调用方必须据此非零退出，绝不能当成「无违反」继续。
+func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) {
 	if pol == nil {
 		return nil, fmt.Errorf("policy 为空")
 	}
@@ -192,6 +215,14 @@ func Run(root string, pol *Policy) (*Result, error) {
 	vs, err := unmanagedEscapeViolations(root)
 	if err != nil {
 		return nil, err
+	}
+	if opts.TypeAware {
+		tv, checked, err := typeAwareViolations(root)
+		if err != nil {
+			return nil, err
+		}
+		vs = dedupUnmanagedEscape(append(vs, tv...))
+		res.TypeAwarePackages = checked
 	}
 	res.Violations = append(res.Violations, vs...)
 

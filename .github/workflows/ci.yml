@@ -1,13 +1,37 @@
 name: ci
 
-# 门禁的检出能力由 CI 持续保证：本地跑不动 make check 不等于合规，
-# 反向验证样本也不该常驻仓里（见 .gitignore 的说明段）。
+# 测试分层（issue #102）：unit / race / contract / fault-injection / integration
+# 五层各自成 job，加上静态门禁聚合（gates）与 windows 真跑，共七个。
 #
-# 门禁本体**全部在 make check 里**，CI 只是执行它。这不是偷懒，是刻意的：
-# 门禁若只挂在 ci.yml 上，本地开发者要到推送之后才知道自己违规——那就不是
-# 「提交前门禁」而是「推送后门禁」了。仓库卫生门禁（go.mod 不得含 replace /
-# go.work 不得入库 / README 包表一致）原先正是在 ci.yml 里，现已一并搬进
-# make check，规则与理由见 Makefile 对应 target。
+# 分层的理由不是审美：五层混在一条链里时，「哪个层红了」要靠读日志——race
+# 的一次抖动会淹没故障注入的信号，反之亦然。每层独立红绿、独立超时、独立
+# 触发条件，失败的就是失败的层。
+#
+# # 触发条件（逐层写明，不是省略）
+#
+# 七个 job 同一条触发面：PR 与 push main。刻意**不用** paths 过滤——required
+# context 的 job 被 paths 过滤成 skip 时会永远停在 Expected，把合并卡死
+# （这是 ci job 名截断教训的姊妹形态：保护规则与 workflow 的匹配必须全量）。
+# windows / integration 带环境成本，但它们判的是「换个底座还跑得对吗」
+# 「跨进程契约在真 PG 上成立吗」——恰恰是只有推送时才说话的门禁，不省。
+#
+# # 跳过政策（跳过必须显式，不许静默）
+#
+#   - unit / contract / fault-injection：无环境依赖，任何 runner 上直接跑，不跳。
+#   - race：Linux 上 -race 要求 cgo（Makefile RACE_ENV=CGO_ENABLED=1 处理）；
+#     runner 自带 gcc，缺编译器会**明确变红**而不是静默跳过。
+#   - integration：判据要真连数据库。CI 用 postgres service container 每次
+#     推送必跑；本地等价入口 `make integration` 无 docker 时**明确报错**
+#     （不静默跳过），指向已有实例的覆盖写法见 Makefile。
+#   - 门禁本体仍全部在 Makefile 的分层 target 里（unit / race / contract /
+#     fault-injection / gates / integration / check），CI 只是执行它——
+#     本仓既有纪律：推送后才说话的是「推送后门禁」，故规则本体不写在本文件。
+#
+# # job 名纪律
+#
+# 名字 ≤ 90 字节（GitHub 超 100 字节会截断 ⇒ 分支保护的 required context
+# 永远匹配不上 ⇒ 每个 PR 卡 BLOCKED）。长度门禁见 Makefile 的 cijobname；
+# 改名必须**同步**更新分支保护的 required contexts（逐字相同）。
 on:
   push:
     branches: [main]
@@ -18,14 +42,116 @@ permissions:
   contents: read
 
 jobs:
+  # ── unit 层：静态门禁 + 全量单测（故障注入显式排除，那里有自己的层）──
+  # 快速路径：fmt / vet / lint / 单测 / 架构门禁 / 文档一致性 / 仓库卫生。
+  unit:
+    name: unit（fmt+vet+lint+test+archcheck+docsync+卫生）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 只负责把二进制装进 PATH，**不在本 step 里跑 lint**——规则本体在
+      # Makefile 的 lint target（已接进 make unit / make check）。
+      # 版本钉 v2.14.0：与 Makefile LINT_VERSION 一致（versioncheck 判）。
+      - name: 安装 golangci-lint（make unit 的 lint 门禁需要）
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.14.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/golangci-lint" --version
+
+      - name: make unit
+        run: make unit
+
+  # ── race 层：全仓竞态检测（开 cgo）──
+  # 竞态是本类内核最贵的一类缺陷（代次/闸/共享 map 都在并发路径上，失效形态
+  # 是「偶尔给错答案」，单线程用例永远绿）。独立成层：它比单测慢一个量级，
+  # 混在快速路径里会鼓励人跳过它。
+  race:
+    name: race（竞态检测，CGO_ENABLED=1）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: make race
+        run: make race
+
+  # ── contract 层：共享契约套件自测（sidetest / boardtest）──
+  # 判「判据自身没坏」：宿主实现把套件接进去跑之前，先知道套件是绿的。
+  # 环境依赖：无（硬失败不静默跳过的套件纪律不变）。
+  contract:
+    name: contract（sidetest+boardtest 契约套件）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: make contract
+        run: make contract
+
+  # ── fault-injection 层：故障注入矩阵 ──
+  # 注入用例构造「坏实现必红」的对照形态；独立成层让它的红不被大批绿灯淹没。
+  # 环境依赖：无（注入的都是进程内故障：写失败、序号冲突、恢复中断）。
+  fault-injection:
+    name: fault-injection（故障注入矩阵）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: make fault-injection
+        run: make fault-injection
+
+  # ── gates 层：与测试正交的静态门禁聚合 ──
+  # cover-gate（覆盖率阈值）/ crossbuild（交叉构建矩阵）/ vuln（漏洞扫描）/
+  # versioncheck（门禁工具版本口径）。它们不是测试层，是门禁——但同样要独立
+  # 红绿：覆盖率塌方不该被 race 的抖动盖住。
+  gates:
+    name: gates（cover-gate+crossbuild+vuln+versioncheck）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 同 unit 的分工：这里只装二进制，判定在 Makefile 的 vuln target 里。
+      # 版本与 Makefile 的 GOVULNCHECK_VERSION 保持一致（versioncheck 交叉判）。
+      - name: 安装 govulncheck（gates 层的 vuln 门禁需要）
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/govulncheck" -version
+
+      - name: make gates（cover-gate + crossbuild + vuln + versioncheck）
+        run: make gates
+
   # windows job 真跑测试（issue #34 建议 1）：交叉构建只能证明编得过，
   # procx 这类进程原语要证明跑得对必须真执行。范围全仓——unix 专属用例
   # 以 //go:build unix 守卫（与上游 procx 的做法一致），windows 侧用例
   # 用 cmd 形态的夹具。runner 用 windows-latest（无钉死 major.minor 的
-  # 镜像迁移公告，若有按 check job 的口径另行钉死）。
+  # 镜像迁移公告，若有按 unit job 的口径另行钉死）。
   windows-test:
     name: windows (真跑测试)
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -35,73 +161,15 @@ jobs:
       - run: go build ./...
       - run: go test ./... -count=1
 
-  check:
-    # job 名不得超长：GitHub 会截断超 100 字节的名字，于是分支保护的
-    # required context 永远匹配不上 ⇒ 每个 PR 都卡在 BLOCKED 且看不出原因。
-    # 长度门禁见 Makefile 的 cijobname 目标；改这个名要同步改分支保护。
-    name: check（fmt+vet+lint+test+cover-gate+vuln+race+crossbuild+archcheck+卫生）
+  # ── integration 层：PG 参考实现的共享契约套件 + SIGKILL 故障恢复 e2e ──
+  # （issue #94 #95 #105）。判据要真的连数据库：check/unit 必须在任何机器上
+  # 一条命令可跑（无 docker 也要绿），而这里的判据不因此变弱——套件场景级
+  # 硬失败不静默跳过；service container 保证 CI 每次推送都真跑。
+  # 本地等价入口：make integration / compose 的 verify profile。
+  integration:
+    name: integration（PG 契约套件 + SIGKILL e2e）
     runs-on: ubuntu-24.04
-    # 为什么钉死不用 ubuntu-latest：GitHub 公告该标签自 2026-10-19 起迁移到
-    # Ubuntu 26，迁移后 runner 镜像的 Go/工具链环境可能与本机不同——门禁在
-    # 「与开发者不同的镜像」上跑，绿灯的可信度要打折。钉死 major.minor 让
-    # 迁移变成一次显式的、可 review 的升版动作，而不是某天突然换底座。
-    # 升级动作：同时改本行与本仓需要的 Go 版本验证。
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          # 版本跟随 go.mod 的 go 指令，避免两处各写一份然后悄悄漂移。
-          go-version-file: go.mod
-          cache: true
-
-      # 只负责把二进制装进 PATH，**不在本 step 里跑 lint**——
-      # 规则本体在 Makefile 的 lint target 里（已接进 make check）。
-      # 在这里再跑一遍就是「门禁本体在 ci.yml」，与本文件开头写的那条相反。
-      #
-      # 版本钉 v2.14.0：与本地验证过的版本一致。本机装的是 v2.15.0 时，
-      # CI 与本地可能出现不同的判定结果——那种差异应该在升级本行时
-      # 显式发生，而不是随某台机器的 brew upgrade 悄悄发生。
-      #
-      # ⚠️ 若将来升级 go.mod 时上游发生过 tag 重写（oagentkit/oekit 的
-      # 历史标签被移动或删除），必须先清本仓的 setup-go 缓存再推，
-      # 否则 restore-keys 前缀回退会恢复重写前的模块副本，报
-      # checksum mismatch 而本地全绿。详见 README 提交前检查段。
-      - name: 安装 golangci-lint（make check 的 lint 门禁需要）
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-            | sh -s -- -b "$(go env GOPATH)/bin" v2.14.0
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          "$(go env GOPATH)/bin/golangci-lint" --version
-
-      # 同 lint 的分工：这里只装二进制，判定在 Makefile 的 vuln target 里。
-      # 版本与 Makefile 的 GOVULNCHECK_VERSION 保持一致（两处各写一份，改一处要
-      # 同时改另一处——门禁的值写死在两处会漂，但把版本塞进 Makefile 再让
-      # ci.yml 读它，会让「装什么版本」变成 shell 解析 Makefile 的脆弱动作）。
-      - name: 安装 govulncheck（make check 的 vuln 门禁需要）
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          "$(go env GOPATH)/bin/govulncheck" -version
-
-      # Makefile 已内置 CGO_ENABLED=0；Linux 上同样适用，不覆盖。
-      #
-      # 唯一例外是 race 目标：Linux 上 `-race requires cgo`（实测），故它在
-      # Makefile 里单独用 RACE_ENV=CGO_ENABLED=1。ubuntu runner 自带 gcc，
-      # 无需额外安装；若某天镜像去掉编译器，这条门禁会**明确变红**而不是
-      # 静默跳过——这正是要的形态。
-      - name: make check
-        run: make check
-
-  # PG 参考实现的 integration 层（issue #94 #95）：共享契约套件
-  # （sidetest / boardtest / 栅栏套件）+ SIGKILL 故障恢复 e2e 在真实
-  # PostgreSQL 上跑。为什么是独立 job 而不是塞进 make check：check 必须在
-  # 任何机器上一条命令可跑（不依赖 docker），而这里的判据要真的连数据库。
-  # 判据强度不变——套件场景级硬失败不静默跳过；service container 保证
-  # CI 每次推送都真跑（本地等价入口：make integration / compose verify profile）。
-  integration-pg:
-    name: PG 契约套件 + SIGKILL e2e（postgres service）
-    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine

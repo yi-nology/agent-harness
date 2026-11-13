@@ -95,8 +95,12 @@ GOVULNCHECK_VERSION := v1.7.0
 # 后用它；指向已有实例时直接覆盖（PGREF_DSN=... make integration）。
 PGREF_DSN := postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
 COMPOSE   := docker compose -f examples/docker-compose.yml
+# 性能基线五包（issue #101）：基线是记录不是提交前门禁，bench 目标不在 check 里。
+# 数字口径与演进纪律见 docs/BENCH-BASELINE-20261113.md。
+BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
+BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race cover cover-gate vuln crossbuild versioncheck architecture-check docsync integration site check tidy devlink devunlink clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync integration bench site check tidy devlink devunlink clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -267,6 +271,12 @@ crossbuild: ## 交叉构建矩阵（声明支持的平台必须真的编得过�
 architecture-check: ## 架构治理门禁（域词污染红线 + 依赖方向）
 	$(EXPORT) $(GOENV) go run ./cmd/archcheck $(if $(findstring --report,$(MAKECMDGOALS)),--report,)
 
+# 严格档是**可选档**（issue #103）：整仓类型检查慢一个量级，opt-in 不进 check。
+# 「可选」不等于「可静默」：类型解析失败显式报错（退出码 2），开着却没跑过
+# 会在报告里以包数凭据显形。
+architecture-check-types: ## 架构门禁严格档（go/types 类型感知：覆盖赋值形态盲区，慢，opt-in）
+	$(EXPORT) $(GOENV) go run ./cmd/archcheck -types $(if $(findstring --report,$(MAKECMDGOALS)),--report,)
+
 # ── integration 层（issue #94 #95 #105）──────────────────────────────
 #
 # 为什么不在 check 里：check 必须在任何机器上一条命令可跑（无 docker 也要绿），
@@ -289,6 +299,47 @@ integration: ## PG 契约套件 + SIGKILL e2e（compose 起 PostgreSQL；起不�
 	$(COMPOSE) down >/dev/null 2>&1 || true; \
 	if [ $$status -ne 0 ]; then echo "PG 契约套件 / SIGKILL e2e 未通过（见上方输出）"; exit 1; fi; \
 	echo "PG 契约套件 + SIGKILL e2e ✓（sidetest/boardtest/栅栏套件 + 故障恢复）"
+
+# ── 测试分层（issue #102）────────────────────────────────────────────
+#
+# check 是「提交前必须全绿」的聚合（门禁本体全在这里），但本地与 CI 都需要
+# **只跑一层**的入口：本地反馈要快（改一个包不必等全仓竞态），CI 分 job 要
+# 每层独立给信号（race 红不该把故障注入的信号一起淹没——混在一条链里时
+# 「哪个层红了」要靠读日志，拆开后失败的就是失败的层）。
+#
+# 五层与 ci.yml 的 job 一一对应（unit / race / contract / integration /
+# fault-injection）。跳过一律显式：unit 层用 -skip 排除故障注入（那里有自己的
+# 层），集成层无 docker 时明确报错（见 integration）——没有静默跳过。
+#
+# unit：静态门禁 + 全量单测（排除故障注入）。快速路径——fmt / vet / lint /
+# 单测一条命令跑完，本地改完代码先跑它。
+unit: fmt-check vet lint
+	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault'
+	$(MAKE) --no-print-directory architecture-check docsync apilifecheck modreplace modwork cijobname
+
+# contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享
+# 契约套件本身是绿的」——宿主实现跑套件前先知道判据自身没坏。
+contract:
+	$(EXPORT) $(GOENV) go test ./sidetest/... ./taskboard/boardtest/... -count=1
+	@echo "契约套件自测 ✓（sidetest + boardtest）"
+
+# fault-injection：故障注入层（checkpoint 的注入矩阵 + ptc 的注入场景）。
+# -run '^TestFault' 只跑注入用例：这类用例构造的是「坏实现必红」的对照形态，
+# 与普通单测分开成层，是为了它红的时候信号不被大批绿灯淹没。
+# -v 让每个注入场景的失败形态直接可见（这类用例的红就是它们的文档）。
+fault-injection:
+	$(EXPORT) $(GOENV) go test ./... -count=1 -run '^TestFault' -v
+	@echo "故障注入层 ✓（TestFault* 全过）"
+
+# gates：与测试正交的静态门禁聚合（CI 的 gates 层与本地复跑的等价入口）。
+# 它们不是测试层——覆盖率阈值 / 交叉构建矩阵 / 漏洞扫描 / 工具版本口径，
+# 但同样要独立红绿：覆盖率塌方不该被 race 的抖动盖住。
+gates: versioncheck cover-gate vuln crossbuild
+	@echo "静态门禁聚合 ✓（versioncheck + cover-gate + vuln + crossbuild）"
+
+bench: ## 性能基线复跑（issue #101；独立目标，不在 check——基线是记录不是门禁）
+	$(EXPORT) $(GOENV) go test -run '^$$' -bench '$(BENCH_PATTERN)' -benchmem -count=1 $(BENCH_PKGS)
+	@echo "基线数字与口径见 docs/BENCH-BASELINE-20261113.md（allocs/op 是判据，ns/op 是参照）"
 
 docsync: ## README 包表 ↔ 仓库实际（生产行数 / 外部依赖）一致性门禁
 	$(EXPORT) $(GOENV) go run ./cmd/docsync
