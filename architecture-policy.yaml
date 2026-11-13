@@ -41,6 +41,29 @@ modules:
       该味**只存在于字段注释与格式约定**，不引入任何领域词表或判定逻辑——
       字段本身是通用字符串。域约束应落在宿主的 prompt/包声明里，不落进本包代码。
 
+
+
+  - id: cost
+    roots: [cost]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: 运行成本治理口径面（issue #112）：任务级成本的计量单位/归集键/预算档单一来源，纯口径无外部投递
+
+  - id: tenant
+    roots: [tenant]
+    requires: [cost, "ext:github.com/oekit/pkg"] # 配额判据引用 cost 的预算档口径
+    owner: harness
+    managed: true
+    notes: 多租户判据面（issue #114）：隔离/配额/权限上下文的声明与判定纯函数，判据与执行分离
+
+  - id: controlplane
+    roots: [controlplane]
+    requires: [contract, sideeffect, taskboard, tenant, "ext:github.com/oekit/pkg"] # 介入契约引用编排/副作用/任务板/租户四面
+    owner: harness
+    managed: true
+    notes: 控制平面接口面（issue #115）：任务查看/运行状态/失败诊断/人工介入四类操作契约，纯接口零实现，介入走令牌授权
+
   - id: statemachine
     roots: [statemachine]
     requires: []
@@ -766,6 +789,73 @@ modules:
       且排序确定；Assess 是纯函数评估判据（收口/配对/重复/期望/禁止五个判项，
       零判项显式拒绝——「没有检查」与「检查通过」必须分得开）。
 
+  # ── 2026-11-13 新增（issue #106 #107 #108，清零战役 Y1b1）─────────────
+  #
+  # 三个新机制包 + 一个示例子包，登记先于代码（声明先行）。
+  #
+  # coord（issue #107）：分布式协调后端的**适配形态约定**。协调契约
+  # （sideeffect.Store / taskboard.Board）此前只有 PostgreSQL 一种参考适配
+  # （pgrefstore）——「后端不止一种，且形态有约定」那一半是空的。本包把
+  # 「一次原子操作 / 条件更新 / CAS 循环」收成代码级约定（Backend 三原语），
+  # Board/Store 的全部判定逻辑落成原语之上的**单份适配器**：宿主接新后端
+  # 的工作量从「重写 29 条契约语义」缩成「实现三个原语 + 让它们真的原子」。
+  # 内存后端是测试保底（单进程，不得上生产——边界刻在类型文档里）。
+  #
+  # worker（issue #106）：Worker Runtime 的生命周期契约与驱动。delegate/
+  # taskboard 都不含「执行子任务的 worker 自己怎么活」——注册/心跳/领取/
+  # 续期/恢复/优雅退出此前各宿主各写一套。心跳接 RenewingBoard.Renew
+  # （续期是资格检查，租约易主即取消在途——危险窗口在施加之前封口）；
+  # 参考实现与注册表的参考落库在 examples/worker-runtime（不进内核依赖面，
+  # issue #106 的边界声明）。
+  #
+  # scheduling（issue #108）：Agent 调度的**判据面**（优先级/公平/配额/背压）。
+  # 归属结论见 docs/adr/ADR-0008（证据：上游 oagentkit/agent/dispatch 的全部
+  # 判定面是 allow 矩阵 + 深度 + 自派发，四样判据上游确实没有）；本包不实现
+  # 队列、不判可达性——与 dispatch 门面正交，不与上游并存第二份实现。
+  - id: coord
+    roots: [coord]
+    requires: [sideeffect, taskboard, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      协调后端适配形态约定（Backend 三原语 + Board/Store 单份适配器 + 原子性
+      边界文档）。判定逻辑归本包，跨进程原子性归宿主的后端实现——内存后端
+      只垫在判定逻辑与契约套件之间（boardtest/sidetest 在适配器上真跑），
+      不得上生产。
+
+  - id: worker
+    roots: [worker]
+    requires: [taskboard, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      Worker 生命周期契约（Registry 注册/心跳/注销）与驱动（Loop 六段生命周期）。
+      心跳与续期接 taskboard 的租约续期（Renew = 资格检查不是心跳摆设）；
+      恢复（Recover）判资格不判时钟——过期判定归任务板侧，不建第二套时钟判据。
+      注册表的参考实现放 examples/worker-runtime（issue #106 边界）。
+
+  - id: scheduling
+    roots: [scheduling]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      Agent 调度判据面：优先级排序（确定性平局裁决）、加权公平份额、
+      资源配额账本（账平判据：整单占用 / 超释放拒）、背压裁决（拒绝必须带
+      机器可判的原因）。纯函数面，不做队列不做执行；可达性/深度归 dispatch
+      门面（ADR-0008 的归属结论）。
+
+  - id: worker-runtime-ref
+    roots: [examples/worker-runtime]
+    requires: [coord, taskboard, worker, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      Worker 生命周期的参考实现（package main，issue #106）：内存注册表 +
+      coord 任务板 + Loop 全生命周期端到端演示（含崩溃恢复接管）。它是
+      **示例**不是能力包——机制面在 worker/coord/taskboard，本目录只演示
+      怎么接线；注册表落库归宿主的跨进程存储。
+
 # ── 可执行规则 ──
 rules:
   # 规则一（拆分后的头号红线）：harness 不得出现领域词。
@@ -1365,7 +1455,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
