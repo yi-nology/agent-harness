@@ -54,9 +54,9 @@
 2. **展示文案归宿主。** 标题、兜底、品牌词一律走 `RenderOptions` 注入。
 3. **测试夹具用合成数据。** 夹具是契约的示例，示例带领域味等于把契约钉死在某个领域上。
 
-### 1.3 41 个包分五组（另有 `taskboard/boardtest` 一个子包）
+### 1.3 44 个包分五组（另有 `taskboard/boardtest` 一个子包）
 
-> 口径：与 README 包表（41 行，`make docsync` 判）逐行对齐；policy `modules` 段登记 **43 个**
+> 口径：与 README 包表（44 行，`make docsync` 判）逐行对齐；policy `modules` 段登记 **48 个**
 > 包目录（多出来的那个是 `taskboard/boardtest`，它计在 `taskboard` 行内）。
 > 上一版此表写「29 个包 / 门面 3 个」，与实际差在两处：`toolfail` / `sandbox` 早已转入
 > 门面（门面共 5 个），而 `trajectory` / `ticket` 漏登记。
@@ -92,7 +92,7 @@
 |---|---|---|---|
 | 1 | [README](../README.md) 的「边界」与「包清单」两节 | 3 min | 哪个包管什么事 |
 | 2 | [AGENTS.md](../AGENTS.md) 的「边界纪律」+「工程门禁」 | 5 min | 什么不能做、什么会红 |
-| 3 | `architecture-policy.yaml` 的 `modules` 段（43 个 id + requires） | 2 min | 哪个包能依赖哪个 |
+| 3 | `architecture-policy.yaml` 的 `modules` 段（48 个 id + requires） | 2 min | 哪个包能依赖哪个 |
 | 4 | 你要动的那一个包的包头注释 | 3 min | 这个包为什么长这样 |
 | 5 | 那个包的 `_test.go` | — | 契约的实际形状（比注释准） |
 
@@ -403,7 +403,7 @@ make check
 
 ### 4.1 架构门禁的规则表
 
-> **条数口径**：`make architecture-check` 打印的是「8 条规则 + 5 个门面包 + 43 个包的
+> **条数口径**：`make architecture-check` 打印的是「8 条规则 + 5 个门面包 + 48 个包的
 > 依赖方向」——「8 条」指 policy `rules` 段的条目数，**不含**用 `go/ast` 判的 5 条结构规则
 > （门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口**）+ 1 条 policy 自校验。
 > 下表把两类都列出来，故行数比「8 条」多。**别再按表的行数改「N 条规则」那句话**：
