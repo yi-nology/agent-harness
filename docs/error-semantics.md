@@ -39,6 +39,18 @@
 | `ErrPlanInconsistent` | 计划字段互不自洽（非 BuildPlan 产物） | 修声明：计划只能由 BuildPlan 造，手搓矛盾字段一律拒绝 |
 | `ErrNotWired` | 归档/摘要接口未装配 | 修声明：装配宿主接口后再压实 |
 
+### backend
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrNotSatisfied` | 要求未被该后端满足（隔离不够强 / 出站档低于要求 / 自报兜不住预算） | 换后端或降要求；报错文案带两侧值，重试无意义 |
+| `ErrNoBackend` | 登记簿里没有能满足要求的后端 | **绝不降级**：补登记能满足的后端，或改要求；重试无意义 |
+| `ErrBadSpec` | 要求自身不合法（越界档位 / 负预算） | 修声明：改调用方参数 |
+| `ErrSilent` | 后端未声明该能力面（沉默按最弱处理） | 补声明或换后端——「没声明」与「声明了但不够强」修法不同，两类报错分得开 |
+| `ErrDuplicateID` | 同一 ID 被登记两次 | 修声明：登记簿去重 |
+| `ErrBadBackend` | 登记的后端不合法（nil / 空 ID） | 修声明 |
+| `ErrUnknownProgram` | 兜底后端没有登记这个名字的处理函数 | 修声明：先 `Inline.Register` 再执行；不静默跑空 |
+
 ### checkpoint
 
 | 哨兵 | 触发条件 | 调用方处置 |
@@ -60,25 +72,6 @@
 | `ErrAlreadyCommitted` | 该环节终态已被提交过（两条分支都赢了） | 对账：放弃本次提交；用 `As` 取 `AlreadyCommittedError` 读先前提交者与状态，判定谁是赢家 |
 | `ErrEmptyRef` | 引用缺字段（空 RunID 或空 Step） | 修声明：补全引用后重试 |
 
-### controlplane
-
-| 哨兵 | 触发条件 | 调用方处置 |
-|---|---|---|
-| `ErrNotFound` | 查询目标不存在（任务 / 运行 / 效果键） | 按目标不存在处置；介入重试撞上它通常是目标 id 错 |
-| `ErrInvalidRequest` | 介入请求不完整（Operator / Basis / 结论词表不合格） | 修声明：无归责不介入，补全归责字段后重发 |
-| `ErrNoAuditor` | 留痕面未装配即发起介入 | 修声明：装配 Auditor 后再介入（fail-closed，没有留痕的介入无法对账） |
-| `ErrStaleRun` | 运行代次已前进，介入基于过期视图 | 对账：重新拉取 RunView 取最新 Gen 后重发（先到者的介入已生效） |
-| `ErrTerminalRun` | 运行已是终态仍发起终止 | 放弃本次介入（重试撞上它说明首次终止已生效） |
-| `ErrAlreadyExists` | Seed* 重复登记（run / 任务 / 效果键） | 修声明：登记面是运行时侧的建场景动作，重复登记是驱动侧 bug |
-| `ErrInvalidAudit`（MemAuditor） | 留痕条目缺 Operator / Target / Basis 或动作不在介入词表内 | 修声明：留痕完整性是介入请求校验之外的第二道闸，宿主实现应复用同一判据 |
-
-### cost
-
-| 哨兵 | 触发条件 | 调用方处置 |
-|---|---|---|
-| `ErrEmptyKind` | 成本事件缺计量种类（Record / Aggregate 双闸） | 修声明：没有种类的账无从聚合，补 Kind 后重报 |
-| `ErrNegativeAmount` | 成本事件量为负 | 修声明：报数侧给负数是记账 bug，拒收留痕（与 budget 估算侧钳位为 0 刻意不同——估错可以少算，账错必须被看见） |
-
 ### delegate
 
 | 哨兵 | 触发条件 | 调用方处置 |
@@ -98,6 +91,14 @@
 |---|---|---|
 | `errEnvCannotEnforce`（包内） | 禁网档位无法靠环境变量兑现（必须由带能力声明的后端强制） | 修声明：区分「档位声明写错」与「执行环境缺能力」，后者换带能力声明的后端 |
 
+### eval
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrNoChecks` | 评估清单为空（零判项不给「全过」的假绿） | 修声明：显式列出判项；「没有检查」与「检查通过」必须分得开 |
+| `ErrBadSpec` | 评估清单不自洽（判项不在词表内 / 重复列出 / 期望清单缺失） | 修声明 |
+| `ErrBadRecord` | 录制文件不合法（编码失败 / 行解码失败） | 修数据：按行号定位坏行 |
+
 ### gatecheck
 
 | 哨兵 | 触发条件 | 调用方处置 |
@@ -115,6 +116,18 @@
 | `ErrUnknownGuard` | 撤销一个不存在的守卫 | 修声明：不静默忽略，核对宿主的守卫账本 |
 | `ErrNilMutate` | 换份的改写函数为 nil | 修声明：静默无动作比报错更难查 |
 | `ErrNilSubscriber` | 换份订阅回调为 nil | 修声明：装配订阅回调 |
+
+### handoff
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrUnknownKey` | 交接单不存在 | 修声明：先 `Offer` 再动作；首交前的查询走它属正常态 |
+| `ErrTaken` | 交接单已被领取（并发 Take 的输家 / 已领取后 Cancel） | 输家属正常结果：放弃本次领取；收回方按「已被接手」改走对账 |
+| `ErrExpired` | 交接单已超时限（迟到领取 / 迟到回执） | 重新交接 = 新一代；先对账（工作可能已被做了或没人做） |
+| `ErrNotAddressee` | 领取者不是指定接收方 | 修声明：只有 To 能领取 |
+| `ErrNotSource` | 收回者不是交接发起方 | 修声明：收回权只在 From |
+| `ErrLeaseLost` | 领取令牌不匹配（凭令牌认人，不凭内容） | 对账：责任期已易主或已收口，迟到动作一律放弃 |
+| `ErrAlreadySettled` | 交接单已是终态 | 放弃本次动作；重新交接开新一代 |
 
 ### netguard
 
@@ -200,13 +213,13 @@
 | `ErrTerminal` | 任务已是终态 | 放弃：读既有结论，不重开 |
 | `ErrLeaseLost` | 令牌不匹配（租约已易主或被释放过） | 对账：本次操作作废，重新 `Claim` |
 
-### tenant
+### examples/containerbackend
 
 | 哨兵 | 触发条件 | 调用方处置 |
 |---|---|---|
-| `ErrNoContext` | 写路径判据（Require / Enforce）遇到未注入租户上下文的请求 | 修声明：机制面声明了「本动作必须感知租户」，注入 tenant.Context 后重发；不得当成「没有租户也放行」 |
-| `ErrUnauthorized` | 授权不足（required 不在 Scopes 内，精确子集判定） | 按宿主的授权体系处置（提权 / 拒绝）；内核只判子集，词表语义归宿主 |
-| `ErrQuotaExceeded` | 配额超限（Enforce 出口；明细经包装链消息携带） | 按超限处置（拒绝 / 排队 / 扩配额）；需要结构化明细时直接用 `Quota.Judge` 取 Exceeded 列表 |
+| `ErrEngineCall` | Docker Engine 调用失败（创建 / 启动 / 等待 / 读取任一步） | 重试或查引擎侧（不可达 / 镜像不存在 / 参数被拒）；作业没跑起来属基础设施故障 |
+| `ErrNotWired` | K8s Job 适配尚未接入（占位） | 修声明：按包注释四步接入后再登记进登记簿 |
+| `errWallClock`（包内） | 墙钟预算到点（context.Cause 的标记；对外呈现为 `Result{OK:false, Detail:{budget_exceeded: wall_clock}}`，不是 error 返回） | 无需处置：预算被强制兑现是契约行为；作业没跑完按作业失败对待 |
 
 ### tooldisclose
 
