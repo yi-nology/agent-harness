@@ -34,6 +34,7 @@ import (
 
 func main() {
 	report := flag.Bool("report", false, "输出全量违反（默认每条规则截断到 10 条）")
+	typeAware := flag.Bool("types", false, "开类型感知严格档（go/packages + go/types：覆盖赋值形态的静态不可溯盲区；整仓类型检查，比默认档慢一个量级）")
 	policyPath := flag.String("policy", "", "policy 文件路径（缺省为仓库根下的 architecture-policy.yaml）")
 	flag.Parse()
 
@@ -52,7 +53,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	res, err := archcheck.Run(root, pol)
+	res, err := archcheck.RunWithOptions(root, pol, archcheck.RunOptions{TypeAware: *typeAware})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "archcheck:", err)
 		os.Exit(2)
@@ -73,4 +74,7 @@ func main() {
 	}
 	fmt.Printf("架构门禁通过（%d 条规则 + %d 个门面包 + %d 个包的依赖方向，policy version %d；无阻断级违反）\n",
 		len(pol.Rules), len(pol.Facades), len(pol.Modules), pol.Version)
+	if res.TypeAwarePackages > 0 {
+		fmt.Printf("类型感知严格档：类型检查了 %d 个包\n", res.TypeAwarePackages)
+	}
 }

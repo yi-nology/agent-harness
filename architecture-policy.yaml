@@ -41,7 +41,12 @@ modules:
       该味**只存在于字段注释与格式约定**，不引入任何领域词表或判定逻辑——
       字段本身是通用字符串。域约束应落在宿主的 prompt/包声明里，不落进本包代码。
 
-
+  - id: metrics
+    roots: [metrics]
+    requires: [retryplan, trajectory, "ext:github.com/oekit/pkg"] # 指标口径面：维度/基数上界引用 retryplan/trajectory 的量纲
+    owner: harness
+    managed: true
+    notes: 内核指标契约面（issue #100）：五类运营量的名称/类型/维度/基数上界单一来源；business 选指标、transport 负责编码投递
 
   - id: cost
     roots: [cost]
@@ -1455,7 +1460,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
