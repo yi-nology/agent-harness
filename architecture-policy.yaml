@@ -83,15 +83,6 @@ modules:
     managed: true
     notes: 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责
 
-  - id: policy
-    roots: [policy]
-    requires: ["ext:github.com/oagentkit/toolgate", "ext:github.com/oagentkit/guardx"]
-    owner: harness
-    managed: true
-    notes: |
-      操作审计门：阈值只降不升、解析失败即拒。
-      guardx 是为 Stage 的返回类型（invoke.Stage）而登记的——签名所需，非实现。
-
   - id: spill
     roots: [spill]
     requires: ["ext:github.com/oekit/pkg"]
@@ -112,16 +103,6 @@ modules:
     owner: harness
     managed: true
     notes: 出站 URL 守卫（SSRF），纯 stdlib 叶子层
-
-  - id: dispatch
-    roots: [dispatch]
-    requires: ["ext:github.com/oagentkit/agent"]
-    owner: harness
-    managed: true
-    notes: |
-      派发守卫（权限即拓扑的机制面）。拓扑数据经 EdgeSource 由宿主提供，
-      本包不认识任何具体 agent——「全拓扑只有一条边能到达执行器」是宿主的
-      产品级安全不变量，其断言测试留在宿主仓，本包只测机制。
 
   - id: contract
     roots: [contract]
@@ -180,60 +161,16 @@ modules:
       门禁的核心是把两类失败严格区分开：未加载（可重试，顺手激活）与
       不在目录（不可重试，明确禁止绕过）。目录与打分均为确定性，编排才可复现。
 
-  - id: toolfail
-    roots: [toolfail]
-    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: |
-      工具失败的错误分类契约：瞬时/永久/鉴权/未找到/权限/参数非法/限流，
-      另加「自报」类：错误自报 Retryable() bool 时按其结论归类，避免
-      「该不该重试」在两个包各判一次且判出相反答案。
-      各自带可重试性与退避建议。
-      本仓此前只有 policy 的「解析失败即拒」，没有「失败是否可重试」这层语义——
-      上层要自动退避就必须能机械判定，故单独立一个契约包。
-
   # L2 第二批机制包（随包下沉登记）。requires 反映**真实**依赖方向，不是「理想形态」：
   # watchdog 确实读 eventbus，就写 eventbus。此前这里写的是 requires: [] 并附一句
   # 「同仓叶子引用不算模块间方向约束」——那是给自己开的口头豁免，且因为 requires
   # 从未被执行过，连漂移都没人发现（执行体见 archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
-    requires: [toolname, sandbox, egress, "ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/runtime", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg", "ext:github.com/oekit/logx"] # guardx 含 sandbox/wire（跨进程协议） # runtime/procx 管「子进程能看见什么环境」（白名单，非全量继承）；工具名→JS 标识符的规整规则，唯一的真相在 toolname 包；sandbox 是执行档位与后端协议
+    requires: [toolname, egress, "ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/runtime", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg", "ext:github.com/oekit/logx"] # guardx 含 sandbox/wire（跨进程协议；执行档位与后端协议自 v0.35.0 起直连） # runtime/procx 管「子进程能看见什么环境」（白名单，非全量继承）；工具名→JS 标识符的规整规则，唯一的真相在 toolname 包
     owner: harness
     managed: true
     notes: 程序化工具编排沙箱（goja VM，三重预算替代 OS 沙盘）
-
-  # 2026-10-21 新增：执行沙箱的**档位语义**与**后端协议**。
-  #
-  # 为什么值得单开一个包：「模型写的程序在哪跑、跑起来能触达什么」此前在本仓只有
-  # 一个答案——ptc 的进程内 goja VM——而那个答案是**写死在调用点**的：没有档位概念，
-  # 也没有「这次执行至少要多强」的表达。于是宿主想跑一个不可信程序时，
-  # 「它跑在够强的隔离里吗」这件事无处声明，只能靠人记得别挑错后端。
-  #
-  # 本包把「隔离强度」变成**可声明、可判定**的机制：
-  #   - Level：档位（进程内解释器 → 内核级 → 硬件虚拟化），单调可比；
-  #   - Provider：后端协议（自报提供哪一档，并执行程序）；
-  #   - Registry：登记簿 + 按要求档位选择，**选不到就拒绝，不降级**。
-  #
-  # 「不降级」是本包的核心语义：要求档位若在无满足者时被悄悄换成弱后端，
-  # 这套机制就是装饰——宿主写下的「本次要内核级」与实际发生的「进程内跑」之间
-  # 没有任何信号，差的那个量级就是全量暴露。
-  #
-  # 边界：档位语义属于内核；「哪些执行要哪一档」属于宿主（那是风险判断，
-  # 不是机制）；后端实现可以在宿主侧（本包只认协议）。
-  - id: sandbox
-    roots: [sandbox]
-    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: |
-      执行沙箱的档位语义与后端协议：Level（隔离档位，单调可比）+ Provider（后端
-      协议）+ Registry（登记簿，按要求档位选**最弱**满足者，无满足者即拒绝）+
-      EgressMode/EgressEnforcer（出站档位词表与可选能力声明——词表必须低于所有
-      实现方，否则上游后端无法实现该接口）。
-      零内部依赖——它是叶子层，ptc 反过来依赖它（适配器方向只能是 ptc → sandbox：
-      沙箱机制不认识任何后端，后端认识沙箱）。
 
   - id: watchdog
     roots: [watchdog]
@@ -286,14 +223,14 @@ modules:
     owner: harness
     managed: true
     notes: |
-      重试处置决策：把「该不该重试」（toolfail 判）与「重试会不会重复施加」
+      重试处置决策：把「该不该重试」（上游 guardx/toolfail 判）与「重试会不会重复施加」
       （sideeffect 判）合成一条可执行结论——三档路径（不重试 / 原样重发 /
       走幂等键重放）。与 guardset 同族：**组合逻辑归内核，判定归各自机制**。
       零内部依赖（不 import sideeffect：两者是契约上的衔接，不是代码耦合）。
 
   - id: preset
     roots: [preset]
-    requires: [egress, gatecheck, policy, sandbox, "ext:github.com/oekit/pkg"]
+    requires: [egress, gatecheck, "ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/toolgate", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -353,7 +290,7 @@ modules:
 
   - id: egress
     roots: [egress]
-    requires: ["ext:github.com/oekit/pkg", sandbox]
+    requires: ["ext:github.com/oekit/pkg", "ext:github.com/oagentkit/guardx"]
     owner: harness
     managed: true
     notes: |
@@ -491,16 +428,9 @@ modules:
       **不支持通配**（写明的局限）：* 与 ** 的语义各实现不同，进契约就会出现
       「按 A 的理解写、按 B 的理解判」。需要更强表达力时宿主自己展开成多条精确声明。
 
-  - id: reminder
-    roots: [reminder]
-    requires: ["ext:github.com/oagentkit/guardx"]
-    owner: harness
-    managed: true
-    notes: 系统注入提示的防伪包裹（source 声明 + 伪造标签转义）
-
   - id: sessionref
     roots: [sessionref]
-    requires: [reminder, "ext:github.com/oekit/pkg"]
+    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -525,7 +455,7 @@ modules:
       宿主必须无条件重采的那条。
 
       渲染**不拒绝、只标注**：拒不渲染会让「引用过期」变成「引用消失」，宿主无从
-      区分「本来就没引用」与「引用了但过期」。防伪不另写一套——走 @reminder.Wrap@
+      区分「本来就没引用」与「引用了但过期」。防伪不另写一套——走 @injectband.Wrap@
       统一包裹（防伪实现只允许一份）。
 
   - id: drain
@@ -679,7 +609,7 @@ modules:
   # （client-go 归宿主侧——引它会让示例的依赖图追着 K8s 版本跑）。
   - id: containerbackend
     roots: [examples/containerbackend]
-    requires: [backend, sandbox, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: [backend, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -755,7 +685,7 @@ modules:
   # delegate「线格式归上游」是同一条分工。
   - id: backend
     roots: [backend]
-    requires: [sandbox, "ext:github.com/oekit/pkg"]
+    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -1068,7 +998,7 @@ rules:
   # 构建全绿、测试全绿、审计日志里只有一条普通的进程记录。
   #
   # 这类绕过最常见的形态是 os/exec（Go 里起外部进程的标准入口），加进某个包
-  # 只要一行。于是本规则把「起外部进程」这件事**收口到 sandbox 包**，
+  # 只要一行。于是本规则把「起外部进程」这件事**收口到 ptc 执行面**，
   # 其余生产代码一律不得直接 import。
   #
   # 判定面是 **import 路径**（走 go/ast），故单行/块/别名/空白导入一视同仁。
@@ -1082,7 +1012,7 @@ rules:
     scope: [.]
     include: ["*.go"]
     ignore_test: true
-    # 收口点从 sandbox 迁到 ptc：sandbox 已转为**门面**（核心在 oagentkit/guardx），
+    # 收口点从 sandbox 迁到 ptc（sandbox 门面包已删，档位语义直连 guardx），
     # 而「起外部进程」这件事的实现落在 ptc 的子进程后端（ptc-subprocess）。
     # 收口**一处**的意图不变——仍是「只有一个包能 import os/exec」，
     # 只是那个包从「sandbox 执行面」变成了「ptc 执行面」。
@@ -1120,40 +1050,11 @@ rules:
 #
 # severity 直接给 error：这三条门包当前零违规，说明纪律还没被破坏过；挂在 warn 上
 # 等于给未来的回涨留后门。升 error 前已做反向验证（见 facade.go 包头注释）。
-facades:
-  - package: dispatch
-    desc: 派发守卫门面包，核心在 oagentkit/agent/dispatch
-    severity: error
-    upstream: ["github.com/oagentkit/agent/dispatch"]
-
-  - package: policy
-    desc: 操作审计门门面包，核心在 oagentkit/toolgate/policy
-    severity: error
-    upstream: ["github.com/oagentkit/toolgate/policy"]
-    # 额外依赖是签名本身要求的，不是实现：
-    #   - io/fs 是 LoadOverrides 的参数类型；
-    #   - eino/components/tool 是 WithAuditGate 的出入参；
-    #   - guardx/invoke 是 Stage 的返回类型（判定环的一环）。
-    # 三者都不提供任何实现。
-    allowed_imports: ["io/fs", "github.com/cloudwego/eino/components/tool", "github.com/oagentkit/guardx/invoke"]
-
-  - package: reminder
-    desc: 系统注入防伪包裹门面包，核心在 oagentkit/guardx/injectband
-    severity: error
-    upstream: ["github.com/oagentkit/guardx/injectband"]
-
-  - package: toolfail
-    desc: 工具失败分类门面包，核心在 oagentkit/guardx/toolfail
-    severity: error
-    upstream: ["github.com/oagentkit/guardx/toolfail"]
-
-  - package: sandbox
-    desc: 执行沙箱档位门面包，核心在 oagentkit/guardx/sandbox
-    severity: error
-    upstream: ["github.com/oagentkit/guardx/sandbox"]
-    # 额外依赖是签名本身要求的，不是实现：context 是 Execute 的 ctx 参数类型，
-    # Provider.Exec 的 ctx 参数类型也是它。本包不提供任何实现。
-    allowed_imports: ["context"]
+#
+# v0.35.0：五个门面包（dispatch/policy/reminder/toolfail/sandbox）整包删除，
+# 消费方直连上游（oagentkit/agent·toolgate·guardx）。清单置空——规则与执行体
+# 保留，本仓若再设门面包，按上述四类合法形态登记即可。
+facades: []
 
 # ── 包间依赖方向 ──
 #
@@ -1460,7 +1361,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics]
+  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

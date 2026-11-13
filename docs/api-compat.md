@@ -115,7 +115,7 @@ packages:
 
 ## 当前定级一览
 
-api-lifecycle.yaml 登记 **58** 个包（Stable 26 / Experimental 32 / Deprecated 0）。
+api-lifecycle.yaml 登记 **53** 个包（Stable 21 / Experimental 32 / Deprecated 0；v0.35.0 删五个 Stable 门面包后口径）。
 逐包理由看清单 `reason` 字段；本节只说分组的**依据**：
 
 - **核心契约面 Stable**：`contract` / `protocol` / `sideeffect` / `taskboard` /

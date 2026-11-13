@@ -55,13 +55,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/oagentkit/guardx/sandbox"
+	"github.com/oagentkit/toolgate/policy"
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/slicex"
 
 	"github.com/yi-nology/goagent-kernel/egress"
 	"github.com/yi-nology/goagent-kernel/gatecheck"
-	"github.com/yi-nology/goagent-kernel/policy"
-	"github.com/yi-nology/goagent-kernel/sandbox"
 )
 
 // Preset 一份具名权限预设。

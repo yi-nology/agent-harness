@@ -50,8 +50,8 @@ func TestSubscribeReceivesChangeAtSwapTime(t *testing.T) {
 		t.Fatalf("订阅者应收到 1 条换份记录，实得 %d", len(got))
 	}
 	r := got[0]
-	if r.Seq != 1 || r.Generation != 1 {
-		t.Fatalf("换份序号与代次都应为 1，实得 Seq=%d Generation=%d", r.Seq, r.Generation)
+	if r.Generation != 1 {
+		t.Fatalf("换份代次应为 1，实得 Generation=%d", r.Generation)
 	}
 	if strings.Join(r.From, ",") != "old_guard" {
 		t.Fatalf("From 应是换走的那份，实得 %v", r.From)

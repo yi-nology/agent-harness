@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oekit/pkg/shellx"
 	"github.com/yi-nology/goagent-kernel/cmdpolicy"
 )
 
@@ -86,7 +87,7 @@ func TestSplitCommandsMergesAmpersand(t *testing.T) {
 		t.Fatalf("want %d segments, got %v", len(want), segs)
 	}
 	for i, seg := range segs {
-		argv, err := cmdpolicy.Split(seg)
+		argv, err := shellx.Split(seg)
 		if err != nil {
 			t.Fatalf("段 %q 再分词失败: %v", seg, err)
 		}
@@ -97,7 +98,7 @@ func TestSplitCommandsMergesAmpersand(t *testing.T) {
 }
 
 func TestSplitQuoting(t *testing.T) {
-	argv, err := cmdpolicy.Split(`git commit -m "fix: a b" --author 'x y'`)
+	argv, err := shellx.Split(`git commit -m "fix: a b" --author 'x y'`)
 	if err != nil {
 		t.Fatalf("Split: %v", err)
 	}
@@ -108,10 +109,10 @@ func TestSplitQuoting(t *testing.T) {
 }
 
 func TestSplitRejectsUnbalanced(t *testing.T) {
-	if _, err := cmdpolicy.Split(`echo "abc`); err == nil {
+	if _, err := shellx.Split(`echo "abc`); err == nil {
 		t.Fatal("未闭合的引号必须报错（判不了就不放行）")
 	}
-	if _, err := cmdpolicy.Split("echo x\\"); err == nil {
+	if _, err := shellx.Split("echo x\\"); err == nil {
 		t.Fatal("以转义符结尾必须报错")
 	}
 }

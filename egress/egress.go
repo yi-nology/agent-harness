@@ -44,14 +44,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/oagentkit/guardx/sandbox"
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/slicex"
-
-	"github.com/yi-nology/goagent-kernel/sandbox"
 )
 
 // 档位词表与能力声明契约**不在本包定义**，而是 type alias 指向上游
-// guardx/sandbox（本仓 sandbox 门面同源）：
+// guardx/sandbox：
 //
 //	type Mode = sandbox.EgressMode
 //	type Enforcer = sandbox.EgressEnforcer

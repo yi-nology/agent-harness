@@ -50,7 +50,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/sandbox"
+	"github.com/oagentkit/guardx/sandbox"
 )
 
 // Isolation 任务式执行的隔离轴（序即强弱：档位越大，被执行的作业能触达的

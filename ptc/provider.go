@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/oagentkit/guardx/invoke"
-	"github.com/yi-nology/goagent-kernel/sandbox"
+	"github.com/oagentkit/guardx/sandbox"
 )
 
 // ProviderID 本包执行面在 sandbox 登记簿里的标识。

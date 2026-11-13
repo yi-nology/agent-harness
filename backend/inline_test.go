@@ -7,7 +7,7 @@ import (
 
 	kerrors "github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/sandbox"
+	"github.com/oagentkit/guardx/sandbox"
 )
 
 // TestInline 兜底后端：契约可满足性的证明件。

@@ -12,7 +12,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/sandbox"
+	"github.com/oagentkit/guardx/sandbox"
 )
 
 func TestProviderDeclaresProcessLevel(t *testing.T) {

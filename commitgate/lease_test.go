@@ -148,24 +148,3 @@ func TestLeaseReleaseDoesNotTouchOtherRef(t *testing.T) {
 		t.Fatal("s2 应已被自己的凭证释放")
 	}
 }
-
-// TestLegacyReleaseRequiresStatusMatch 旧接口 Release 现在要求状态也相同。
-//
-// 这一条是旧接口的**加固**：同名分支的输家若提交的是**不同状态**（这是常态：
-// 一条分支成功、一条分支失败），它的迟到 Release 不得放掉赢家的闸。
-// 旧实现只比 branch 与 seq，挡不住这种偷放。
-func TestLegacyReleaseRequiresStatusMatch(t *testing.T) {
-	g := NewGuard(leaseIsTerminal)
-	winner := Commit{Ref: leaseRef(), Status: "succeeded", Branch: "agent-x", Seq: 1}
-	if err := g.Commit(winner); err != nil {
-		t.Fatal(err)
-	}
-	loser := Commit{Ref: leaseRef(), Status: "failed", Branch: "agent-x", Seq: 1}
-	if err := g.Commit(loser); err == nil {
-		t.Fatal("同名分支的第二个终态提交必须被拒")
-	}
-	g.Release(loser) // 迟到的释放：状态不同 → 不得动赢家的闸
-	if err := g.Commit(Commit{Ref: leaseRef(), Status: "failed", Branch: "agent-y", Seq: 2}); err == nil {
-		t.Fatal("独占权仍在：第三个终态提交必须被拒（实际被放掉了）")
-	}
-}
