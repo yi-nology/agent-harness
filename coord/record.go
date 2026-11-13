@@ -24,6 +24,15 @@ type actRec struct {
 	Reason    string     `json:"reason,omitempty"`
 	Intent    *intentRec `json:"intent,omitempty"`
 	Recon     *reconRec  `json:"recon,omitempty"`
+
+	// 动作身份（首次登记，永久事实；IDSet=false = 未登记）。与
+	// sideeffect.ErrActionConflict 对应：Key 声明「这是同一个逻辑动作」，
+	// 但 Resource / Payload / RetrySafety 才是动作的定义——三者可被后续
+	// 调用改写时，「不可重试」会被后到的 Safe 声明推翻（重复施加的入口）。
+	IDSet         bool                   `json:"idSet,omitempty"`
+	IDResource    string                 `json:"idResource,omitempty"`
+	IDSafety      sideeffect.RetrySafety `json:"idSafety,omitempty"`
+	IDPayloadHash string                 `json:"idPayloadHash,omitempty"`
 }
 
 // intentRec 一次未裁决的执行意图（Acquire 原子登记）。
@@ -142,6 +151,42 @@ func leaseResourceErr(act sideeffect.Action, lease sideeffect.Lease) error {
 		return errors.Wrap(sideeffect.ErrResourceMismatch,
 			"凭据被拒：租约与动作的资源不一致",
 			"act_resource", act.Resource, "lease_resource", lease.Resource)
+	}
+	return nil
+}
+
+// ── 动作身份不可变（评审第三轮 P0，issue #137）────────────────────────────
+
+// registerIdentity 首次见到该 Key 时登记动作身份；返回是否登记了新身份
+// （调用方把它计进 dirty——登记也是一次写入，不得悬在判定里）。
+func registerIdentity(a *actRec, act sideeffect.Action) bool {
+	if a.IDSet {
+		return false
+	}
+	a.IDSet = true
+	a.IDResource = act.Resource
+	a.IDSafety = act.RetrySafety
+	a.IDPayloadHash = sideeffect.HashPayload(act.Payload)
+	return true
+}
+
+// identityErr 报告本次动作的身份与首次登记是否一致。
+//
+// 身份判定优先于一切状态判定（Store.Acquire 契约）：不授予、不重放既有
+// 结果、不转未知态——把旧身份的结果交给新身份的调用方就是答非所问，
+// 把「不可重试」交给后到的 Safe 声明就是重复施加。
+// 记录未登记身份（旧记录 / 空记录）视为无冲突——授予路径会把它登记进去。
+func identityErr(a actRec, act sideeffect.Action) error {
+	if !a.IDSet {
+		return nil
+	}
+	if a.IDResource != act.Resource || a.IDSafety != act.RetrySafety ||
+		a.IDPayloadHash != sideeffect.HashPayload(act.Payload) {
+		return errors.Wrap(sideeffect.ErrActionConflict,
+			"同 Key 的动作身份与首次登记不一致（这不是重试，是另一个动作）",
+			"key", string(act.Key),
+			"登记 resource", a.IDResource, "本次 resource", act.Resource,
+			"登记 safety", a.IDSafety, "本次 safety", act.RetrySafety)
 	}
 	return nil
 }

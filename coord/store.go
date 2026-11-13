@@ -30,6 +30,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oekit/pkg/errors"
+
 	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
@@ -87,10 +89,10 @@ func (s *StoreAdapter) Acquire(ctx context.Context, act sideeffect.Action, ttl t
 				return acq{}, nil, nil, rerr
 			}
 			now := s.clock()
-			// dirty：快照判定过程中攒下的待提交改动（过期占用清理等）。
+			// dirty：快照判定过程中攒下的待提交改动（身份登记、过期占用清理等）。
 			// 纯结论（无改动）直接返回，不走一次空事务；有改动则连同
 			// 本次结论一起原子落地。
-			dirty := false
+			dirty := registerIdentity(&a, act)
 			commitAct := func() ([]Mutation, error) {
 				am, merr := actMutation(act.Key, a)
 				if merr != nil {
@@ -98,14 +100,33 @@ func (s *StoreAdapter) Acquire(ctx context.Context, act sideeffect.Action, ttl t
 				}
 				return []Mutation{am}, nil
 			}
+			// 0. 动作身份不可变（先于一切状态判定——含「已完成 → 重放」）：
+			//    同 Key 不同身份不是重试，是另一个动作。
+			if err := identityErr(a, act); err != nil {
+				return acq{}, nil, nil, err
+			}
 			// 1. 已完成 → 重放（已完成的动作不再需要令牌）。
 			if a.Done {
-				return acq{out: sideeffect.OutcomeReplayed, res: sideeffect.Result{Payload: a.Result}}, nil, nil, nil
+				if !dirty {
+					return acq{out: sideeffect.OutcomeReplayed, res: sideeffect.Result{Payload: a.Result}}, nil, nil, nil
+				}
+				muts, err := commitAct()
+				if err != nil {
+					return acq{}, nil, nil, err
+				}
+				return acq{out: sideeffect.OutcomeReplayed, res: sideeffect.Result{Payload: a.Result}}, assertsFrom(snap), muts, nil
 			}
 			// 3. 结果未知（先于资源占用：未知态是这个 Key 头上的硬阻塞，
 			//    占用只是「等一等」）。
 			if a.Uncertain {
-				return acq{out: sideeffect.OutcomeUncertain}, nil, nil, nil
+				if !dirty {
+					return acq{out: sideeffect.OutcomeUncertain}, nil, nil, nil
+				}
+				muts, err := commitAct()
+				if err != nil {
+					return acq{}, nil, nil, err
+				}
+				return acq{out: sideeffect.OutcomeUncertain}, assertsFrom(snap), muts, nil
 			}
 			// 对账占用未过期 ⇒ 对账中（归入未知态一族：对账中 ≠ 已裁决，
 			// 更不等于可以重做）；过期的占用在此清掉（可重入——
@@ -203,6 +224,11 @@ func (s *StoreAdapter) Complete(ctx context.Context, act sideeffect.Action, leas
 			if err != nil {
 				return sideeffect.Result{}, nil, nil, err
 			}
+			// 身份不可变：先于「已完成 → 重放」（把旧身份的结果交给新身份
+			// 的调用方就是答非所问）。
+			if err := identityErr(a, act); err != nil {
+				return sideeffect.Result{}, nil, nil, err
+			}
 			if a.Done {
 				return sideeffect.Result{Payload: a.Result}, nil, nil, nil // 幂等
 			}
@@ -291,8 +317,8 @@ func (s *StoreAdapter) Abandon(ctx context.Context, act sideeffect.Action, lease
 	return err
 }
 
-// Renew 续期并确认持有资格：闸已易主或尝试已失效则拒绝续期
-// （假续期延长的是别人的闸——重复施加的入口）。
+// Renew 续期并确认持有资格：闸已易主、尝试已失效**或租约已过期**则拒绝
+// 续期（假续期延长的是别人的闸——重复施加的入口）。
 func (s *StoreAdapter) Renew(ctx context.Context, act sideeffect.Action, lease sideeffect.Lease, ttl time.Duration) (sideeffect.Lease, error) {
 	ak, rk := actKeyPrefix+string(act.Key), resKeyPrefix+act.Resource
 	return casLoop(ctx, s.b, []string{ak, rk},
@@ -312,6 +338,14 @@ func (s *StoreAdapter) Renew(ctx context.Context, act sideeffect.Action, lease s
 				return sideeffect.Lease{}, nil, nil, err
 			}
 			now := s.clock()
+			// 过期即资格终止（Store.Renew 契约）：租约已过期而无人接管时，
+			// 旧持有者不得复活它——否则过期那次尝试绕开「先对账」直接继续
+			// 推进。判定在写入之前，被拒的续期不留任何状态。
+			if !rr.Until.After(now) {
+				return sideeffect.Lease{}, nil, nil, errors.Wrap(sideeffect.ErrFenceStale,
+					"租约已过期且无人接管——到期即资格终止（要继续做请重新 Acquire）",
+					"key", string(act.Key), "resource", act.Resource)
+			}
 			rr.Until = now.Add(ttl)
 			a.Intent.Expires = now.Add(ttl)
 			am, merr := actMutation(act.Key, a)

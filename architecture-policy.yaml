@@ -41,6 +41,29 @@ modules:
       该味**只存在于字段注释与格式约定**，不引入任何领域词表或判定逻辑——
       字段本身是通用字符串。域约束应落在宿主的 prompt/包声明里，不落进本包代码。
 
+
+
+  - id: cost
+    roots: [cost]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: 运行成本治理口径面（issue #112）：任务级成本的计量单位/归集键/预算档单一来源，纯口径无外部投递
+
+  - id: tenant
+    roots: [tenant]
+    requires: [cost, "ext:github.com/oekit/pkg"] # 配额判据引用 cost 的预算档口径
+    owner: harness
+    managed: true
+    notes: 多租户判据面（issue #114）：隔离/配额/权限上下文的声明与判定纯函数，判据与执行分离
+
+  - id: controlplane
+    roots: [controlplane]
+    requires: [contract, sideeffect, taskboard, tenant, "ext:github.com/oekit/pkg"] # 介入契约引用编排/副作用/任务板/租户四面
+    owner: harness
+    managed: true
+    notes: 控制平面接口面（issue #115）：任务查看/运行状态/失败诊断/人工介入四类操作契约，纯接口零实现，介入走令牌授权
+
   - id: statemachine
     roots: [statemachine]
     requires: []
@@ -1432,7 +1455,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime]
+  scan_roots: [protocol, statemachine, eventbus, policy, spill, pii, netguard, dispatch, ptc, sandbox, watchdog, delta, pending, reminder, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, toolfail, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
