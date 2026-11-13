@@ -58,11 +58,16 @@
 //
 // 环节状态的词表属宿主（statemachine 那一组常量只是本仓的一份示例实现），
 // 故 IsTerminal 由宿主注入。本包只管「独占」，不认任何状态取值。
+//
+// # 状态在 Store 接缝之后（issue #145 多副本部署）
+//
+// 闸的判定（词表、空引用、错误构造）在 Guard；已提交记录与原子占用在
+// Store 接缝之后——缺省进程内参考实现 NewMemoryStore，多副本宿主注入自己的
+// 跨进程实现（NewGuardWithStore）。跨进程硬要求（Claim 原子、**令牌由存储
+// 铸造**）见 store.go 文件头；判定逻辑不因换存储而有第二份。
 package commitgate
 
 import (
-	"sync"
-
 	"github.com/oekit/pkg/errors"
 )
 
@@ -98,7 +103,8 @@ type record struct {
 	status string
 	branch string
 	seq    uint64
-	// token 本次占用的唯一令牌，由 Acquire 铸造。ReleaseLease 凭它精确释放。
+	// token 本次占用的唯一令牌，由 Store 铸造（跨进程唯一，见 store.go 契约）。
+	// ReleaseLease 凭它精确释放。
 	//
 	// 为什么需要它：(status, branch, seq) 三元组**不是唯一的占用身份**——
 	// 并行分支常常同名（Branch 的注释自己写明是「分支名 / agent 名」），
@@ -116,26 +122,32 @@ type Lease struct {
 	Token uint64
 }
 
-// Guard 终态独占提交闸。并发安全。
+// Guard 终态独占提交闸。并发安全（状态操作全在 Store，实现各自保证）。
 //
 // 零值不可用，请用 NewGuard——闸的零值若表示「放行」，等于缺配置即失效。
 type Guard struct {
-	mu sync.Mutex
-	// done 已终态提交的环节。
-	done map[Ref]record
-	// tokenSeq 占用令牌的自增序列（单调，永不回卷）。
-	tokenSeq uint64
+	// store 已提交记录的存储接缝（缺省进程内参考实现）。
+	store Store
 	// isTerminal 由宿主注入的状态词表判定；nil 时按「全部都是终态」处理，
 	// 这是更保守的一侧（宁可多拦，不可在不知道词表时漏拦）。
 	isTerminal func(status string) bool
 }
 
-// NewGuard 构造闸。isTerminal 判定某状态是否为终态；传 nil 表示所有提交都按终态处理。
+// NewGuard 构造闸（进程内参考存储）。isTerminal 判定某状态是否为终态；
+// 传 nil 表示所有提交都按终态处理。
 func NewGuard(isTerminal func(status string) bool) *Guard {
-	return &Guard{
-		done:       make(map[Ref]record),
-		isTerminal: isTerminal,
+	return NewGuardWithStore(NewMemoryStore(), isTerminal)
+}
+
+// NewGuardWithStore 构造闸并注入存储接缝（issue #145）。
+//
+// 多副本宿主用它接自己的跨进程存储；判定逻辑仍只有本包这一份。
+// s 为 nil ⇒ 退化为进程内参考存储。
+func NewGuardWithStore(s Store, isTerminal func(status string) bool) *Guard {
+	if s == nil {
+		s = NewMemoryStore()
 	}
+	return &Guard{store: s, isTerminal: isTerminal}
 }
 
 // Seed 用**已持久化的**终态回灌闸（宿主进程重启后调用一次）。
@@ -145,15 +157,11 @@ func NewGuard(isTerminal func(status string) bool) *Guard {
 //
 // 幂等：以同一条记录重复 Seed 结果相同。已存在的记录不会被更旧的覆盖。
 func (g *Guard) Seed(c Commit) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
 	if c.Ref.RunID == "" || c.Ref.Step == "" {
 		return
 	}
-	if _, ok := g.done[c.Ref]; ok {
-		return // 已有记录：内存里的现状比回灌的数据新，不覆盖
-	}
-	g.done[c.Ref] = record{status: c.Status, branch: c.Branch, seq: c.Seq}
+	// 不覆盖语义在 Store（SeedIfAbsent）：已有记录时内存/库里的现状更新。
+	_ = g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq})
 }
 
 // Commit 提交一次状态。非终态直接放行且不记录；终态走独占判定。
@@ -190,9 +198,6 @@ func (g *Guard) Acquire(c Commit) (Lease, error) {
 		return Lease{}, errors.Wrap(ErrEmptyRef, "提交缺环节引用", "run_id", c.Ref.RunID, "step", c.Ref.Step)
 	}
 
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
 	// 词表未知时按终态处理：宁可多拦一道，也不因缺配置漏放。
 	// 判据写反的后果是闸被整个架空——宿主漏注入 isTerminal 时，
 	// 每次提交都走「非终态直接放行」分支，本包形同不存在。
@@ -200,7 +205,13 @@ func (g *Guard) Acquire(c Commit) (Lease, error) {
 	if !terminal {
 		return Lease{}, nil
 	}
-	if prev, ok := g.done[c.Ref]; ok {
+	// 判-占-铸令牌的原子性在 Store（跨进程实现见 store.go 文件头契约）。
+	out, claimed, err := g.store.Claim(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq})
+	if err != nil {
+		return Lease{}, errors.Wrap(err, "占用终态失败", "run_id", c.Ref.RunID, "step", c.Ref.Step)
+	}
+	if !claimed {
+		prev := record{status: out.Status, branch: out.Branch, seq: out.Seq, token: out.Token}
 		return Lease{}, &AlreadyCommittedError{
 			Ref:       c.Ref,
 			Prev:      prev,
@@ -211,14 +222,9 @@ func (g *Guard) Acquire(c Commit) (Lease, error) {
 			NewBranch: c.Branch,
 		}
 	}
-	g.tokenSeq++
-	g.done[c.Ref] = record{
-		status: c.Status,
-		branch: c.Branch,
-		seq:    c.Seq,
-		token:  g.tokenSeq,
-	}
-	return Lease{Ref: c.Ref, Token: g.tokenSeq}, nil
+	// Token 由 Store 铸造（跨进程唯一——进程内自增序列跨副本会撞，
+	// 撞了迟到的 ReleaseLease 就能放掉别人的闸，与三元组不唯一同坑）。
+	return Lease{Ref: c.Ref, Token: out.Token}, nil
 }
 
 // AlreadyCommittedError 终态重复提交。带先前提交者与先前状态。
@@ -278,17 +284,12 @@ func (e *AlreadyCommittedError) Unwrap() error { return ErrAlreadyCommitted }
 //	    return err
 //	}
 func (g *Guard) Release(c Commit) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	prev, ok := g.done[c.Ref]
-	if !ok {
-		return
+	if g.store == nil {
+		return // 零值 Guard：与旧实现（nil map 读/删是良性 no-op）逐字一致
 	}
-	// 只交还自己占的那一次：状态、分支与序号都对得上才算。
-	if prev.status != c.Status || prev.branch != c.Branch || prev.seq != c.Seq {
-		return
-	}
-	delete(g.done, c.Ref)
+	// 三元组匹配的判定与删除在 Store 内原子完成（先查后删的两步形态
+	// 会把「查到匹配、删除前被换掉」的窗口重新打开）。
+	_ = g.store.ReleaseTriple(c.Ref, c.Status, c.Branch, c.Seq)
 }
 
 // ReleaseLease 交还终态独占权，**凭占用凭证精确释放**。
@@ -299,35 +300,35 @@ func (g *Guard) Release(c Commit) {
 // 凭证对不上时静默返回——与 Release 同口径（交还闸不是错误路径，
 // 闸被回灌/已释放时都属正常）。
 func (g *Guard) ReleaseLease(l Lease) {
-	if l.Token == 0 {
-		return
+	if l.Token == 0 || g.store == nil {
+		return // 零值 Guard：与旧实现（nil map 读/删是良性 no-op）逐字一致
 	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	prev, ok := g.done[l.Ref]
-	if !ok {
-		return
-	}
-	if prev.token != l.Token {
-		return // 不是这次占用：不动后来者的闸
-	}
-	delete(g.done, l.Ref)
+	// 令牌不匹配时 Store 返回 released=false——迟到/重复/别人的释放一律无效。
+	_, _ = g.store.ReleaseToken(l.Ref, l.Token)
 }
 
 // Status 查该环节当前已提交的终态。第二个返回值为是否已提交。
+// 零值 Guard / Store 故障 ⇒ 未提交（与旧实现 nil map 读的良性口径一致）。
 func (g *Guard) Status(ref Ref) (status string, branch string, committed bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	r, ok := g.done[ref]
-	if !ok {
+	if g.store == nil {
 		return "", "", false
 	}
-	return r.status, r.branch, true
+	r, ok, err := g.store.Get(ref)
+	if err != nil || !ok {
+		return "", "", false
+	}
+	return r.Status, r.Branch, true
 }
 
 // Committed 返回已终态提交的环节数（自检与留痕用）。
+// 零值 Guard / Store 故障 ⇒ 0（观测面，不因一次故障把自检打成假红）。
 func (g *Guard) Committed() int {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return len(g.done)
+	if g.store == nil {
+		return 0
+	}
+	n, err := g.store.Count()
+	if err != nil {
+		return 0
+	}
+	return n
 }
