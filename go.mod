@@ -42,7 +42,7 @@ require (
 	github.com/oagentkit/tools v0.14.5
 	github.com/oekit/concurrency v0.34.1
 	github.com/oekit/logx v0.10.0
-	github.com/oekit/pkg v0.46.0
+	github.com/oekit/pkg v0.47.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	gopkg.in/yaml.v3 v3.0.1
 )
