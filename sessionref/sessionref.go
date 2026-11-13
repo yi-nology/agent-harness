@@ -45,9 +45,9 @@
 // 「引用消失」——而宿主无从区分「本来就没引用」与「引用了但过期」，
 // 于是它会去补一条新引用，或者干脆不问。标注则把决定权交回模型与宿主。
 //
-// # 防伪：标签由 reminder 统一包裹
+// # 防伪：标签由 injectband 统一包裹
 //
-// 快照体来自**别的会话**，是本包意义上的不可信内容。故渲染走 @reminder.Wrap@
+// 快照体来自**别的会话**，是本包意义上的不可信内容。故渲染走 @injectband.Wrap@
 // 统一包裹（不在这里另写一套转义——防伪实现只允许一份）。
 //
 // 已知边界（写明而不是假装覆盖）：包裹**标签**不可伪造（@<@ 已被转义），
@@ -60,11 +60,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oagentkit/guardx/injectband"
 	"github.com/oekit/pkg/encoding"
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/stringx"
-
-	"github.com/yi-nology/goagent-kernel/reminder"
 )
 
 // Bounds 采集时的裁剪上限。
@@ -212,5 +211,5 @@ func (r Ref) Render(now time.Time, currentVersion uint64) string {
 	}
 	b.WriteString("\n")
 	b.WriteString(r.Body)
-	return reminder.Wrap("session-ref:"+r.Source, b.String())
+	return injectband.Wrap("session-ref:"+r.Source, b.String())
 }

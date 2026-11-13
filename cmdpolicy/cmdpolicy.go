@@ -251,7 +251,7 @@ func (p *Policy) Decide(argv []string) Verdict {
 //     （超长 / 解析失败）⇒ 返回错误，让调用方按自己的 fail-closed 口径处置，
 //     而不是把它当成「没有命中规则」。
 func (p *Policy) DecideCommand(cmdline string) (Verdict, error) {
-	if _, err := Split(cmdline); err != nil {
+	if _, err := split(cmdline); err != nil {
 		return Verdict{}, err
 	}
 	facts, err := commandFactsOf(cmdline)

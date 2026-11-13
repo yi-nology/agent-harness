@@ -23,6 +23,10 @@
 //
 // 收编后本包不再维护第二份分词口径——口径归上游一处。
 // 本包保留的是**上游没有的那一层**：按分隔符切段（SplitCommands）。
+//
+// v0.35.0：导出的 Split 转发已删——需要裸分词的宿主直连
+// oekit/pkg/shellx.Split；本包哨兵（ErrUnclosedQuote/ErrTrailingEscape）
+// 仍在，由 SplitCommands/DecideCommand 的失败路径带出。
 package cmdpolicy
 
 import (
@@ -42,19 +46,13 @@ var (
 	ErrTrailingEscape = errors.Wrap(shellx.ErrTrailingEscape, "cmdpolicy: 命令以转义符结尾，无法判定")
 )
 
-// Split 把命令行按 shell 口径分词（单引号内原样、双引号内按 POSIX 处理反斜杠）。
+// split 把命令行按 shell 口径分词并包上本包哨兵（供 SplitCommands 内部用）。
 //
-// 本包**不执行**命令，分词只为判定；不做变量展开、不做命令替换——
-// 那两件事一旦做，判据就会被「展开后的样子」欺骗（$RM -rf 在判定时展开，
-// 与真正执行时的展开时点不同）。这里的立场是：**判据只看字面**，
-// 需要展开的宿主应先把命令展开成 argv 再调 Decide。
-//
-// 实现是上游 oekit/pkg/shellx.Split 的转发：分词口径归上游一处，
-// 本仓不维护第二份。
-//
-// 错误：未闭合引号 / 尾随反斜杠 → 返回错误（**判不了就不放行**），
-// 调用方按自己的 fail-closed 口径处置，而不是把它当成「没有命中规则」。
-func Split(cmdline string) ([]string, error) {
+// 分词本体是上游 oekit/pkg/shellx.Split（口径归上游一处，本仓不维护第二份）；
+// 包内保留的只有**错误语义**：未闭合引号 / 尾随反斜杠 → 本包哨兵
+// （**判不了就不放行**），且哨兵包装上游哨兵——下游两种判法都成立。
+// 需要裸分词的宿主直接用 shellx.Split。
+func split(cmdline string) ([]string, error) {
 	argv, err := shellx.Split(cmdline)
 	if err == nil {
 		return argv, nil
@@ -83,7 +81,7 @@ func Split(cmdline string) ([]string, error) {
 // 可往返由上游 oekit/pkg/shellx.QuoteArgv 保证（它是分词的逆运算：
 // Split(QuoteArgv(args...)) 必须逐项还原 args，含空参数与特殊字符）。
 func SplitCommands(cmdline string) ([]string, error) {
-	argv, err := Split(cmdline)
+	argv, err := split(cmdline)
 	if err != nil {
 		return nil, err
 	}

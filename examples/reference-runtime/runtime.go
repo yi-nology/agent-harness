@@ -123,7 +123,7 @@ func (r *runtime) run(ctx context.Context, stopAfter int) (*runReport, error) {
 			return rep, err
 		}
 		// 步骤终态只受理一次：重复提交会被终态闸挡下（ErrAlreadyCommitted）。
-		if err := r.guard.Commit(commitgate.Commit{
+		if _, err := r.guard.Acquire(commitgate.Commit{
 			Ref:    commitgate.Ref{RunID: r.runID, Step: id},
 			Status: contract.StatusSucceeded,
 			Branch: r.branch,
@@ -134,7 +134,7 @@ func (r *runtime) run(ctx context.Context, stopAfter int) (*runReport, error) {
 	}
 
 	if !rep.Interrupted {
-		if err := r.guard.Commit(commitgate.Commit{
+		if _, err := r.guard.Acquire(commitgate.Commit{
 			Ref:    commitgate.Ref{RunID: r.runID, Step: runScope},
 			Status: contract.StatusSucceeded,
 			Branch: r.branch,

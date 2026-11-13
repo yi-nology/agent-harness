@@ -52,9 +52,6 @@ type Store interface {
 	// ReleaseToken 凭令牌精确释放：令牌匹配 ⇒ 删除并 released=true；
 	// 记录不存在或令牌不匹配 ⇒ released=false（迟到/重复释放的正确形态）。
 	ReleaseToken(ref Ref, token uint64) (released bool, err error)
-	// ReleaseTriple 旧 Release 的口径：status/branch/seq 三元组逐字相同才删
-	//（与旧实现同一语义，含它挡不住三元组完全相同的占用那一已知缺陷）。
-	ReleaseTriple(ref Ref, status, branch string, seq uint64) error
 	// SeedIfAbsent 回灌已持久化的终态：已存在不覆盖（内存里的现状更新）。
 	SeedIfAbsent(ref Ref, rec Record) error
 	// Get 查记录。第二个返回值为是否已提交。
@@ -101,21 +98,6 @@ func (s *MemoryStore) ReleaseToken(ref Ref, token uint64) (bool, error) {
 	}
 	delete(s.done, ref)
 	return true, nil
-}
-
-// ReleaseTriple 三元组逐字相同才删（旧 Release 口径，已知缺陷一并继承）。
-func (s *MemoryStore) ReleaseTriple(ref Ref, status, branch string, seq uint64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	prev, ok := s.done[ref]
-	if !ok {
-		return nil
-	}
-	if prev.Status != status || prev.Branch != branch || prev.Seq != seq {
-		return nil
-	}
-	delete(s.done, ref)
-	return nil
 }
 
 // SeedIfAbsent 回灌（已存在不覆盖）。

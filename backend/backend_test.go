@@ -9,7 +9,7 @@ import (
 	"github.com/oekit/concurrency/async"
 	kerrors "github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/sandbox"
+	"github.com/oagentkit/guardx/sandbox"
 )
 
 // stub 基型替身：只实现必选面，可选能力面（EgressEnforcer / Capable）**不带**——

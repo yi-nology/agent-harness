@@ -167,8 +167,8 @@ func TestAssemblySwapRecordsAuditTrail(t *testing.T) {
 		t.Fatalf("应有 1 条换份留痕，实得 %d", len(recs))
 	}
 	r := recs[0]
-	if r.Seq != 1 {
-		t.Fatalf("换份序号应从 1 起，实得 %d", r.Seq)
+	if r.Generation != 1 {
+		t.Fatalf("换份代次应从 1 起，实得 %d", r.Generation)
 	}
 	if strings.Join(r.From, ",") != "old_guard" {
 		t.Fatalf("留痕的 From 应是换走的那份，实得 %v", r.From)

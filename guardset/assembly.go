@@ -110,15 +110,10 @@ type Snapshot struct {
 
 // SwapRecord 一次换份的留痕。
 //
-// 留痕要能回答四个问题：**换了几次**（Seq）、**换走了什么**（From）、
-// **换上了什么**（To）、**换完之后是哪一代**（Generation）。
+// 留痕要能回答三个问题：**换走了什么**（From）、**换上了什么**（To）、
+// **换完之后是哪一代**（Generation——换份序号与代次是同一个计数，
+// 每次成功换份 +1，从 1 起、单调整调）。
 type SwapRecord struct {
-	// Seq 换份序号，从 1 起。单调整调。
-	//
-	// 与 `Generation` 是**同一个计数**（每次成功换份 +1）。保留 `Seq` 是为兼容
-	// v0.9.0 的既有调用方；新代码用 `Generation`。
-	Seq uint64
-
 	// From 换走的那一份的守卫名（按优先级序）。首次装配时为空。
 	From []string
 

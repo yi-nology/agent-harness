@@ -81,33 +81,6 @@ packages:
     since: v0.33.0
     reason: 被动配对不变量监视，零依赖，只告警不裁决——没有可变的裁决语义。
 
-  # ── 门面包（Stable：调用面稳定，判据跟随上游）──
-  - pkg: dispatch
-    level: Stable
-    since: v0.33.0
-    follows_upstream: github.com/oagentkit/agent
-    reason: 门面（facades 段登记）。核心在 oagentkit/agent，本包只保 allow 矩阵与深度上限的调用面。
-  - pkg: policy
-    level: Stable
-    since: v0.33.0
-    follows_upstream: github.com/oagentkit/toolgate
-    reason: 门面（facades 段登记）。审批判据在 oagentkit/toolgate/guardx，本包是审计门与判定环的接线面。
-  - pkg: reminder
-    level: Stable
-    since: v0.33.0
-    follows_upstream: github.com/oagentkit/guardx
-    reason: 门面（核心在 guardx/injectband）。宿主调用点一行不动是明文承诺。
-  - pkg: toolfail
-    level: Stable
-    since: v0.33.0
-    follows_upstream: github.com/oagentkit/guardx
-    reason: 门面（核心在 guardx/toolfail）。失败分类口径跨宿主必须一致，类型别名是编译期同一类型。
-  - pkg: sandbox
-    level: Stable
-    since: v0.33.0
-    follows_upstream: github.com/oagentkit/guardx
-    reason: 门面（核心在 guardx/sandbox）。档位语义与后端协议跨宿主必须一致。
-
   # ── 判据已定型的机制包（Stable）──
   - pkg: spill
     level: Stable

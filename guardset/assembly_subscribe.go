@@ -86,7 +86,6 @@ func (a *Assembly) Unsubscribe(h Subscription) {
 // 让订阅者先跑，就会出现「派生视图已按新份重算，而留痕里还没有这次换份」的窗口。
 func (a *Assembly) notify(old, next *assemblyState) {
 	rec := SwapRecord{
-		Seq:        next.gen,
 		From:       guardNames(stateSet(old)),
 		To:         guardNames(next.set),
 		Generation: next.gen,

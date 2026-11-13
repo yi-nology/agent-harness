@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oagentkit/guardx/sandbox"
 	"github.com/oagentkit/toolgate/policy"
 
 	"github.com/yi-nology/goagent-kernel/egress"
 	"github.com/yi-nology/goagent-kernel/gatecheck"
 	"github.com/yi-nology/goagent-kernel/preset"
-	"github.com/yi-nology/goagent-kernel/sandbox"
 )
 
 func strict() preset.Preset {

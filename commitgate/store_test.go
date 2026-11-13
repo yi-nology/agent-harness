@@ -21,12 +21,9 @@ func (errStore) Claim(Ref, Record) (Record, bool, error) {
 	return Record{}, false, errors.New("store down")
 }
 func (errStore) ReleaseToken(Ref, uint64) (bool, error) { return false, errors.New("store down") }
-func (errStore) ReleaseTriple(Ref, string, string, uint64) error {
-	return errors.New("store down")
-}
-func (errStore) SeedIfAbsent(Ref, Record) error { return errors.New("store down") }
-func (errStore) Get(Ref) (Record, bool, error)  { return Record{}, false, errors.New("store down") }
-func (errStore) Count() (int, error)            { return 0, errors.New("store down") }
+func (errStore) SeedIfAbsent(Ref, Record) error         { return errors.New("store down") }
+func (errStore) Get(Ref) (Record, bool, error)          { return Record{}, false, errors.New("store down") }
+func (errStore) Count() (int, error)                    { return 0, errors.New("store down") }
 
 // Test共享存储下迟到释放不放别人的闸 —— 接缝存在的核心理由：
 //
@@ -110,8 +107,7 @@ func TestStore故障时的口径(t *testing.T) {
 	if _, _, ok := g.Status(c.Ref); ok {
 		t.Fatal("Store 故障时 Status 应按未提交处理")
 	}
-	g.Release(c)                                // 静默：不得 panic
-	g.ReleaseLease(Lease{Ref: c.Ref, Token: 1}) // 静默
+	g.ReleaseLease(Lease{Ref: c.Ref, Token: 1}) // 静默：不得 panic
 	g.Seed(c)                                   // 静默
 }
 
