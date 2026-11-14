@@ -208,6 +208,47 @@ func TestSeedIsIdempotentAndDoesNotOverwrite(t *testing.T) {
 	}
 }
 
+// TestSeedSkipsNonTerminalRows 回灌面与判定面同一份词表判据（issue #154）：
+// Seed 经注入的 isTerminal 判定，非终态行跳过不记。此前 Seed 不看词表——
+// 宿主按自然写法回灌全部持久化行（含 running）时环节被记为已提交，
+// 首次真正终态提交撞 ErrAlreadyCommitted，环节永远收不了口。
+func TestSeedSkipsNonTerminalRows(t *testing.T) {
+	gd := g()
+	// 宿主的持久化表里既有终态也有非终态行，按自然写法整表回灌。
+	gd.Seed(Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1})
+	gd.Seed(Commit{Ref: ref("s2"), Status: "succeeded", Branch: "done", Seq: 2})
+
+	// 非终态行不得记为已提交：首次真正终态提交必须放行（旧实现在此撞闸）。
+	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "later", Seq: 3}); err != nil {
+		t.Fatalf("Seed 的非终态行不得挡住真正的终态提交: %v", err)
+	}
+	// 终态行照常生效（既有语义不回退）。
+	if _, err := gd.Acquire(Commit{Ref: ref("s2"), Status: "failed", Branch: "other", Seq: 4}); !errors.Is(err, ErrAlreadyCommitted) {
+		t.Fatalf("Seed 的终态行仍应挡住后续提交，实得 %v", err)
+	}
+}
+
+// TestSeedNilIsTerminalTreatsAllTerminal 词表未知（isTerminal=nil）时回灌按
+// 全终态处理，与 Acquire 同侧：宁可多拦，不因缺配置漏放。
+func TestSeedNilIsTerminalTreatsAllTerminal(t *testing.T) {
+	gd := NewGuard(nil)
+	gd.Seed(Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1})
+	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "later", Seq: 2}); !errors.Is(err, ErrAlreadyCommitted) {
+		t.Fatalf("词表未知时 Seed 的行应按终态从严处理，实得 %v", err)
+	}
+}
+
+// TestSeedEmptyRefSkips 空 Ref 静默跳过（Seed 无返回值，响亮失败形态在
+// Acquire 的 ErrEmptyRef——签名级差异见 Seed 注释与 issue #154 的报告）。
+func TestSeedEmptyRefSkips(t *testing.T) {
+	gd := g()
+	gd.Seed(Commit{Ref: Ref{RunID: "", Step: "s1"}, Status: "succeeded", Branch: "b", Seq: 1})
+	gd.Seed(Commit{Ref: Ref{RunID: "run-1", Step: ""}, Status: "succeeded", Branch: "b", Seq: 1})
+	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 2}); err != nil {
+		t.Fatalf("空 Ref 的回灌不得生效: %v", err)
+	}
+}
+
 // TestConcurrentTerminalCommitHasExactlyOneWinner 并发提交终态，必须恰好一个赢家。
 // 这条是本包在真实并发编排下的正面断言（配 -race 才有意义）。
 func TestConcurrentTerminalCommitHasExactlyOneWinner(t *testing.T) {
