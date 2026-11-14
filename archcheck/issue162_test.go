@@ -48,7 +48,9 @@ func TestNestedModuleSpawnSitesExcluded(t *testing.T) {
 	}
 	found := false
 	for _, v := range vs {
-		if v.Kind == "egress_path_unregistered" && v.Path == filepath.Join("app", "other.go") {
+		// spawnSite.rel 按 repo 惯例 ToSlash 归一（Windows 下 Join 出反斜杠，
+		// 直接比会假阴）——比对前同样归一。
+		if v.Kind == "egress_path_unregistered" && v.Path == filepath.ToSlash(filepath.Join("app", "other.go")) {
 			found = true
 		}
 	}
