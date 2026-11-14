@@ -49,9 +49,13 @@ func IsTerminalLocation(location string) bool { return strings.TrimSpace(locatio
 
 // HopDeniedError 某一跳被拒。带跳号与该跳 URL，便于留痕定位是哪一跳出的问题
 // （只报「URL 不合法」而不知道跳号，等于没报）。
+//
+// 不变量：Hop 与 URL 指向**同一跳**，且该跳被真实校验过（issue #158）。
+// 拒绝原因不在该跳本身时（ErrTooManyHops：预算在起始之后耗尽），
+// Hop/URL 报最后一个校验过的跳，原因看 Err。
 type HopDeniedError struct {
 	Hop int    // 1 = 起始 URL；2.. = 第 n-1 次跳转的目标
-	URL string // 被拒的那一跳
+	URL string // 与 Hop 同一跳的 URL（真实校验过的那一跳）
 	Err error  // 底层原因（CheckURL 的错误，或 ErrTooManyHops）
 }
 
@@ -103,12 +107,13 @@ func ResolveLocation(current, location string) (string, error) {
 //
 // ## 为什么先验起始跳、再谈预算
 //
-// HopDeniedError 的两个字段是给留痕用的，**必须描述一个真的校验过的 URL**。
-// 先判预算的话，坏起始 URL + 超长链会报出 `Hop = maxHops+1`——那一跳从未被校验过，
-// 留痕上读起来像「第 11 跳有结论」，实则整条链子的第一跳就已经是坏的。
-// 两条错误都成立时，先报**真实且更早**的那条：起始跳非法是链的根因，
-// 跳数超限可能只是根因的次生现象。两种结论都不丢，调用方拿到起始跳的 error
-// 后重试或改链即可。
+// HopDeniedError 的两个字段是给留痕用的，**必须描述一个真的校验过的 URL**，
+// 且 Hop 与 URL 必须指向同一跳。先判预算的话，坏起始 URL + 超长链会报出
+// `Hop = maxHops+1`——那一跳从未被校验过，留痕上读起来像「第 11 跳有结论」，
+// 实则整条链子的第一跳就已经是坏的。两条错误都成立时，先报**真实且更早**的
+// 那条：起始跳非法是链的根因，跳数超限可能只是根因的次生现象。两种结论都不丢，
+// 调用方拿到起始跳的 error 后重试或改链即可。预算耗尽分支同理：Hop/URL 报
+// 最后一个真实校验过的跳（起始），原因在 Err（见函数体内的 issue #158 注）。
 // CheckChainWith 逐跳校验一条跳转链（具名放行面）。
 //
 // 放行面与 CheckURLWith、拨号层同一个类型（见 allow.go）——逐跳校验与单跳校验
@@ -134,7 +139,12 @@ func CheckChainWithCtx(ctx context.Context, start string, hops []string, allow A
 		return &HopDeniedError{Hop: 1, URL: start, Err: err}
 	}
 	if len(followed) > maxHops {
-		return &HopDeniedError{Hop: maxHops + 1, URL: start, Err: ErrTooManyHops}
+		// Hop=1、URL=start（issue #158）：超限不是「某一跳被校验拒」，
+		// 而是「预算在起始之后耗尽」。Hop/URL 报告**最后一个真实校验过的跳**
+		// （起始，它刚通过校验），拒绝原因在 Err——此前 Hop=maxHops+1 指向
+		// 从未被校验过的那一跳、URL 却填起始，两个字段各说各话，留痕读起来
+		// 像「第 11 跳有结论」，排障的人去查一个没有问题的 URL。
+		return &HopDeniedError{Hop: 1, URL: start, Err: ErrTooManyHops}
 	}
 	current := start
 	for i, loc := range followed {
