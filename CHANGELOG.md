@@ -2,6 +2,50 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.35.1] — 2026-11-14
+
+### 修复(netguard)：lint 静音——适配废弃 Dial 字段处按仓惯例挂 nolint 带理由
+
+- 05ae22b
+
+### 修复(netguard)：跳数超限的 HopDeniedError 改报最后一个校验过的跳——Hop 与 URL 不再各说各话
+
+- 14961bf
+
+### 修复(preset)：Key 纳入 Proxy 与排序去重的 Allow/Bypass——出口细节不同的合法预设不再被判同一份拒收
+
+- 02f4002
+
+### 修复(worktree)：patternsOverlap 后缀×后缀补包含关系判重叠——一条后缀是另一条字符串后缀时不再漏报冲突
+
+- 785ea3e
+
+### 修复(commitgate)：Seed 复用注入的 isTerminal 判定——非终态行跳过不记，回灌面与判定面同一词表
+
+- fd569ab
+
+### 修复(delta)：FlushAll 改按未收口轮次升序冲刷——iteration≤0 的残尾不再被扫序漏掉
+
+- 36d4a31
+
+### 修复(netguard)：NewTransport 把只设 Dial 的 base 适配成守卫 next——宿主自定义拨号器不再被静默丢弃
+
+- 3a50856
+
+### 修复(ptc)：sandbox.Failure.Kind 两后端统一 toolfail 词表——进程内出口走 kindForErrorKind，诊断口径留 Detail
+
+- c79c432
+
+### 修复(ptc)：父侧绑定执行失败改走 rejectionKindOf 带真实分类回子进程，不再一律报 unknown
+
+- 73ce77d
+
+- 杂务(deps)：依赖地板追到最新——concurrency v0.36.1/logx v0.11.0/guardx v0.25.1/tools v0.14.6/runtime v0.13.0/mcpkit v0.14.0（发版批统一抬地板）
+
+- 文档(readme)：工程底座表生产代码行数对齐 43488（docsync 门禁）
+- 文档(contract,statemachine)：终态词表单源化口径——Finish 词表归宿主、statemachine 以 IsTerminal 为准，两套口径互指防误接
+- 文档(gatecheck)：文件头档位语义段与方法实现对齐——声明保证下限、运行期登记簿判内层，删除转发口径
+
 ## [v0.35.0] — 2026-11-13
 
 ### 新增(ticket,commitgate,eventbus)：#145 B 档三包抽 Store/Relay 接缝——判定留包内、状态归存储、进程内参考实现
@@ -3710,7 +3754,7 @@ golangci-lint ✅ 0 issues
 
 - 文档(overlap)：复核并更正 §四 的结论——补完整映射表，删掉一句不实断言
 
-上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一个上下文窗口在两处算出两个
+上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一���上下文窗口在两处算出两个
 阈值」。**实测评数值后该断言不成立**，本轮更正。
 ## 断言错在哪
 1. **对照方式本身错了**：拿上游 `EffectiveWindow()`（纯窗口口径：窗口−预留）与
@@ -4546,7 +4590,7 @@ requires 改成真实依赖 [eventbus]，删除那句自我合理化。
 ### 新增(tooldisclose)：SignatureOf 从 schema 派生调用形态，消除第二份描述
 
 对标 OpenCode codemode/src/tool-schema.ts 的 inputProperties：他们从工具声明的 schema
-自动派生签名与必填/可选标注，schema 是唯一事实源。
+自动派��签名与必填/可选标注，schema 是唯一事实源。
 我们的 Signature 此前要宿主手写，等于同一组参数有两份描述。加了参数忘了改签名，
 模型就按旧签名调用——传不进去的、或多传的，两种都表现为「工具明明支持，模型却
 调不对」，而排查时极容易先怀疑模型。派生把「靠人记得同步」变成「不可能忘记」。
