@@ -19,11 +19,11 @@
 //
 // # 生命周期是「单个环节」，不是「整个进程」
 //
-// entries 按 (kind, iteration) 惰性建流且**从不回收**， FlushAll 的扫序上界又是
-// `max(iteration)`——这两处单独看都像缺陷（前者无界增长，后者按 max 空转）。
-// 它们安全**只因为一个外部不变量**：宿主每个 LLM 环节新建一个 Pacer，在该环节的
-// defer 里 FlushAll 收口后整体丢弃；iteration 是该环节内的局部计数器，不是
-// 模型可控值、也不跨环节累加（见 bianque `steps_llm.go` 的 `round`）。
+// entries 按 (kind, iteration) 惰性建流且**从不回收**——单独看像缺陷
+// （无界增长），它安全**只因为一个外部不变量**：宿主每个 LLM 环节新建一个
+// Pacer，在该环节的 defer 里 FlushAll 收口后整体丢弃；iteration 是该环节内的
+// 局部计数器（约定从 1 起），不是模型可控值、也不跨环节累加（见 bianque
+// `steps_llm.go` 的 `round`）。
 //
 // 所以本包**不能**被改成长生命周期对象（如「整个会话一个 Pacer」）而无人察觉：
 // 那会同时引爆上面两条，且症状是「跑久了内存涨 / 收口卡住」，极难归因。
@@ -31,6 +31,7 @@
 package delta
 
 import (
+	"slices"
 	"strconv"
 	"time"
 
@@ -88,6 +89,10 @@ func (p *Pacer) ent(kind string, iteration int) *entry {
 }
 
 // Offer 接收一个增量分片：按节流窗口判定是否发布；done（权威已到）后的迟到分片丢弃。
+//
+// iteration 是环节内的局部轮次计数器，由宿主按轮递增、约定从 1 起（当前
+// bianque steps_llm.go 恰为 1 起）；本包不假设下界——FlushAll 对任意取值
+// 都冲刷，换 0 基宿主不静默丢内容（issue #153）。
 func (p *Pacer) Offer(kind string, iteration int, chunk string) (Pub, bool) {
 	d, ok := p.ent(kind, iteration).stream.Offer(chunk)
 	return Pub{Kind: kind, Iteration: iteration, Seq: d.Seq, Text: d.Text}, ok
@@ -112,15 +117,21 @@ func (p *Pacer) Absorb(kind string, iteration int) {
 
 // FlushAll 环节收口：按轮序冲刷所有残尾（调用轮正文无权威快照，只在此落地）。
 // 顺序确定性：轮升序 × reasoning→text，保证事件落序可回放。
+//
+// iteration 由宿主按轮递增（约定从 1 起，见包注释的局部计数器不变量）；
+// 本实现对**任意**取值（含 ≤0）都不丢残尾（issue #153）——此前扫序上界从 1
+// 起扫、max 初值 0，0 基宿主的 0 轮残尾永远不在扫序内，收口静默不发布。
 func (p *Pacer) FlushAll() []Pub {
-	max := 0
+	its := make([]int, 0, len(p.entries))
 	for _, e := range p.entries {
-		if !e.stream.Sealed() && e.iteration > max {
-			max = e.iteration
+		if !e.stream.Sealed() {
+			its = append(its, e.iteration)
 		}
 	}
+	slices.Sort(its)
+	its = slices.Compact(its)
 	var out []Pub
-	for it := 1; it <= max; it++ {
+	for _, it := range its {
 		for _, kind := range []string{"reasoning", "text"} {
 			if pub, ok := p.Flush(kind, it); ok {
 				out = append(out, pub)

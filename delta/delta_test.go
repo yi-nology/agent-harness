@@ -106,3 +106,44 @@ func TestDeltaPacerFlushAllAndCap(t *testing.T) {
 		t.Fatalf("应被总量帽拦住: published=%d cap=%d", published, CapBytes)
 	}
 }
+
+// TestDeltaPacerFlushAllZeroBasedIteration 0 基 iteration 的残尾不被丢
+// （issue #153）：此前 FlushAll 从 it=1 起扫、max 初值 0——仅 0 轮时循环体
+// 一次不进，0 轮残尾静默不发布；多轮时 0 轮被跳过。iteration 的下界契约
+// 未钉（约定从 1 起），换 0 基宿主即静默丢流式尾巴。
+func TestDeltaPacerFlushAllZeroBasedIteration(t *testing.T) {
+	t0 := time.Now()
+
+	// 仅 0 轮：max 停在 0 的旧实现一次都不发。
+	p := New()
+	p.now = func() time.Time { return t0 }
+	_, _ = p.Offer("text", 0, "零轮残尾")
+	got := p.FlushAll()
+	if len(got) != 1 || got[0].Kind != "text" || got[0].Iteration != 0 || got[0].Text != "零轮残尾" {
+		t.Fatalf("0 轮残尾必须被冲刷: %+v", got)
+	}
+
+	// 0 轮与 1 轮并存：轮升序 0 → 1，0 轮不被跳过。
+	p2 := New()
+	p2.now = func() time.Time { return t0 }
+	_, _ = p2.Offer("text", 1, "一轮残尾")
+	_, _ = p2.Offer("text", 0, "零轮残尾")
+	got2 := p2.FlushAll()
+	if len(got2) != 2 {
+		t.Fatalf("两轮残尾都应被冲刷: %+v", got2)
+	}
+	if got2[0].Iteration != 0 || got2[1].Iteration != 1 {
+		t.Fatalf("顺序应轮升序（0 在前）: %+v", got2)
+	}
+
+	// 已收口（Absorb）的轮不参与冲刷。
+	p3 := New()
+	p3.now = func() time.Time { return t0 }
+	_, _ = p3.Offer("text", 0, "会被权威替换")
+	p3.Absorb("text", 0)
+	_, _ = p3.Offer("text", -1, "负轮残尾")
+	got3 := p3.FlushAll()
+	if len(got3) != 1 || got3[0].Iteration != -1 {
+		t.Fatalf("已收口轮不得再冲刷，未收口轮（含负值）应冲刷: %+v", got3)
+	}
+}
