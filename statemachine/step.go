@@ -78,6 +78,15 @@ func RequiresApproval(t StepType) bool {
 }
 
 // IsTerminal 是否终态。
+//
+// # 词表边界（issue #159）
+//
+// 本函数是**本状态机**的终态判据，词表以转移表为准：failed 在这里不是终态
+// （它还有出边 → rolled_back，回滚是失败后的正常去向），degraded 不在本包
+// 词表中。contract.StepSink.Finish 的 status 是宿主自定义词表（那边举例
+// succeeded/failed/degraded/skipped），与本表是**两套口径**——两包组合使用
+// 时（如把本函数注入 commitgate 当终态判定），宿主须让落库的 status 取值
+// 跟随本表，不要按 contract 注释的举例词表灌进来。
 func IsTerminal(s StepStatus) bool {
 	return s == StatusRejected || s == StatusExpired || s == StatusSucceeded ||
 		s == StatusInterrupted ||

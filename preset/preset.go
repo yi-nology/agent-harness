@@ -158,13 +158,23 @@ func (p Preset) validate() error {
 	return nil
 }
 
-// Key 预设的语义键：只由三维组成，与名字无关。
+// Key 预设的语义键：由三维及出口细节组成，与名字无关。
 //
 // 它同时是「换整份」的判定依据——两份预设 `Key()` 相同即**就是同一份权限**，
-// 无论叫什么名字。
+// 无论叫什么名字。出口细节（Proxy 与 Allow/Bypass 名单）编进键里（issue #156）：
+// GateRequest 实际带下去的是**完整** Egress，键只编 Mode 会把「同模式、不同
+// 代理 / 不同白名单」的两份合法预设判成同一份而拒收，报错文案还声称「完全
+// 相同」。Allow/Bypass 是集合语义（顺序不影响兑现），排序去重后进键——
+// 同一名单的两种书写顺序判同一份权限，仍是撞名错误。
 func (p Preset) Key() string {
-	return fmt.Sprintf("level=%s mode=%s egress=%s",
-		p.Level.String(), string(p.Mode), p.Egress.Mode.String())
+	norm := func(list []string) string {
+		s := append([]string(nil), list...)
+		slices.Sort(s)
+		return strings.Join(slices.Compact(s), ",")
+	}
+	return fmt.Sprintf("level=%s mode=%s egress=%s proxy=%s allow=[%s] bypass=[%s]",
+		p.Level.String(), string(p.Mode), p.Egress.Mode.String(),
+		p.Egress.Proxy, norm(p.Egress.Allow), norm(p.Egress.Bypass))
 }
 
 // String 面向人的一句话（进报告与日志）。

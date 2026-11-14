@@ -175,7 +175,10 @@ func (p *SubprocessProvider) Exec(ctx context.Context, req sandbox.Request) (san
 	// 判在**起子进程之前**：子进程起来之后，工具调用的判定在父侧做——
 	// 父侧此刻不判，这次执行就已经把「无人判定」的事实变成既成事实。
 	if reason := unmanagedRefusal(p.opts.Bindings, p.opts.Stages, p.opts.AllowUnmanaged); reason != "" {
-		return sandbox.Outcome{}, &sandbox.Failure{Kind: ErrorKindUnmanaged, Message: reason}
+		// Kind 与进程内 Provider 同走 kindForErrorKind（issue #151）：两后端
+		// 的 sandbox.Failure.Kind 必须是同一词表（toolfail 分类），unmanaged
+		// 不在映射表内 → unknown（不可分类 = 不可重试，保守侧）。
+		return sandbox.Outcome{}, &sandbox.Failure{Kind: kindForErrorKind(ErrorKindUnmanaged), Message: reason}
 	}
 	// 预算收口（issue #66）：装配期配置与每请求预算逐项取严后写 Start 帧。
 	lim, maxMemory := p.effectiveBudget(req.Budget)

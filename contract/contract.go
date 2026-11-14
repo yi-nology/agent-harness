@@ -88,7 +88,16 @@ type StepSink interface {
 	// Open 新建环节：宿主应完成「建行 + 状态迁移到 running」两件事。
 	// name 为环节标识（agent slug 或链节点路径），label 为用户可见语义标签。
 	Open(name, label string) (StepRef, error)
-	// Finish 环节收口：status 为终态（succeeded / failed / degraded / skipped）。
+	// Finish 环节收口。status 是**宿主自定义词表**的终态取值（编排面惯用
+	// succeeded / failed / degraded / skipped，本包不判值——终态判定由宿主
+	// 注入，见包头承诺）。
+	//
+	// 词表与 statemachine 的 StepStatus 是**两套口径**（issue #159）：那边
+	// 的终态以 statemachine.IsTerminal 为准，且 failed 在状态机里**不是**终态
+	// （它还有出边 → rolled_back），degraded 也不在其词表中。宿主若两包组合
+	// 使用（如把 statemachine.IsTerminal 注入 commitgate 当判定面），请按
+	// statemachine 的词表对齐自己的 status 取值，不要把本注释的举例词表
+	// 直接灌进那边的判定面。
 	Finish(ref StepRef, status string) error
 }
 

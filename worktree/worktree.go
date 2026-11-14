@@ -203,9 +203,10 @@ func matchPattern(pattern, path string) bool {
 
 // patternsOverlap 判两条声明项覆盖的路径是否有交集。
 //
-// 三种形态两两组合都归结为「前缀包含」：目录前缀是标准前缀，后缀之间只要
-// 相等就必然重叠（不同的后缀可以指向同一路径吗？可以——"a.md" 同时以
-// ".md" 与 "d" 结尾不成立，故后缀之间只有相等才重叠），精确路径与目录前缀
+// 三种形态两两组合都归结为「前缀包含」：目录前缀是标准前缀，后缀之间相等
+// 固然重叠，一条后缀是另一条的字符串后缀时也重叠（issue #155）——`.o.go`
+// 以 `.go` 结尾，任何 `x.o.go` 同时命中两条声明（HasSuffix 双真），只判相等
+// 会把可写区交集判成无冲突，Conflicts 漏报（fail-open）；精确路径与目录前缀
 // 按前缀判。这套归约让判定不需要展开成路径集合。
 func patternsOverlap(a, b string) bool {
 	x := strings.ToLower(strings.TrimSpace(a))
@@ -216,7 +217,7 @@ func patternsOverlap(a, b string) bool {
 	xa, ya := strings.HasPrefix(x, "."), strings.HasPrefix(y, ".")
 	switch {
 	case xa && ya:
-		return x == y
+		return x == y || strings.HasSuffix(x, y) || strings.HasSuffix(y, x)
 	case xa:
 		// y 是目录前缀或精确路径：只要 y 覆盖到的路径里存在以 x 结尾的即重叠。
 		// 保守取法：y 是前缀且未限定后缀 ⇒ 可以出现任意后缀，判重叠。

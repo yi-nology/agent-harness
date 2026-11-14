@@ -233,6 +233,66 @@ func TestSubprocessStageOutcomeClassified(t *testing.T) {
 	}
 }
 
+// TestProviderFailureKindParityAcrossBackends 同一失败经两个后端产出同一
+// sandbox.Failure.Kind（issue #151）：登记簿按环境选后端（要求内存预算即切
+// 子进程），宿主按 Kind 分流时拿到的是同一套词表（toolfail 分类）——
+// 进程内此前报本地诊断词表（syntax/stage_denied），子进程报 toolfail 分类
+// （permanent/permission_denied），「看起来同一次失败、分类不同」。
+func TestProviderFailureKindParityAcrossBackends(t *testing.T) {
+	bin := buildChildProgram(t)
+	deny := invoke.StageFunc{StageName: "审计门", Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
+		return invoke.Verdict{Allow: false, Reason: "策略否定"}, nil
+	}}
+	cases := []struct {
+		name    string
+		program string
+		stages  []invoke.Stage
+		want    string
+	}{
+		// 语法错误：进程内诊断词表 syntax，经 kindForErrorKind → permanent。
+		{"语法错误", `return (`, allowStages(), "permanent"},
+		// 判定环拒绝：两形态都应报 toolfail 的 permission_denied。
+		{"判定拒绝", `return await host.echo("hi");`, []invoke.Stage{deny}, "permission_denied"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			echo := ptc.Binding{Name: "echo", Call: func(context.Context, string) (string, error) {
+				return "OUT", nil
+			}}
+			// 进程内后端。
+			inProc := ptc.Provider{Bindings: []ptc.Binding{echo}, Stages: tc.stages}
+			outProc, err := inProc.Exec(context.Background(), sandbox.Request{Program: tc.program})
+			if err != nil {
+				t.Fatalf("进程内执行不应抛异常: %v", err)
+			}
+			// 子进程后端。
+			sub := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
+				ExePath:  bin,
+				Program:  tc.program,
+				Bindings: []ptc.Binding{echo},
+				Stages:   tc.stages,
+				Timeout:  20 * time.Second,
+			})
+			outSub, err := sub.Exec(context.Background(), sandbox.Request{Program: ""})
+			if err != nil {
+				t.Fatalf("子进程执行不应抛异常: %v", err)
+			}
+			fProc, ok := outProc.Err.(*sandbox.Failure)
+			if !ok || outProc.OK {
+				t.Fatalf("进程内失败应为 sandbox.Failure，实得 %+v", outProc.Err)
+			}
+			fSub, ok := outSub.Err.(*sandbox.Failure)
+			if !ok || outSub.OK {
+				t.Fatalf("子进程失败应为 sandbox.Failure，实得 %+v", outSub.Err)
+			}
+			if fProc.Kind != tc.want || fSub.Kind != tc.want {
+				t.Fatalf("两后端 Kind 应一致且为 %q：进程内 %q，子进程 %q",
+					tc.want, fProc.Kind, fSub.Kind)
+			}
+		})
+	}
+}
+
 // TestSubprocessHonorsTighterRequestBudget 每请求预算取严（issue #66 端到端）：
 // 装配期 MaxCalls=50，请求 MaxCalls=2——子进程必须按**请求的**更紧上限收口
 // （budget_calls），而不是静默按装配期宽限跑完。

@@ -116,6 +116,43 @@ func TestConflictsOnlyOnWritable(t *testing.T) {
 		t.Fatalf("相同后缀必须算冲突，实得 %+v", p3.Conflicts())
 	}
 
+	// 一条后缀是另一条的字符串后缀也冲突（issue #155）：A 可写 .go、B 可写
+	// .o.go，任何 x.o.go 同时命中两条（HasSuffix 双真）——只判相等会把
+	// 可写区交集判成「无冲突」，两工作区并行写同一批文件互踩且判定面全绿。
+	// 反向（.o.go 在前）同款，坏实现两条都红不了。
+	p6, err := New([]Workspace{
+		{ID: "a", Writable: []string{".go"}},
+		{ID: "b", Writable: []string{".o.go"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p6.Conflicts()) != 1 {
+		t.Fatalf("后缀包含关系必须判冲突（.go × .o.go）: %+v", p6.Conflicts())
+	}
+	p7, err := New([]Workspace{
+		{ID: "a", Writable: []string{".o.go"}},
+		{ID: "b", Writable: []string{".go"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p7.Conflicts()) != 1 {
+		t.Fatalf("后缀包含关系必须判冲突（反向 .o.go × .go）: %+v", p7.Conflicts())
+	}
+
+	// 互不为后缀的两条后缀不冲突（判据不能把一切都判成冲突）。
+	p8, err := New([]Workspace{
+		{ID: "a", Writable: []string{".go"}},
+		{ID: "b", Writable: []string{".md"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p8.Conflicts()) != 0 {
+		t.Fatalf("互不包含的不同后缀不该冲突: %+v", p8.Conflicts())
+	}
+
 	// 后缀与目录前缀：保守判重叠（目录下可以出现该后缀的文件）。
 	p4, err := New([]Workspace{
 		{ID: "a", Writable: []string{".md"}},

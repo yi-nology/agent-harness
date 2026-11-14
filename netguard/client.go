@@ -33,7 +33,9 @@
 package netguard
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"net/http"
 )
 
@@ -43,6 +45,14 @@ import (
 // **包住**（守卫叠加在它之上，不是替换它）——宿主已有的自定义拨号器
 // （代理、连接池参数）不会丢。
 //
+// base 只设了废弃字段 Dial（未设 DialContext）时同样成立：旧拨号器被适配成
+// DialFunc 的 next 交给守卫包住（issue #152）。此前这里只包装 DialContext，
+// 只设 Dial 的宿主自定义拨号器被静默丢弃——克隆后 DialContext 为 nil，
+// DialFunc(nil,…) 落缺省拨号器，而 net/http 的 DialContext 优先语义使旧 Dial
+// 被完全忽略，连接行为静默改变。适配丢掉的只有 ctx：废弃 API 本身不接收
+// context（请求取消/期限不再传导到拨号器，这是 http.Transport.Dial 的既有
+// 局限，不是本包装引入的）。
+//
 // 守卫只能挂在传输层：拨号发生在传输层内部，绕开传输层就没有拨号层防线。
 func NewTransport(base *http.Transport, allow Allow) *http.Transport {
 	var t *http.Transport
@@ -50,6 +60,16 @@ func NewTransport(base *http.Transport, allow Allow) *http.Transport {
 		t = http.DefaultTransport.(*http.Transport).Clone()
 	} else {
 		t = base.Clone()
+	}
+	if t.DialContext == nil && t.Dial != nil { //nolint:staticcheck // 适配废弃字段正是本分支的职责：宿主只设了 Dial，读它是修 #152 的前提
+		// 只设 Dial 的 base：把旧拨号器适配成 next（issue #152）——
+		// 守卫包住它，而不是用缺省拨号器把它替换掉。
+		next := t.Dial //nolint:staticcheck // 同上：读宿主设置的废弃字段再包进守卫
+		t.DialContext = DialFunc(func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return next(network, addr)
+		}, DialOptions{Allow: allow})
+		t.Dial = nil //nolint:staticcheck // 清掉死字段：DialContext 已设，net/http 会忽略 Dial
+		return t
 	}
 	t.DialContext = DialFunc(t.DialContext, DialOptions{Allow: allow})
 	return t

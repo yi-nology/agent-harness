@@ -2,6 +2,7 @@ package ptc
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -209,6 +210,78 @@ func TestSubprocessHandlerNonDenyErrorNotPermissionDenied(t *testing.T) {
 	}
 	if resp.Kind == string(toolfail.ClassPermissionDenied) {
 		t.Fatalf("守卫自身故障不得上报为 permission_denied: Kind=%q Error=%q", resp.Kind, resp.Error)
+	}
+}
+
+// TestSubprocessHandlerBindingFailureCarriesClass 绑定执行失败带真实分类回
+// 子进程（issue #150）：此前父侧 handler 对 b.Call 的错误硬编码 unknown——
+// 分类跨进程丢失，同一失败进程内报 permission_denied/rate_limited/…，
+// 子进程形态一律 unknown，与进程内路径（binding.go 的 thrownRejection 走
+// rejectionKindOf）分叉。判据：handler 的 wire.Response.Kind 与进程内
+// rejectionKindOf(err) 同值。
+func TestSubprocessHandlerBindingFailureCarriesClass(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"规范失败类型", toolfail.New(toolfail.ClassPermissionDenied, "", "宿主拒绝")},
+		{"规范失败类型经 %w 包装", fmt.Errorf("绑定执行: %w", toolfail.New(toolfail.ClassRateLimited, "", "限流"))},
+		{"宿主自定义 Kind() 接口", &customKindError{kind: "transient"}},
+		{"无分类的普通错误", errors.New("绑定炸了")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewSubprocessProvider(SubprocessOptions{
+				Bindings: []Binding{{Name: "t", Call: func(context.Context, string) (string, error) {
+					return "", tc.err
+				}}},
+			})
+			resp, herr := p.handler()(context.Background(), wire.Request{Tool: "t", Args: "{}"})
+			if herr != nil {
+				t.Fatalf("handler 不应返回 error: %v", herr)
+			}
+			if resp.OK {
+				t.Fatal("绑定失败必须 fail-closed 拒绝")
+			}
+			// 与进程内路径同一份判据：分类相等地比较，两边用的是同一个函数。
+			if want := rejectionKindOf(tc.err); want != "" {
+				if resp.Kind != want {
+					t.Fatalf("Kind=%q，应与错误自带分类一致 %q", resp.Kind, want)
+				}
+				return
+			}
+			if resp.Kind != string(toolfail.ClassUnknown) {
+				t.Fatalf("无分类错误应落 unknown，实得 %q", resp.Kind)
+			}
+		})
+	}
+}
+
+// TestSubprocessHandlerBindingParityWithInProcess 子进程/进程内两形态对同一
+// 绑定失败报同一分类（issue #150 的 parity 判据）：进程内走
+// thrownRejection.kind = rejectionKindOf(err)，子进程走父侧 handler 的
+// wire.Response.Kind——两处判据若是两份，同一失败两形态就分叉。
+func TestSubprocessHandlerBindingParityWithInProcess(t *testing.T) {
+	errs := []error{
+		toolfail.New(toolfail.ClassPermissionDenied, "", "宿主拒绝"),
+		toolfail.New(toolfail.ClassRateLimited, "", "限流"),
+		fmt.Errorf("包装: %w", toolfail.New(toolfail.ClassNotFound, "", "没有")),
+	}
+	for _, berr := range errs {
+		// 子进程形态：父侧 handler 的应答分类。
+		p := NewSubprocessProvider(SubprocessOptions{
+			Bindings: []Binding{{Name: "t", Call: func(context.Context, string) (string, error) {
+				return "", berr
+			}}},
+		})
+		resp, herr := p.handler()(context.Background(), wire.Request{Tool: "t", Args: "{}"})
+		if herr != nil {
+			t.Fatalf("handler 不应返回 error: %v", herr)
+		}
+		// 进程内形态：同一错误经同一判据探测出的分类。
+		if resp.Kind != rejectionKindOf(berr) {
+			t.Fatalf("子进程 Kind=%q 与进程内分类 %q 不一致: %v", resp.Kind, rejectionKindOf(berr), berr)
+		}
 	}
 }
 

@@ -153,6 +153,50 @@ func TestNewTransportWrapsExistingDialer(t *testing.T) {
 	}
 }
 
+// TestNewTransportAdaptsLegacyDialField 只设废弃字段 Dial 的 base（issue #152）：
+// 旧拨号器必须被适配成守卫的 next——此前只包装 DialContext，只设 Dial 的
+// 宿主自定义拨号器被静默丢弃（克隆后 DialContext 为 nil，守卫包上缺省拨号器，
+// net/http 的 DialContext 优先语义使旧 Dial 被完全忽略）。两个方向都钉：
+//
+//  1. 放行面允许回环 ⇒ 走的是 base 的 Dial（坏实现会调缺省拨号器，called=0）；
+//  2. 放行面拒绝回环 ⇒ 守卫拦下（坏实现若是裸包旧 Dial 不带守卫，会连上）。
+func TestNewTransportAdaptsLegacyDialField(t *testing.T) {
+	addr := echoListener(t)
+
+	// 方向 1：守卫包住旧拨号器，宿主拨号器仍在链上。
+	var called int
+	base := &http.Transport{
+		Dial: func(network, a string) (net.Conn, error) { //nolint:staticcheck // 用例标的正是废弃字段形态（issue #152），必须真的只设 Dial
+			called++
+			return net.Dial(network, a)
+		},
+	}
+	tr := NewTransport(base, Allow{Loopback: true})
+	conn, err := tr.DialContext(context.Background(), "tcp", addr)
+	if err != nil {
+		t.Fatalf("拨号失败: %v", err)
+	}
+	_ = conn.Close()
+	if called != 1 {
+		t.Fatalf("只设 Dial 的宿主拨号器必须被适配进守卫链并被调用，实得调用 %d 次", called)
+	}
+	if tr.Dial != nil { //nolint:staticcheck // 断言死字段已被清空
+		t.Fatal("DialContext 已接管后旧 Dial 字段应清空（net/http 会忽略它，留着是死字段）")
+	}
+
+	// 方向 2：守卫真的在链上——被拒地址不得经旧拨号器连出去。
+	guarded := NewTransport(&http.Transport{
+		Dial: func(network, a string) (net.Conn, error) { //nolint:staticcheck // 同上：只设废弃字段是本用例的前提
+			return net.Dial(network, a)
+		},
+	}, Allow{})
+	conn2, err := guarded.DialContext(context.Background(), "tcp", addr)
+	if err == nil {
+		_ = conn2.Close()
+		t.Fatal("守卫放行面拒回环时不得连上（守卫没接上的静默形态）")
+	}
+}
+
 // roundTripperFunc 让测试能造一个自定义 RoundTripper。
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 

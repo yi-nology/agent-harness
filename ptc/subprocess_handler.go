@@ -56,9 +56,20 @@ func (p *SubprocessProvider) handler() wire.Handler {
 		}
 		out, err := b.Call(ctx, req.Args)
 		if err != nil {
+			// 分类随值走（issue #150）：与进程内路径（binding.go 的
+			// thrownRejection）同一份判据——rejectionKindOf 链感知探测错误
+			// 自带的分类（*toolfail.Failure、宿主自定义 Kind() 接口，%w 包装
+			// 穿透）。此前这里硬编码 unknown：宿主绑定返回 permission_denied/
+			// rate_limited/… 的规范失败，子进程形态一律报 unknown，收口的
+			// Result.ErrorKind 与重试/升级策略按后端分叉——child.go 声称的
+			// 「父侧已把失败归类，原样带回去」不成立。
+			kind := rejectionKindOf(err)
+			if kind == "" {
+				kind = string(toolfail.ClassUnknown)
+			}
 			return wire.Response{
 				OK:    false,
-				Kind:  string(toolfail.ClassUnknown),
+				Kind:  kind,
 				Error: err.Error(),
 			}, nil
 		}

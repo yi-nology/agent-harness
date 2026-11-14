@@ -141,6 +141,33 @@ func TestCheckChainHopCountOffByOne(t *testing.T) {
 	}
 }
 
+// TestCheckChainTooManyHopsHopURLConsistent 跳数超限时 Hop 与 URL 指向同一跳
+// 且是真实校验过的 URL（issue #158）：此前 Hop=maxHops+1（从未被校验的那一跳）
+// 而 URL=start（刚通过校验的那一跳），两个字段各说各话——排障的人拿着留痕里的
+// URL 去查起始跳，它没问题；真正的 Location 从未被解析。超限是「预算在起始
+// 之后耗尽」，不是「某一跳被拒」：Hop/URL 报最后一个校验过的跳（起始），
+// 原因看 Err。
+func TestCheckChainTooManyHopsHopURLConsistent(t *testing.T) {
+	hops := make([]string, 11) // 11 跳 > 缺省上限 10
+	for i := range hops {
+		hops[i] = "/x"
+	}
+	err := CheckChainWith(okPublic, hops, Allow{Private: false, Loopback: false}, 0)
+	var hd *HopDeniedError
+	if !errors.As(err, &hd) {
+		t.Fatalf("应为结构化错误，实得 %v", err)
+	}
+	if !errors.Is(err, ErrTooManyHops) {
+		t.Fatalf("应归口 ErrTooManyHops，实得 %v", err)
+	}
+	if hd.Hop != 1 {
+		t.Errorf("超限分支 Hop 应为 1（最后一个真实校验过的跳），不得伪造从未校验的第 N 跳，实得 %d", hd.Hop)
+	}
+	if hd.URL != okPublic {
+		t.Errorf("Hop 与 URL 必须指向同一跳（起始），实得 %q", hd.URL)
+	}
+}
+
 // TestCheckChainValidatesStartBeforeBudget 顺序钉死：**先验起始跳，再谈预算**。
 //
 // 反了的话，坏起始 URL + 超长链会报 `Hop = maxHops+1`——那一跳从未被校验过，

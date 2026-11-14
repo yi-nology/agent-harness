@@ -107,8 +107,11 @@ func TestProviderRefusesUnmanagedExecution(t *testing.T) {
 	if !ok {
 		t.Fatalf("失败分类应是 *sandbox.Failure，实得 %T", out.Err)
 	}
-	if f.Kind != ErrorKindUnmanaged {
-		t.Fatalf("失败分类应为 %q，实得 %q", ErrorKindUnmanaged, f.Kind)
+	// sandbox.Failure.Kind 统一走 toolfail 词表（issue #151）：
+	// kindForErrorKind(unmanaged) = unknown（不可分类 = 不可重试，保守侧）；
+	// 诊断口径 unmanaged 留在 Detail.Result.ErrorKind。
+	if f.Kind != kindForErrorKind(ErrorKindUnmanaged) {
+		t.Fatalf("失败分类应为 %q（toolfail 词表），实得 %q", kindForErrorKind(ErrorKindUnmanaged), f.Kind)
 	}
 	if hits != 0 {
 		t.Fatalf("被拒的执行不得触达动作体，实得 %d 次", hits)
@@ -132,8 +135,9 @@ func TestSubprocessProviderRefusesUnmanagedExecution(t *testing.T) {
 	if !asFailure(err, &f) {
 		t.Fatalf("失败应以 sandbox.Failure 形态返回，实得 %T", err)
 	}
-	if f.Kind != ErrorKindUnmanaged {
-		t.Fatalf("失败分类应为 %q，实得 %q", ErrorKindUnmanaged, f.Kind)
+	// 与进程内 Provider 同词表（issue #151）：unmanaged → unknown。
+	if f.Kind != kindForErrorKind(ErrorKindUnmanaged) {
+		t.Fatalf("失败分类应为 %q（toolfail 词表），实得 %q", kindForErrorKind(ErrorKindUnmanaged), f.Kind)
 	}
 }
 

@@ -55,6 +55,10 @@ func TestProviderExecRunsProgram(t *testing.T) {
 }
 
 // 失败是结果字段不是异常，且失败分类要能穿过适配器到达调用方。
+//
+// Kind 走 toolfail 分类（issue #151）：与子进程后端同一词表——登记簿按环境
+// 选后端，宿主按 Kind 分流时拿到的是同一套值。诊断口径不丢：Detail 里的
+// Result.ErrorKind 仍是本地词表原值。
 func TestProviderExecFailureCarriesKind(t *testing.T) {
 	reg := sandbox.NewRegistry()
 	if err := reg.Register(Provider{}); err != nil {
@@ -72,8 +76,17 @@ func TestProviderExecFailureCarriesKind(t *testing.T) {
 	if !ok {
 		t.Fatalf("失败应是 sandbox.Failure，实得 %T", out.Err)
 	}
-	if f.Kind != "syntax" {
-		t.Fatalf("失败分类应为 syntax，实得 %q", f.Kind)
+	// toolfail 分类（kindForErrorKind("syntax") = permanent），与子进程后端同词。
+	if f.Kind != "permanent" {
+		t.Fatalf("失败分类应为 permanent（toolfail 词表），实得 %q", f.Kind)
+	}
+	// 诊断口径留在 Detail：ErrorKind 仍是本地词表。
+	res, ok := out.Detail.(Result)
+	if !ok {
+		t.Fatalf("Detail 应为本包 Result，实得 %T", out.Detail)
+	}
+	if res.ErrorKind != "syntax" {
+		t.Fatalf("Detail.ErrorKind 应保留诊断口径 syntax，实得 %q", res.ErrorKind)
 	}
 }
 

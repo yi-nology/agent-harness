@@ -155,9 +155,24 @@ func NewGuardWithStore(s Store, isTerminal func(status string) bool) *Guard {
 // 不灌的后果与 SeqGate 同源：进程重启后闸是空的，上一进程已提交的终态被畅通无阻
 // 地重复提交——正是本包要防的那件事。这是「闸被重置后没人告知」，不是「闸没生效」。
 //
+// 回灌面与判定面是**同一份词表判据**（issue #154）：与 Acquire 一致地经
+// 注入的 isTerminal 判定，非终态行跳过不记。此前 Seed 不看 isTerminal——
+// 宿主按自然写法回灌全部持久化行（含 running 等非终态）时，环节被记为已提交，
+// 首次真正终态提交撞 ErrAlreadyCommitted，环节永远收不了口。
+// isTerminal 为 nil 时与 Acquire 同侧（全部按终态，宁可多拦）。
+//
+// 空 Ref（RunID 或 Step 为空）静默跳过：Seed 无返回值（本包 Stable，加返回值
+// 属改签名 breaking，见 docs/api-compat.md），非法输入的响亮失败形态见
+// Acquire 的 ErrEmptyRef——回灌入口请自行保证只喂合法行。
+//
 // 幂等：以同一条记录重复 Seed 结果相同。已存在的记录不会被更旧的覆盖。
 func (g *Guard) Seed(c Commit) {
 	if c.Ref.RunID == "" || c.Ref.Step == "" {
+		return
+	}
+	// 回灌面与判定面同一份判据（issue #154）：词表未知时按终态处理，
+	// 与 Acquire 同侧——宁可多拦，不因缺配置漏放。
+	if g.isTerminal != nil && !g.isTerminal(c.Status) {
 		return
 	}
 	// 不覆盖语义在 Store（SeedIfAbsent）：已有记录时内存/库里的现状更新。
