@@ -68,6 +68,14 @@ func packageDirs(root string, ignore map[string]bool) ([]string, error) {
 		if strings.HasPrefix(base, ".") || base == "node_modules" || base == "dist" {
 			return filepath.SkipDir
 		}
+		// 嵌套模块（issue #162）：目录里有自己的 go.mod 就是另一棵模块树——
+		// linked worktree 拷贝、仓内 vendor 的源码副本都长这样。Go 工具链对
+		// 外层模块看不见它们，本门禁同样不应看见：否则嵌套拷贝里的同名函数
+		// 会被算成「本仓未登记的启动点/包」，判定结果取决于文件系统形态
+		// （CI 无嵌套目录恒绿、宿主克隆里恒红）。
+		if isNestedModule(path) {
+			return filepath.SkipDir
+		}
 		rel, _ := filepath.Rel(root, path)
 		if ignore[filepath.ToSlash(rel)] {
 			return filepath.SkipDir
@@ -82,6 +90,15 @@ func packageDirs(root string, ignore map[string]bool) ([]string, error) {
 	}
 	slices.Sort(out)
 	return out, nil
+}
+
+// isNestedModule 判断 dir 是否嵌套模块根（目录直接含 go.mod）。
+//
+// root 自身永远返回 false（调用方保证 path != root 才进来）；go.mod 读不了
+// 按非嵌套处理（Stat 失败交给上层遍历的错误路径，这里不吞结论）。
+func isNestedModule(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "go.mod"))
+	return err == nil
 }
 
 // hasProductionGo 判断目录里是否直接含生产 Go 文件。
