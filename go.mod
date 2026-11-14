@@ -34,12 +34,12 @@ go 1.27.4
 require (
 	github.com/dop251/goja v0.0.0-20261110204830-f493a2b600d6
 	github.com/jackc/pgx/v5 v5.13.0
-	github.com/oagentkit/guardx v0.24.5
-	github.com/oagentkit/runtime v0.12.9
+	github.com/oagentkit/guardx v0.25.1
+	github.com/oagentkit/runtime v0.13.0
 	github.com/oagentkit/toolgate v0.17.3
-	github.com/oagentkit/tools v0.14.5
-	github.com/oekit/concurrency v0.34.1
-	github.com/oekit/logx v0.10.0
+	github.com/oagentkit/tools v0.14.6
+	github.com/oekit/concurrency v0.36.1
+	github.com/oekit/logx v0.11.0
 	github.com/oekit/pkg v0.48.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/tools v0.52.1-0.20261106145633-d407941a339a
@@ -74,7 +74,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
-	github.com/oagentkit/mcpkit v0.13.2 // indirect
+	github.com/oagentkit/mcpkit v0.14.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
