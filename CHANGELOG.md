@@ -2,6 +2,26 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.37.0] — 2026-11-14
+
+### 新增：commitgate SeedE 响亮空 Ref——Seed 挂 Deprecated 过渡；archcheck/docsync 嵌套模块排除(#154 #162)
+
+#154 空 Ref 半面（五步破坏性变更流程第 2/3 步）：
+- SeedE 新符号：判定与 Seed 同一份（isTerminal 词表/幂等不覆盖），
+  仅空 Ref 从静默跳过改 ErrEmptyRef，与 Acquire 同侧
+- Seed 挂 // Deprecated: 指向 SeedE；仓内消费点（checkpoint e2e seedGate）
+  同批迁移；minor 边界拆除（v0.y 承诺：minor 允许 breaking，配 BREAKING 段）
+#162 嵌套模块排除（archcheck + docsync 同判据）：
+- packageDirs/iterFiles 跳过自带 go.mod 的目录（linked worktree 拷贝/
+  源码副本）——嵌套拷贝里的同名函数不再被算成本仓未登记启动点
+- docsync measureBaseline 同口径：宿主克隆与 CI 的判定结果不再取决于
+  文件系统形态
+- 成对回归：嵌套启动点不报 × 外层未登记启动点照报（防「永远不报」退化）
+
+### 修复(archcheck)：issue162 回归断言按仓惯例 ToSlash 比对——Windows 真跑假阴
+
+- 93b4e76
+
 ## [v0.36.0] — 2026-11-14
 
 ### 新增(eventbus)：下沉持久化事件发布 DurablePublisher
