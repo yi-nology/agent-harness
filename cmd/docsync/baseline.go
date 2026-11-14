@@ -138,6 +138,16 @@ func measureBaseline() (baseline, error) {
 			if path != "." && (strings.HasPrefix(d.Name(), ".") || d.Name() == "vendor") {
 				return fs.SkipDir
 			}
+			// 嵌套模块（issue #162）：目录自带 go.mod 就是另一棵模块树
+			// （linked worktree 拷贝/源码副本）。口径命令里的 `-not -path './.*'`
+			// 挡不住它们（不是隐藏目录），宿主克隆里会把嵌套拷贝的行数/文件数
+			// 一起算进来——CI 恒绿、本机恒红的同一形态。与 archcheck 的
+			// isNestedModule 同判据（两处小函数，各自 package 内联，注释互指）。
+			if path != "." {
+				if _, statErr := os.Stat(filepath.Join(path, "go.mod")); statErr == nil {
+					return fs.SkipDir
+				}
+			}
 			return nil
 		}
 		name := d.Name()

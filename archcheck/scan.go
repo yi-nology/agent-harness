@@ -34,6 +34,12 @@ func iterFiles(root string, includes []string, ignoreTest bool) ([]string, error
 			if path != root && (strings.HasPrefix(base, ".") || base == "node_modules" || base == "dist") {
 				return filepath.SkipDir
 			}
+			// 嵌套模块（issue #162）：与 packageDirs 同口径——目录里有自己的
+			// go.mod 就是另一棵模块树（linked worktree 拷贝/源码副本），
+			// 规则扫描不应越过模块边界，否则嵌套拷贝里的代码被算进本仓判定面。
+			if path != root && isNestedModule(path) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		// 跳过隐藏文件（编辑器/工具残留如 `.!36914!guard.go`：Go 工具链同样忽略，

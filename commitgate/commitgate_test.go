@@ -249,6 +249,37 @@ func TestSeedEmptyRefSkips(t *testing.T) {
 	}
 }
 
+// TestSeedELoudEmptyRef SeedE 的空 Ref 响亮报错（issue #154 空 Ref 半面）：
+// 判定与 Seed 同一份，仅非法输入从「静默吞」改「ErrEmptyRef」，与 Acquire 同侧。
+func TestSeedELoudEmptyRef(t *testing.T) {
+	gd := g()
+	if err := gd.SeedE(Commit{Ref: Ref{RunID: "", Step: "s1"}, Status: "succeeded", Branch: "b", Seq: 1}); !errors.Is(err, ErrEmptyRef) {
+		t.Fatalf("SeedE 空 RunID 应报 ErrEmptyRef，实得 %v", err)
+	}
+	if err := gd.SeedE(Commit{Ref: Ref{RunID: "run-1", Step: ""}, Status: "succeeded", Branch: "b", Seq: 1}); !errors.Is(err, ErrEmptyRef) {
+		t.Fatalf("SeedE 空 Step 应报 ErrEmptyRef，实得 %v", err)
+	}
+	// 报错路径不得留下半条记录：同一环节随后可正常回灌+提交。
+	if err := gd.SeedE(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 1}); err != nil {
+		t.Fatalf("SeedE 合法回灌应放行: %v", err)
+	}
+	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "failed", Branch: "b2", Seq: 2}); !errors.Is(err, ErrAlreadyCommitted) {
+		t.Fatalf("SeedE 回灌的终态行应挡住后续提交，实得 %v", err)
+	}
+}
+
+// TestSeedESkipsNonTerminal SeedE 与 Seed 同一份词表判据：非终态行跳过不记
+// 且不报错（跳过是正常路径，不是失败）。
+func TestSeedESkipsNonTerminal(t *testing.T) {
+	gd := g()
+	if err := gd.SeedE(Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1}); err != nil {
+		t.Fatalf("SeedE 非终态行跳过是正常路径，不应报错: %v", err)
+	}
+	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "later", Seq: 2}); err != nil {
+		t.Fatalf("SeedE 的非终态行不得挡住真正的终态提交: %v", err)
+	}
+}
+
 // TestConcurrentTerminalCommitHasExactlyOneWinner 并发提交终态，必须恰好一个赢家。
 // 这条是本包在真实并发编排下的正面断言（配 -race 才有意义）。
 func TestConcurrentTerminalCommitHasExactlyOneWinner(t *testing.T) {

@@ -50,10 +50,16 @@ func (d *durable) persist(c commitgate.Commit) {
 func (d *durable) seedGate(g *commitgate.Guard) int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	n := 0
 	for _, c := range d.terminals {
-		g.Seed(c)
+		// 测试桩里的终态行 Ref 全合法；SeedE 对脏数据响亮（ErrEmptyRef），
+		// 这里若有 bug 直接 panic fail-loud，不静默吞——与被测契约同向。
+		if err := g.SeedE(c); err != nil {
+			panic("seedGate: 回灌行引用不完整: " + err.Error())
+		}
+		n++
 	}
-	return len(d.terminals)
+	return n
 }
 
 func (d *durable) appliedCount(step string) int {

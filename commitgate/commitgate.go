@@ -161,9 +161,11 @@ func NewGuardWithStore(s Store, isTerminal func(status string) bool) *Guard {
 // 首次真正终态提交撞 ErrAlreadyCommitted，环节永远收不了口。
 // isTerminal 为 nil 时与 Acquire 同侧（全部按终态，宁可多拦）。
 //
-// 空 Ref（RunID 或 Step 为空）静默跳过：Seed 无返回值（本包 Stable，加返回值
-// 属改签名 breaking，见 docs/api-compat.md），非法输入的响亮失败形态见
-// Acquire 的 ErrEmptyRef——回灌入口请自行保证只喂合法行。
+// Deprecated: 空 Ref（RunID 或 Step 为空）在本方法**静默跳过**，与 Acquire 的
+// ErrEmptyRef 响亮失败不同侧——回灌数据不干净时坏行被吞、闸的覆盖面静默缩水。
+// 请迁移到 [Guard.SeedE]：同一判定、空 Ref 返回 ErrEmptyRef（五步破坏性变更
+// 流程的 Deprecated 过渡步，见 docs/api-compat.md；本包仍 Stable，Seed 在
+// minor 边界按流程拆除）。
 //
 // 幂等：以同一条记录重复 Seed 结果相同。已存在的记录不会被更旧的覆盖。
 func (g *Guard) Seed(c Commit) {
@@ -177,6 +179,23 @@ func (g *Guard) Seed(c Commit) {
 	}
 	// 不覆盖语义在 Store（SeedIfAbsent）：已有记录时内存/库里的现状更新。
 	_ = g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq})
+}
+
+// SeedE 是 Seed 的**响亮形态**（issue #154 空 Ref 半面）：判定与 Seed 完全同一份
+// （isTerminal 词表、不覆盖幂等），仅空 Ref 从「静默跳过」改为返回
+// ErrEmptyRef——与 Acquire 的非法输入处置同侧，回灌数据不干净时不再吞行。
+//
+// 五步破坏性变更流程（docs/api-compat.md）：本符号是 Deprecated 过渡步给
+// Seed 指定的替代；宿主迁移完成后，Seed 在 minor 边界按流程拆除。
+func (g *Guard) SeedE(c Commit) error {
+	if c.Ref.RunID == "" || c.Ref.Step == "" {
+		return errors.Wrap(ErrEmptyRef, "回灌缺环节引用", "run_id", c.Ref.RunID, "step", c.Ref.Step)
+	}
+	if g.isTerminal != nil && !g.isTerminal(c.Status) {
+		return nil
+	}
+	_ = g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq})
+	return nil
 }
 
 // Acquire 抢终态独占权并返回**占用凭证**。成功时持凭证者独占该环节；
