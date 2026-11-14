@@ -6,6 +6,16 @@
 // 逐包理由见 api-lifecycle.yaml。
 //
 // 引擎只向本总线 Publish 一次，订阅者分别落 bq_event（repo）与 SSE（handler）。
+//
+// # 可选 durable 面（issue #160）：包仍零存储依赖
+//
+// 本包章程是纯内存事件面；「持久化事件发布」以**可选接缝**扩展（durable.go
+// 的 DurablePublisher）：把「insert→取 ID→broadcast；失败→不广播+onDrop」
+// 的次序不变量收进包内，但 Store 接口（Insert(ctx, ev) (uint64, error)）
+// 由**宿主实现**——包内不 import 任何存储驱动、不认任何 DB 方言。不装配
+// DurablePublisher 的宿主，本包语义一字不变。接缝形态与 #145 落的
+// commitgate.Store / ticket.Backend 同风格：判定留包内、状态归存储、
+// 进程内参考实现垫底。
 package eventbus
 
 import (
@@ -279,7 +289,8 @@ func New() *Bus {
 	return &Bus{inner: progress.NewBus[Event]()}
 }
 
-// Broadcast 广播一个已构建事件（发布路径先 repo.InsertEvent 落库拿 bq_event 自增 ID，再由此广播）。
+// Broadcast 广播一个已构建事件（发布路径先落库拿 bq_event 自增 ID，再由此广播；
+// 该次序的生产收口见 DurablePublisher，issue #160——本方法只做广播面，不落库）。
 // SSE after 游标从此只有 bq_event ID 一个单调空间——跨重启、跨副本（PG 序列全局唯一）都成立，
 // 取代旧的 NewWithSeq 启动播种方案（bus 内部序号与回放 ID 是两个空间，多副本下必然错位）。
 func (b *Bus) Broadcast(e Event) {
@@ -289,7 +300,7 @@ func (b *Bus) Broadcast(e Event) {
 	b.inner.Publish(e)
 }
 
-// Publish 赋 ID/时间戳后广播（未落库的临时序号；生产路径改用 InsertEvent+Broadcast）。
+// Publish 赋 ID/时间戳后广播（未落库的临时序号；生产路径改用 DurablePublisher）。
 func (b *Bus) Publish(sessionID, caseID string, stepID *uint64, typ, level string, payload map[string]any) Event {
 	e := Event{
 		ID:         b.seq.Add(1),

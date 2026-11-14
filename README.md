@@ -79,7 +79,7 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 |---|---|---|---|
 | `protocol` | 2341 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
 | `scheduling` | 391 | oekit/pkg | Agent 调度的**判据面**（优先级 / 加权公平 / 资源配额 / 背压，issue #108）：归属结论见 ADR-0008——上游 `oagentkit/agent/dispatch` 的全部判定面是 allow 矩阵 + 深度 + 自派发三条（证据见 ADR 的「证据」节），四样判据上游确实没有，落本仓**纯函数面**：优先级排序**平局有名字层裁决且不依赖输入次序**（一次无关的配置重排不得换掉执行次序）、加权公平按 `served_i/w_i` 欠账最小者先服务（同状态重建选择序列逐字相同）、配额账本**整单占用不做部分占用 + 超释放显式拒**（钳位会把重复释放吞成静默）、背压裁决**拒绝必须带机器可判的原因**且在途满优先于队列满（容量问题的处置是扩容/收敛，拥塞问题的处置是退避，先报哪条决定宿主去找谁）。**不做队列不做执行**（宿主的活）、**不判可达性**（dispatch 门面的活）——不与上游并存第二份实现；上游若收编某样，对应判据转门面（ADR-0008 写明后续动作）|
-| `eventbus` | 471 | oagentkit/runtime | 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责。跨实例面在 `Relay` 接缝之后（#145）：缺省无 Relay = 进程内限定，装配后 Publish 本地先/Relay 后/解锁后调用，别处事件经 `Inject` 回注（不回流防环） |
+| `eventbus` | 671 | oagentkit/runtime | 进程内有损广播（缓冲 chan）；可选 durable 发布面 `DurablePublisher` 收口「落库取游标→广播、失败不广播」（#160，Store 由宿主实现，包零存储依赖）。跨实例面在 `Relay` 接缝之后（#145）：缺省无 Relay = 进程内限定，装配后 Publish 本地先/Relay 后/解锁后调用，别处事件经 `Inject` 回注（不回流防环） |
 | `spill` | 263 | oekit/pkg | 输出预算溢出：提示契约 / 取回 / 按龄清理 |
 | `pii` | 712 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）；运行时策略（开关/面/强度）整份单指针原子交换 + 变更订阅 `Subscribe`，代次从此不只可查、还可响应 |
 | `netguard` | 1212 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。扩展名单**整份原子交换 + 代次可观测**（两次独立取会读到撕裂策略）。代次**只有一个真相**（策略指针内的 gen，全局值是它的投影；交换走 CAS 循环，故并发下代次唯一、单调、不回卷）。**`DialFunc` 把同一套判定落到建连那一刻**（名字层 + egress 预检 + 建连后核对真实 RemoteAddr）——闭合「校验 → 拨号」的 rebinding 窗口；判据仍是 egress，**不引入第二套 IP 策略**。放行面**具名且两层共用同一类型**（`Allow`，零值即严）；`NewClient`/`NewTransport` 是接线件——宿主一行把守卫挂上，且 client 可注入（测试连本机假服务器时**只在测试里**放宽回环）**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」与 dial.go；与上游 `oekit/pkg/urlguard` 的分工（IP 策略单源 egress 不换、域名后缀层本包为超集）同样见包头|
@@ -215,8 +215,8 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 43,488 行 / 238 文件（不含 `_test.go`）|
-| 测试 | 247 个测试文件 |
+| 生产代码 | 43,688 行 / 239 文件（不含 `_test.go`）|
+| 测试 | 248 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
 | 门禁 | 8 条规则（`rules` 段）+ 6 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 44 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** |
