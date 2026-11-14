@@ -61,14 +61,14 @@ func NewTransport(base *http.Transport, allow Allow) *http.Transport {
 	} else {
 		t = base.Clone()
 	}
-	if t.DialContext == nil && t.Dial != nil {
+	if t.DialContext == nil && t.Dial != nil { //nolint:staticcheck // 适配废弃字段正是本分支的职责：宿主只设了 Dial，读它是修 #152 的前提
 		// 只设 Dial 的 base：把旧拨号器适配成 next（issue #152）——
 		// 守卫包住它，而不是用缺省拨号器把它替换掉。
-		next := t.Dial
+		next := t.Dial //nolint:staticcheck // 同上：读宿主设置的废弃字段再包进守卫
 		t.DialContext = DialFunc(func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return next(network, addr)
 		}, DialOptions{Allow: allow})
-		t.Dial = nil // DialContext 已设，net/http 会忽略 Dial——留着是死字段
+		t.Dial = nil //nolint:staticcheck // 清掉死字段：DialContext 已设，net/http 会忽略 Dial
 		return t
 	}
 	t.DialContext = DialFunc(t.DialContext, DialOptions{Allow: allow})

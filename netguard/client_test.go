@@ -166,7 +166,7 @@ func TestNewTransportAdaptsLegacyDialField(t *testing.T) {
 	// 方向 1：守卫包住旧拨号器，宿主拨号器仍在链上。
 	var called int
 	base := &http.Transport{
-		Dial: func(network, a string) (net.Conn, error) {
+		Dial: func(network, a string) (net.Conn, error) { //nolint:staticcheck // 用例标的正是废弃字段形态（issue #152），必须真的只设 Dial
 			called++
 			return net.Dial(network, a)
 		},
@@ -180,13 +180,13 @@ func TestNewTransportAdaptsLegacyDialField(t *testing.T) {
 	if called != 1 {
 		t.Fatalf("只设 Dial 的宿主拨号器必须被适配进守卫链并被调用，实得调用 %d 次", called)
 	}
-	if tr.Dial != nil {
+	if tr.Dial != nil { //nolint:staticcheck // 断言死字段已被清空
 		t.Fatal("DialContext 已接管后旧 Dial 字段应清空（net/http 会忽略它，留着是死字段）")
 	}
 
 	// 方向 2：守卫真的在链上——被拒地址不得经旧拨号器连出去。
 	guarded := NewTransport(&http.Transport{
-		Dial: func(network, a string) (net.Conn, error) {
+		Dial: func(network, a string) (net.Conn, error) { //nolint:staticcheck // 同上：只设废弃字段是本用例的前提
 			return net.Dial(network, a)
 		},
 	}, Allow{})
