@@ -165,6 +165,66 @@ func TestKeyIndependentOfName(t *testing.T) {
 	}
 }
 
+// TestKeyCoversEgressDetails 出口细节（Proxy 与 Allow/Bypass）编进语义键
+// （issue #156）：此前 Key 只编 Egress.Mode——GateRequest 带下去的是完整
+// Egress，「同模式、不同代理/不同白名单」的两份合法预设被 Key 判成同一份，
+// New 以「语义完全相同」拒收（文案与真实差异不符）。
+func TestKeyCoversEgressDetails(t *testing.T) {
+	base := preset.Preset{
+		Name:  "proxy-a",
+		Level: sandbox.LevelProcess,
+		Mode:  policy.ModeAuto,
+		Egress: egress.Spec{
+			Mode:  egress.ModeProxy,
+			Proxy: "http://127.0.0.1:3128",
+		},
+	}
+	// 不同代理：语义键必须不同，New 不得拒收。
+	other := base
+	other.Name = "proxy-b"
+	other.Egress.Proxy = "http://127.0.0.1:3129"
+	if base.Key() == other.Key() {
+		t.Fatalf("不同代理的预设 Key 必须不同: %q", base.Key())
+	}
+	if _, err := preset.New([]preset.Preset{base, other}); err != nil {
+		t.Fatalf("同模式不同代理是两份合法预设，不得拒收: %v", err)
+	}
+
+	// 不同 Allow 白名单：语义键必须不同，New 不得拒收。
+	allowA := base
+	allowA.Name = "allow-a"
+	allowA.Egress.Allow = []string{"api.example.com"}
+	allowB := base
+	allowB.Name = "allow-b"
+	allowB.Egress.Allow = []string{"api.example.com", "cdn.example.com"}
+	if allowA.Key() == allowB.Key() {
+		t.Fatalf("不同白名单的预设 Key 必须不同: %q", allowA.Key())
+	}
+	if _, err := preset.New([]preset.Preset{allowA, allowB}); err != nil {
+		t.Fatalf("同模式不同白名单是两份合法预设，不得拒收: %v", err)
+	}
+
+	// 同一名单两种书写形态：集合语义相同 ⇒ Key 相同 ⇒ 仍是撞名错误。
+	reordered := allowA
+	reordered.Egress.Allow = []string{"api.example.com", "api.example.com"}
+	if allowA.Key() != reordered.Key() {
+		t.Fatalf("同一名单（排序去重后）Key 应相同: %q vs %q", allowA.Key(), reordered.Key())
+	}
+	if _, err := preset.New([]preset.Preset{allowA, reordered}); err == nil {
+		t.Fatal("同一份权限挂两个名字必须报错")
+	}
+
+	// Bypass 不同：语义键必须不同。
+	bypassA := base
+	bypassA.Name = "bypass-a"
+	bypassA.Egress.Bypass = []string{"intra.example.com"}
+	bypassB := base
+	bypassB.Name = "bypass-b"
+	if bypassA.Key() == bypassB.Key() {
+		t.Fatalf("Bypass 有无不同的预设 Key 必须不同: %q", bypassA.Key())
+	}
+}
+
 func TestAllReturnsCopy(t *testing.T) {
 	s := mustNew(t, strict())
 	got := s.All()
