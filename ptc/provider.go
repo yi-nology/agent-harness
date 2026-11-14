@@ -50,9 +50,18 @@ func (p Provider) Level() sandbox.Level { return sandbox.LevelProcess }
 
 // Exec 执行一次程序。
 //
-// 失败是结果字段不是异常：sandbox.Failure 带回本包的失败分类（ErrorKind），
-// 调用方据此区分「程序写错了」与「门禁拒了」——这两者给出的处置完全不同，
-// 合成一条 runtime 的话，调用方会去改那段本来没问题的程序。
+// 失败是结果字段不是异常：sandbox.Failure 带回失败分类，调用方据此区分
+// 「程序写错了」与「门禁拒了」——这两者给出的处置完全不同，合成一条
+// runtime 的话，调用方会去改那段本来没问题的程序。
+//
+// # Kind 的词表（issue #151）
+//
+// sandbox.Failure.Kind 走 **toolfail 的分类**（transient / permanent /
+// permission_denied / rate_limited / unknown / …），与本后端的子进程形态
+// （SubprocessProvider，经 kindForErrorKind 映射）**同一词表**——登记簿按
+// 环境选后端，宿主按 Kind 分流时拿到的必须是同一套值，否则「看起来同一次
+// 失败、分类不同」。本地诊断词表（deadline / stage_denied / budget_calls / …）
+// 不丢：Detail 里的 Result.ErrorKind 仍是原值，Suggestions 也按它生成。
 func (p Provider) Exec(ctx context.Context, req sandbox.Request) (sandbox.Outcome, error) {
 	res := Run(ctx, req.Program, p.Bindings, Options{
 		Timeout:  req.Budget.WallClock,
@@ -65,7 +74,9 @@ func (p Provider) Exec(ctx context.Context, req sandbox.Request) (sandbox.Outcom
 	})
 	out := sandbox.Outcome{OK: res.OK, Value: res.Value, Detail: res}
 	if !res.OK {
-		out.Err = &sandbox.Failure{Kind: res.ErrorKind, Message: res.Error}
+		// Kind 统一为 toolfail 分类（issue #151）：与子进程后端同一词表，
+		// 映射判据只有 kindForErrorKind 一份；诊断口径留在 Detail.ErrorKind。
+		out.Err = &sandbox.Failure{Kind: kindForErrorKind(res.ErrorKind), Message: res.Error}
 	}
 	return out, nil
 }
