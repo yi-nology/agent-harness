@@ -2,6 +2,28 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.36.0] — 2026-11-14
+
+### 新增(eventbus)：下沉持久化事件发布 DurablePublisher
+
+宿主两份同构手写拷贝（服务侧 systevent 的 InsertEvent→Broadcast 与引擎侧
+publisher 的 Pub）承载同一条次序不变量，下沉收口到 eventbus：
+- Store 接缝（宿主实现，包零 DB 依赖）：Insert(ctx, ev) (uint64, error)，
+  游标由存储铸造（与 #145 commitgate「令牌由存储铸造」同分工）；
+- DurablePublisher 收口「insert→取 ID→broadcast；insert 失败→不广播+
+  onDrop」——宁可 SSE 少一帧，不伪造游标 ID；
+- 广播序==游标序（发布全程持锁，比宿主拷贝强的一档，串行化代价写明）；
+- 脱敏/字段裁剪等宿主差异不越界：只收次序，内容在调用方构建 Event 时或
+  宿主 Store 实现内处理；
+- MemoryStore 进程内参考实现垫底（不得上生产），与 ticket.NewMemoryBackend /
+  commitgate.NewMemoryStore 同口径；
+- 纯内存章程以可选 durable 面扩：不装配 DurablePublisher 的宿主，
+  Bus/Hub 语义一字不变。
+包文档写死零 DB 依赖边界；README 包表未动（docsync 由发版批统一重算）。
+Fixes #160
+
+- 文档(readme)：eventbus 包表与工程底座对齐 DurablePublisher 实测值（docsync 门禁）
+
 ## [v0.35.1] — 2026-11-14
 
 ### 修复(netguard)：lint 静音——适配废弃 Dial 字段处按仓惯例挂 nolint 带理由
